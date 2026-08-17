@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#0b1018"/>
+  <circle cx="32" cy="24" r="12" fill="none" stroke="#e0b13a" stroke-width="2"/>
+  <circle cx="32" cy="24" r="3" fill="#c81e1e"/>
+  <text x="32" y="52" text-anchor="middle" fill="#e0b13a" font-family="Inter, Arial" font-size="12" font-weight="800">TSH</text>
+</svg>

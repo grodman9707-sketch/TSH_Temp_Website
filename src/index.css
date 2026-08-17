@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 30% 5%;
+  --foreground: 0 0% 100%;
+  --primary: 43 90% 52%;
+  --primary-foreground: 222 30% 5%;
+  --card: 222 25% 8%;
+  --card-foreground: 0 0% 100%;
+  --muted: 222 25% 8%;
+  --muted-foreground: 0 0% 60%;
+  --border: 222 20% 17%;
+  --radius: 0.5rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: Inter, system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+.arena-bg {
+  background-image:
+    linear-gradient(to bottom, rgba(9, 11, 17, 0.35), rgba(9, 11, 17, 0.72) 55%, rgba(9, 11, 17, 0.92)),
+    url("/images/arena-bg.png");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+.glass {
+  background: rgba(12, 16, 26, 0.72);
+  border: 1px solid hsl(var(--border) / 0.8);
+  backdrop-filter: blur(10px);
+}
+
+.gold-text {
+  color: hsl(var(--primary));
+}
+
+.ticker {
+  animation: ticker 28s linear infinite;
+}
+
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+input,
+select,
+textarea {
+  background: rgba(9, 11, 17, 0.75);
+  border: 1px solid hsl(var(--border));
+  color: white;
+  border-radius: 0.5rem;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}

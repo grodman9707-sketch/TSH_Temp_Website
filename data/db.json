@@ -1,0 +1,361 @@
+{
+  "league": {
+    "name": "The Social Hub Darts League",
+    "shortName": "TSH Darts League",
+    "formerly": "World Darts League (WDL)",
+    "email": "worlddartsleagueinfo@gmail.com",
+    "scoringApp": "DartCounter"
+  },
+  "content": {
+    "hero_description": "Where competitive darts truly comes to life. TSH Darts League delivers structured league play built on fairness, progression, and real competition. Play weekly, climb the divisions, and become part of a growing legacy.",
+    "communities_description": "Everything runs through DartCounter. Compete as an individual, connect with players worldwide, and prove yourself at the highest level.",
+    "faq": [
+      {
+        "q": "What is TSH Darts League?",
+        "a": "The Social Hub Darts League is a competitive online darts league — formerly World Darts League (WDL). We replicate the professional darts structure virtually. Join a division, compete on your schedule, rank up, and go down in history."
+      },
+      {
+        "q": "How to enter?",
+        "a": "Create your free account, apply with your DartCounter average, and we will place you in the league that matches your level. Weekly competition does the rest."
+      },
+      {
+        "q": "Can I play with friends?",
+        "a": "Absolutely. You can challenge friends directly or compete alongside them in the same regional."
+      },
+      {
+        "q": "What Apps are supported?",
+        "a": "DartCounter is the scoring app used by TSH Darts League. All games and results are managed through it."
+      },
+      {
+        "q": "Is TSH free or paid?",
+        "a": "TSH Darts League is free to join, giving every player the opportunity to compete and progress."
+      }
+    ],
+    "premium": [
+      "Access to Premium-Only Tournaments",
+      "Priority League Placement",
+      "Advanced Player Stats Dashboard",
+      "Enhanced Profile Customisation",
+      "Match Reminders & Notifications",
+      "£5 Monthly Credit",
+      "Smart League Placement System",
+      "Limited Suspension Protection"
+    ]
+  },
+  "regionals": [
+    {
+      "id": 1,
+      "slug": "europe",
+      "flag": "EU",
+      "emoji": "🇪🇺",
+      "name": "Europe",
+      "fullTitle": "TSH Europe",
+      "region": "United Kingdom",
+      "description": "The European regional of The Social Hub Darts League.",
+      "active": true,
+      "sortOrder": 0
+    },
+    {
+      "id": 2,
+      "slug": "americas",
+      "flag": "AM",
+      "emoji": "🌎",
+      "name": "Americas",
+      "fullTitle": "TSH Americas",
+      "region": "Americas",
+      "description": "The Americas regional of The Social Hub Darts League.",
+      "active": true,
+      "sortOrder": 1
+    }
+  ],
+  "leagues": [
+    {
+      "id": 1,
+      "regionalId": 1,
+      "name": "League 1",
+      "format": "Best of 9",
+      "sortOrder": 0
+    },
+    {
+      "id": 2,
+      "regionalId": 1,
+      "name": "League 2",
+      "format": "Best of 9",
+      "sortOrder": 1
+    },
+    {
+      "id": 3,
+      "regionalId": 1,
+      "name": "League 3",
+      "format": "Best of 9",
+      "sortOrder": 2
+    },
+    {
+      "id": 4,
+      "regionalId": 1,
+      "name": "League 4",
+      "format": "Best of 9",
+      "sortOrder": 3
+    },
+    {
+      "id": 5,
+      "regionalId": 2,
+      "name": "League 1",
+      "format": "Best of 9",
+      "sortOrder": 0
+    },
+    {
+      "id": 6,
+      "regionalId": 2,
+      "name": "League 2",
+      "format": "Best of 9",
+      "sortOrder": 1
+    },
+    {
+      "id": 7,
+      "regionalId": 2,
+      "name": "League 3",
+      "format": "Best of 9",
+      "sortOrder": 2
+    },
+    {
+      "id": 8,
+      "regionalId": 2,
+      "name": "League 4",
+      "format": "Best of 9",
+      "sortOrder": 3
+    }
+  ],
+  "users": [
+    {
+      "id": 1,
+      "name": "League Admin",
+      "email": "admin@tshdarts.com",
+      "password": "TSHAdmin2026",
+      "role": "admin",
+      "leagueId": null,
+      "regionalId": 1,
+      "avg": 0,
+      "country": "GB"
+    },
+    {
+      "id": 2,
+      "name": "Alex Hart",
+      "email": "alex@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 1,
+      "regionalId": 1,
+      "avg": 78.4,
+      "country": "GB"
+    },
+    {
+      "id": 3,
+      "name": "Morgan Blake",
+      "email": "morgan@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 1,
+      "regionalId": 1,
+      "avg": 76.1,
+      "country": "IE"
+    },
+    {
+      "id": 4,
+      "name": "Riley Cole",
+      "email": "riley@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 1,
+      "regionalId": 1,
+      "avg": 74.8,
+      "country": "NL"
+    },
+    {
+      "id": 5,
+      "name": "Sam Ortega",
+      "email": "sam@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 1,
+      "regionalId": 1,
+      "avg": 73.2,
+      "country": "ES"
+    },
+    {
+      "id": 6,
+      "name": "Jordan Vale",
+      "email": "jordan@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 2,
+      "regionalId": 1,
+      "avg": 68.9,
+      "country": "GB"
+    },
+    {
+      "id": 7,
+      "name": "Casey Quinn",
+      "email": "casey@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 2,
+      "regionalId": 1,
+      "avg": 67.4,
+      "country": "DE"
+    },
+    {
+      "id": 8,
+      "name": "Taylor Brooks",
+      "email": "taylor@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 5,
+      "regionalId": 2,
+      "avg": 75.6,
+      "country": "US"
+    },
+    {
+      "id": 9,
+      "name": "Drew Patel",
+      "email": "drew@tshdarts.com",
+      "password": "player123",
+      "role": "player",
+      "leagueId": 5,
+      "regionalId": 2,
+      "avg": 72,
+      "country": "CA"
+    },
+    {
+      "id": 10,
+      "name": "Gordon Rodman",
+      "email": "GRodman9707@gmail.com",
+      "password": "Rodman854",
+      "role": "player",
+      "leagueId": null,
+      "regionalChoice": "both",
+      "regionalIds": [
+        1,
+        2
+      ],
+      "regionalId": 1,
+      "dartcounterName": "Gordon Rodman",
+      "nickname": "Viking",
+      "avg": 40.37,
+      "country": ""
+    }
+  ],
+  "applications": [
+    {
+      "id": 1,
+      "userId": 10,
+      "name": "Gordon Rodman",
+      "email": "GRodman9707@gmail.com",
+      "regionalChoice": "both",
+      "regionalId": 1,
+      "regionalIds": [
+        1,
+        2
+      ],
+      "avg": 40.37,
+      "dartcounterName": "Gordon Rodman",
+      "nickname": "Viking",
+      "status": "pending",
+      "createdAt": "2026-08-15T23:01:47.968Z"
+    }
+  ],
+  "announcements": [
+    {
+      "id": 1,
+      "title": "WDL is now TSH Darts League",
+      "body": "World Darts League has been rebranded as The Social Hub Darts League. Same competition, same community, new name.",
+      "createdAt": "2026-08-01T12:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "title": "Season 1 fixtures are live",
+      "body": "Week 1 matches are up. Play on DartCounter and submit your result from My Matches.",
+      "createdAt": "2026-08-10T18:00:00.000Z"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": 1,
+      "leagueId": 1,
+      "week": 1,
+      "homeId": 2,
+      "awayId": 3,
+      "homeLegs": 5,
+      "awayLegs": 3,
+      "status": "played",
+      "date": "2026-08-08",
+      "oneEighties": 4,
+      "topCheckout": 116
+    },
+    {
+      "id": 2,
+      "leagueId": 1,
+      "week": 1,
+      "homeId": 4,
+      "awayId": 5,
+      "homeLegs": 5,
+      "awayLegs": 2,
+      "status": "played",
+      "date": "2026-08-09",
+      "oneEighties": 2,
+      "topCheckout": 96
+    },
+    {
+      "id": 3,
+      "leagueId": 1,
+      "week": 2,
+      "homeId": 2,
+      "awayId": 4,
+      "homeLegs": null,
+      "awayLegs": null,
+      "status": "scheduled",
+      "date": "2026-08-16",
+      "oneEighties": 0,
+      "topCheckout": 0
+    },
+    {
+      "id": 4,
+      "leagueId": 1,
+      "week": 2,
+      "homeId": 3,
+      "awayId": 5,
+      "homeLegs": null,
+      "awayLegs": null,
+      "status": "scheduled",
+      "date": "2026-08-16",
+      "oneEighties": 0,
+      "topCheckout": 0
+    },
+    {
+      "id": 5,
+      "leagueId": 2,
+      "week": 1,
+      "homeId": 6,
+      "awayId": 7,
+      "homeLegs": 4,
+      "awayLegs": 3,
+      "status": "played",
+      "date": "2026-08-08",
+      "oneEighties": 1,
+      "topCheckout": 80
+    },
+    {
+      "id": 6,
+      "leagueId": 5,
+      "week": 1,
+      "homeId": 8,
+      "awayId": 9,
+      "homeLegs": 5,
+      "awayLegs": 4,
+      "status": "played",
+      "date": "2026-08-09",
+      "oneEighties": 3,
+      "topCheckout": 124
+    }
+  ]
+}
