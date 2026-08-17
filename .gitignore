@@ -4,5 +4,6 @@ dist
 *.log
 data/sessions.json
 data/*.tmp
+data/uploads/
 .env
 .railway

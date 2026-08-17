@@ -23,6 +23,25 @@ const state = {
 function token() {
   return localStorage.getItem(TOKEN_KEY) || "";
 }
+function isStaff(u = state.user) {
+  return u?.role === "owner" || u?.role === "admin";
+}
+function screenshotUrl(id) {
+  return `/api/fixtures/${id}/screenshot?token=${encodeURIComponent(token())}`;
+}
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read screenshot"));
+    reader.readAsDataURL(file);
+  });
+}
+function fixtureStatus(f) {
+  if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
+  if (f.status === "submitted" || f.hasScreenshot) return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
+  return `<div class="text-xs font-bold tracking-widest text-red-500">SCHEDULED</div>`;
+}
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
@@ -69,7 +88,7 @@ function layout(inner, { arena = false, home = false } = {}) {
   ];
   if (state.user) {
     links.push(["/dashboard", "Dashboard"], ["/my-matches", "My Matches"]);
-    if (state.user.role === "admin") links.push(["/admin", "Admin"]);
+    if (isStaff()) links.push(["/admin", "Admin"]);
   }
   return `
     <div class="${home ? "arena-bg min-h-screen" : "min-h-screen bg-background"}">
@@ -279,7 +298,7 @@ async function pageLeague(slug, id) {
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10">
       <a href="/regionals/${slug}" class="gold text-sm font-bold inline-flex items-center gap-2">${crest(36, regionalCrest(slug))} ← ${esc(d.regional?.fullTitle || "")}</a>
-      ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc(d.league.name.toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 2 points for a win</p></div>`, "mt-4")}
+      ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc(d.league.name.toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
       <div class="mt-4 flex gap-2">
         <a href="/regionals/${slug}/leagues/${id}" class="${tab === "table" ? "btn-gold" : "btn-ghost"}">TABLE</a>
         <a href="/regionals/${slug}/leagues/${id}?tab=fixtures" class="${tab === "fixtures" ? "btn-gold" : "btn-ghost"}">FIXTURES</a>
@@ -289,7 +308,7 @@ async function pageLeague(slug, id) {
           ? `<div class="mt-4 space-y-3">${d.fixtures
               .map(
                 (f) =>
-                  panel(`<div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-xs uppercase tracking-widest text-muted">Week ${f.week} · ${esc(f.date)}</div><div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div><div>${f.status === "played" ? `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>` : `<div class="text-xs font-bold tracking-widest text-red-500">SCHEDULED</div>`}</div></div>`)
+                  panel(`<div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-xs uppercase tracking-widest text-muted">Week ${f.week} · ${esc(f.date)}</div><div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div><div>${fixtureStatus(f)}</div></div>`)
               )
               .join("")}</div>`
           : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
@@ -323,10 +342,10 @@ function authForm(title, fields, submitLabel, extra = "") {
 function pageSignIn() {
   return authForm(
     "Sign in",
-    `<input name="email" type="email" value="admin@tshdarts.com" required>
-     <input name="password" type="password" value="TSHAdmin2026" required>`,
+    `<input name="email" type="email" placeholder="Email" required autocomplete="email">
+     <input name="password" type="password" placeholder="Password" required autocomplete="current-password">`,
     "SIGN IN",
-    `<p class="mt-2 text-sm text-muted">Demo admin is pre-filled. Sample players use password <b>player123</b>.</p><p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
+    `<p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
   );
 }
 function pageSignUp() {
@@ -437,8 +456,9 @@ async function pageDashboard() {
       <div class="mt-6 grid gap-4 md:grid-cols-3">
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>`)}
         ${panel(`<div class="text-xs tracking-widest text-muted">RESULTS IN</div><div class="mt-2 text-3xl font-extrabold gold">${played.length}</div>`)}
-        ${panel(`<a href="/my-matches" class="text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>`)}
+        ${panel(`<div class="text-xs tracking-widest text-muted">AWAITING ADMIN</div><div class="mt-2 text-3xl font-extrabold gold">${d.fixtures.filter((f) => f.status === "submitted").length}</div>`)}
       </div>
+      <a href="/my-matches" class="mt-6 inline-block text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>
     </div>`,
     { arena: true }
   );
@@ -448,28 +468,27 @@ async function pageMyMatches() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="text-3xl font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">Play on DartCounter, then enter the legs so the table updates.</p>
+      <p class="mt-2 text-sm text-muted">Play on DartCounter. One player from the fixture uploads a screenshot. A league admin then enters the official score.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
+      ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 space-y-3">
         ${d.fixtures
-          .map(
-            (f) =>
-              panel(`<div class="flex flex-wrap items-center justify-between gap-3">
+          .map((f) => {
+            let action = fixtureStatus(f);
+            if (f.status === "scheduled") {
+              action = `<form class="space-y-2" data-form="UPLOAD" data-id="${f.id}">
+                <input type="file" name="screenshot" accept="image/png,image/jpeg,image/webp" required>
+                <button class="btn-gold w-full">UPLOAD SCREENSHOT</button>
+              </form>`;
+            } else if (f.status === "submitted") {
+              action = `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">SCREENSHOT IN</div><div class="mt-1 text-xs text-muted">Uploaded by ${esc(f.screenshotByName || "a player")}. Waiting on admin to confirm stats.</div></div>`;
+            }
+            return panel(`<div class="grid gap-3 md:grid-cols-[1fr_220px] md:items-center">
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · Week ${f.week} · ${esc(f.date)}</div>
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div>
-                ${
-                  f.status === "played"
-                    ? `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`
-                    : `<form class="grid gap-2 md:grid-cols-5" data-form="RESULT" data-id="${f.id}">
-                        <input name="homeLegs" placeholder="Home" required>
-                        <input name="awayLegs" placeholder="Away" required>
-                        <input name="oneEighties" placeholder="180s">
-                        <input name="topCheckout" placeholder="Checkout">
-                        <button class="btn-gold">SAVE</button>
-                      </form>`
-                }
-              </div>`)
-          )
+                ${action}
+              </div>`);
+          })
           .join("")}
       </div>
     </div>`,
@@ -484,7 +503,7 @@ async function pagePlayer(id) {
         <h1 class="mt-2 text-4xl font-extrabold">${esc(d.player.name)}</h1>
         <p class="mt-2 text-muted">${esc(d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p>`)}
       <div class="mt-4 space-y-3">${d.fixtures
-        .map((f) => panel(`<div class="flex justify-between"><div>${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : "TBD"}</div></div>`))
+        .map((f) => panel(`<div class="flex justify-between"><div>${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
         .join("")}</div>
     </div>`,
     { arena: true }
@@ -502,10 +521,13 @@ function pageRules() {
           <li>501, double out.</li>
           <li>Each regional has League 1, League 2, League 3, and League 4.</li>
           <li>Every match is Best of 9 (first to 5 legs).</li>
-          <li>2 points for a match win. Legs for/against break ties.</li>
+          <li>1 point per leg won, plus 2 extra points for the match win.</li>
+          <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
         </ul>
+        <h2 class="text-lg font-bold text-white">Results</h2>
+        <p>One player from the fixture uploads a DartCounter screenshot. League admins check the screenshot and enter the official legs, 180s, and checkout for the table.</p>
         <h2 class="text-lg font-bold text-white">Scheduling</h2>
-        <p>Arrange a time, play on DartCounter, enter the result on My Matches. Admins can create fixtures and place players into divisions.</p>
+        <p>Arrange a time, play on DartCounter, then upload the screenshot from My Matches. Owners place players and assign league admins.</p>
       </div>
     `)}</div>`,
     { arena: true }
@@ -529,26 +551,89 @@ async function pageNews() {
 }
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
-  const players = d.users.filter((u) => u.role === "player");
-  const pending = d.applications.filter((a) => a.status === "pending").length;
+  const registered = d.users.filter((u) => u.role === "player" || u.role === "admin");
+  const pending = d.applications.filter((a) => a.status === "pending");
+  const review = d.fixtures.filter((f) => f.status === "submitted");
+  const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
+  const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
+  const ownerSection = d.isOwner
+    ? `${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
+        <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can make someone a league admin.</p>
+        <div class="mt-3 space-y-2">${d.owners.map((o) => `<div class="text-sm">${esc(o.name)} · ${esc(o.email)}</div>`).join("")}</div>
+        ${
+          d.ownerSlots.used < d.ownerSlots.max
+            ? `<form class="mt-4 grid gap-3 md:grid-cols-2" data-form="OWNER">
+                <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => p.role !== "owner").map((p) => `<option value="${p.id}">${esc(p.name)} · ${esc(p.email)}</option>`).join("")}</select>
+                <button class="btn-gold">MAKE OWNER</button>
+              </form>`
+            : `<p class="mt-3 text-sm text-muted">All three owner slots are filled.</p>`
+        }`, "mt-6")}
+      ${panel(`<h2 class="text-lg font-bold">League admins</h2>
+        <p class="mt-1 text-sm text-muted">Assign a registered player as admin of one league. They can view screenshots and enter official stats for that league.</p>
+        <div class="mt-3 space-y-2">${
+          d.leagueAdmins.length
+            ? d.leagueAdmins
+                .map(
+                  (a) =>
+                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}">
+                      <span>${esc(a.name)} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
+                      <button class="btn-ghost">REMOVE ADMIN</button>
+                    </form>`
+                )
+                .join("")
+            : `<p class="text-sm text-muted">None assigned yet.</p>`
+        }</div>
+        <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="ASSIGN">
+          <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => p.role === "player").map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
+          <button class="btn-gold">ASSIGN ADMIN</button>
+        </form>`, "mt-4")}`
+    : "";
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10">
-      <h1 class="text-4xl font-extrabold">League Admin</h1>
-      <p class="mt-2 text-muted">Place players, schedule matches, and post news.</p>
+      <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : "League admin"}</h1>
+      <p class="mt-2 text-muted">${d.isOwner ? "Promote owners (max 3), assign league admins, and run the league." : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`}</p>
+      ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
-          [d.stats.divisions, "DIVISIONS"],
-          [pending, "PENDING APPS"],
+          [pending.length, "PENDING APPS"],
+          [review.length, "TO CONFIRM"],
           [d.fixtures.filter((f) => f.status === "scheduled").length, "OPEN FIXTURES"],
         ]
           .map(([v, l]) => panel(`<div class="text-center"><div class="text-3xl font-extrabold gold">${v}</div><div class="mt-1 text-xs tracking-widest text-muted">${l}</div></div>`))
           .join("")}
       </div>
+      ${ownerSection}
+      ${panel(`<h2 class="text-lg font-bold">Results to confirm</h2>
+        <p class="mt-1 text-sm text-muted">Check the screenshot, then enter legs (first to 5), 180s, and highest checkout. Points: 1 per leg won + 2 for the match win.</p>
+        ${
+          review.length
+            ? review
+                .map(
+                  (f) =>
+                    `<div class="mt-4 border-t border-white/10 pt-4">
+                      <div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · Week ${f.week}</div>
+                      <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                      <p class="mt-1 text-xs text-muted">Screenshot by ${esc(f.screenshotByName || "a player")}</p>
+                      <img class="result-shot mt-3" src="${screenshotUrl(f.id)}" alt="Match screenshot">
+                      <form class="mt-3 grid gap-2 md:grid-cols-6" data-form="CONFIRM" data-id="${f.id}">
+                        <input name="homeLegs" type="number" min="0" max="5" placeholder="${esc(f.homeName)} legs" required>
+                        <input name="awayLegs" type="number" min="0" max="5" placeholder="${esc(f.awayName)} legs" required>
+                        <input name="homeOneEighties" type="number" min="0" placeholder="${esc(f.homeName)} 180s">
+                        <input name="awayOneEighties" type="number" min="0" placeholder="${esc(f.awayName)} 180s">
+                        <input name="topCheckout" type="number" min="0" max="170" placeholder="Top checkout">
+                        <button class="btn-gold">CONFIRM</button>
+                      </form>
+                    </div>`
+                )
+                .join("")
+            : `<p class="mt-3 text-muted">No screenshots waiting.</p>`
+        }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Pending applications</h2>${
-        d.applications.length
-          ? d.applications
+        pending.length
+          ? pending
               .map(
                 (a) =>
                   `<div class="flex justify-between border-b border-white/10 py-2 text-sm"><span>${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
@@ -558,25 +643,29 @@ async function pageAdmin() {
       }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
-          <select name="userId" required><option value="">Player</option>${players.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
-          <select name="leagueId" required><option value="">League</option>${d.leagues.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select>
+          <select name="userId" required><option value="">Player</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <button class="btn-gold">PLACE</button>
         </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Create fixture</h2>
         <form class="mt-3 grid gap-3 md:grid-cols-5" data-form="FIXTURE">
-          <select name="leagueId" required><option value="">League</option>${d.leagues.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select>
+          <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <input name="week" value="1" placeholder="Week">
-          <select name="homeId" required><option value="">Home</option>${players.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
-          <select name="awayId" required><option value="">Away</option>${players.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="homeId" required><option value="">Home</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="awayId" required><option value="">Away</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
           <input name="date" type="date">
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
-      ${panel(`<h2 class="text-lg font-bold">Post announcement</h2>
+      ${
+        d.isOwner
+          ? panel(`<h2 class="text-lg font-bold">Post announcement</h2>
         <form class="mt-3 space-y-3" data-form="NEWS">
           <input name="title" placeholder="Title" required>
           <textarea name="body" rows="3" placeholder="Body" required></textarea>
           <button class="btn-gold">PUBLISH</button>
-        </form>`, "mt-4")}
+        </form>`, "mt-4")
+          : ""
+      }
     </div>`,
     { arena: true }
   );
@@ -612,7 +701,7 @@ async function render() {
       go("/sign-in");
       return;
     }
-    if (route[0] === "admin" && state.user?.role !== "admin") {
+    if (route[0] === "admin" && !isStaff()) {
       go("/dashboard");
       return;
     }
@@ -698,7 +787,7 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify(fd) });
       localStorage.setItem(TOKEN_KEY, d.token);
       state.user = d.user;
-      go(d.user.role === "admin" ? "/admin" : "/dashboard");
+      go(isStaff(d.user) ? "/admin" : "/dashboard");
     } else if (kind === "SIGNUP") {
       Object.assign(state.signup, fd);
       const step = Number(form.dataset.step || state.signup.step || 1);
@@ -738,9 +827,31 @@ document.addEventListener("submit", async (e) => {
       await api("/api/apply", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Application received. An admin will place you in a division.";
       render();
-    } else if (kind === "SAVE" || kind === "RESULT") {
-      await api(`/api/my-fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
+    } else if (kind === "UPLOAD") {
+      const file = form.querySelector('input[type="file"]')?.files?.[0];
+      if (!file) throw new Error("Choose a screenshot");
+      const image = await fileToDataUrl(file);
+      await api(`/api/my-fixtures/${form.dataset.id}/screenshot`, { method: "POST", body: JSON.stringify({ image }) });
+      state.notice = "Screenshot uploaded. A league admin will enter the official score.";
       render();
+    } else if (kind === "CONFIRM") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Result confirmed. Table updated.";
+      render();
+    } else if (kind === "ASSIGN") {
+      await api("/api/admin/assign-admin", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "League admin assigned.";
+      render();
+    } else if (kind === "OWNER") {
+      await api("/api/admin/assign-owner", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Owner added.";
+      render();
+    } else if (kind === "REVOKE" || kind === "REMOVE ADMIN") {
+      await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id }) });
+      state.notice = "Admin access removed.";
+      render();
+    } else if (kind === "SAVE" || kind === "RESULT") {
+      throw new Error("Players upload a screenshot. Admins enter the official score.");
     } else if (kind === "PLACE") {
       await api("/api/admin/place-player", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Player placed.";
