@@ -95,3 +95,14 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   border-color: #e8b425;
   box-shadow: 0 0 0 1px #e8b425;
 }
+.result-shot {
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  background: #000;
+  border-radius: 0.5rem;
+  border: 1px solid #1c2433;
+}
+input[type="file"] {
+  padding: 0.55rem;
+}

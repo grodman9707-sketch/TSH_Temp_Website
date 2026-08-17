@@ -132,8 +132,9 @@
       "name": "League Admin",
       "email": "admin@tshdarts.com",
       "password": "TSHAdmin2026",
-      "role": "admin",
+      "role": "player",
       "leagueId": null,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 0,
       "country": "GB"
@@ -145,6 +146,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 1,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 78.4,
       "country": "GB"
@@ -156,6 +158,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 1,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 76.1,
       "country": "IE"
@@ -167,6 +170,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 1,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 74.8,
       "country": "NL"
@@ -178,6 +182,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 1,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 73.2,
       "country": "ES"
@@ -189,6 +194,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 2,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 68.9,
       "country": "GB"
@@ -200,6 +206,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 2,
+      "adminLeagueId": null,
       "regionalId": 1,
       "avg": 67.4,
       "country": "DE"
@@ -211,6 +218,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 5,
+      "adminLeagueId": null,
       "regionalId": 2,
       "avg": 75.6,
       "country": "US"
@@ -222,6 +230,7 @@
       "password": "player123",
       "role": "player",
       "leagueId": 5,
+      "adminLeagueId": null,
       "regionalId": 2,
       "avg": 72,
       "country": "CA"
@@ -230,9 +239,11 @@
       "id": 10,
       "name": "Gordon Rodman",
       "email": "GRodman9707@gmail.com",
-      "password": "Rodman854",
-      "role": "player",
+      "username": "GViking",
+      "password": "Rodm@n85",
+      "role": "owner",
       "leagueId": null,
+      "adminLeagueId": null,
       "regionalChoice": "both",
       "regionalIds": [
         1,
