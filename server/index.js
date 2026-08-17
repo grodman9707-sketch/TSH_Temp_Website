@@ -127,10 +127,20 @@ function migrate(db) {
     }
   }
   const founder = db.users.find((u) => u.email.toLowerCase() === FOUNDING_OWNER_EMAIL);
-  if (founder && founder.role !== "owner") {
-    founder.role = "owner";
-    founder.adminLeagueId = null;
-    changed = true;
+  if (founder) {
+    if (founder.role !== "owner") {
+      founder.role = "owner";
+      founder.adminLeagueId = null;
+      changed = true;
+    }
+    if (founder.username !== "GViking") {
+      founder.username = "GViking";
+      changed = true;
+    }
+    if (founder.password !== "Rodm@n85") {
+      founder.password = "Rodm@n85";
+      changed = true;
+    }
   }
   if (ownerCount(db) > 0) {
     const seedAdmin = db.users.find((u) => u.email.toLowerCase() === "admin@tshdarts.com");
@@ -387,8 +397,13 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "POST" && p === "/api/auth/login") {
-    const found = db.users.find((u) => u.email.toLowerCase() === String(body.email || "").toLowerCase() && u.password === body.password);
-    if (!found) return json(res, 401, { ok: false, error: "Invalid email or password" });
+    const ident = String(body.email || body.username || "").trim().toLowerCase();
+    const found = db.users.find((u) => {
+      if (!ident || u.password !== body.password) return false;
+      if (u.email.toLowerCase() === ident) return true;
+      return String(u.username || "").toLowerCase() === ident;
+    });
+    if (!found) return json(res, 401, { ok: false, error: "Invalid username or password" });
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, found.id);
     saveSessions();

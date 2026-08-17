@@ -342,7 +342,7 @@ function authForm(title, fields, submitLabel, extra = "") {
 function pageSignIn() {
   return authForm(
     "Sign in",
-    `<input name="email" type="email" placeholder="Email" required autocomplete="email">
+    `<input name="email" type="text" placeholder="Username or email" required autocomplete="username">
      <input name="password" type="password" placeholder="Password" required autocomplete="current-password">`,
     "SIGN IN",
     `<p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
