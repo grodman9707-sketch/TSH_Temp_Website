@@ -150,10 +150,9 @@ async function pageHome() {
       }
     }
   }
-  if (!ticker.length) ticker = [{ div: "LEAGUE 1", text: "Season 1 is live — apply now", live: true }];
+  if (!ticker.length) ticker = [{ div: "TSH", text: "Sign up to join TSH Darts League", live: true }];
   const loop = [...ticker, ...ticker];
   const faq = content.content.faq || [];
-  const premium = content.content.premium || [];
   return layout(
     `
     <section class="relative flex min-h-[calc(100vh-3.5rem)] flex-col justify-end pb-24 pt-10">
@@ -229,9 +228,9 @@ async function pageHome() {
           <a class="mt-3 inline-block text-sm gold" href="mailto:worlddartsleagueinfo@gmail.com">worlddartsleagueinfo@gmail.com</a>
         </div>
         <div>
-          <h3 class="text-lg font-bold">Player Premium</h3>
-          <ul class="mt-3 space-y-1 text-sm text-muted">${premium.map((p) => `<li>• ${esc(p)}</li>`).join("")}</ul>
-          <div class="mt-4 flex gap-3"><a href="/apply" class="btn-gold">GET PREMIUM</a><a href="/rules" class="btn-ghost">Rules</a></div>
+          <h3 class="text-lg font-bold">Join the league</h3>
+          <p class="mt-3 text-sm text-muted">Free to enter. Create an account and we will place you by your DartCounter average.</p>
+          <div class="mt-4 flex gap-3"><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/rules" class="btn-ghost">Rules</a></div>
         </div>
       </div>
       <p class="mx-auto mt-10 max-w-5xl text-xs text-muted">© 2026 The Social Hub Darts League. All rights reserved.</p>

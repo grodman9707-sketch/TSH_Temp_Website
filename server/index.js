@@ -14,6 +14,17 @@ const uploadsDir = path.join(dataDir, "uploads");
 const publicDir = path.join(root, "public");
 const MAX_OWNERS = 3;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
+const MOCK_EMAILS = new Set([
+  "admin@tshdarts.com",
+  "alex@tshdarts.com",
+  "morgan@tshdarts.com",
+  "riley@tshdarts.com",
+  "sam@tshdarts.com",
+  "jordan@tshdarts.com",
+  "casey@tshdarts.com",
+  "taylor@tshdarts.com",
+  "drew@tshdarts.com",
+]);
 const cookieSecure = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.NODE_ENV === "production";
 
 function writeJson(file, data) {
@@ -142,13 +153,22 @@ function migrate(db) {
       changed = true;
     }
   }
-  if (ownerCount(db) > 0) {
-    const seedAdmin = db.users.find((u) => u.email.toLowerCase() === "admin@tshdarts.com");
-    if (seedAdmin && seedAdmin.role === "admin") {
-      seedAdmin.role = "player";
-      seedAdmin.adminLeagueId = null;
-      changed = true;
-    }
+  const mockUsers = db.users.filter((u) => MOCK_EMAILS.has(String(u.email || "").toLowerCase()));
+  if (mockUsers.length) {
+    const mockIds = new Set(mockUsers.map((u) => u.id));
+    db.users = db.users.filter((u) => !mockIds.has(u.id));
+    db.fixtures = db.fixtures.filter((f) => !mockIds.has(f.homeId) && !mockIds.has(f.awayId));
+    db.applications = db.applications.filter((a) => !mockIds.has(a.userId) && !MOCK_EMAILS.has(String(a.email || "").toLowerCase()));
+    changed = true;
+  }
+  const demoNews = db.announcements.filter((a) => a.title === "Season 1 fixtures are live");
+  if (demoNews.length) {
+    db.announcements = db.announcements.filter((a) => a.title !== "Season 1 fixtures are live");
+    changed = true;
+  }
+  if (Array.isArray(db.content?.premium) && db.content.premium.length) {
+    db.content.premium = [];
+    changed = true;
   }
   for (const f of db.fixtures) {
     if (!("screenshotFile" in f)) {
