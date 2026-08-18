@@ -106,3 +106,31 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
 input[type="file"] {
   padding: 0.55rem;
 }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #999;
+  font-size: 0.875rem;
+}
+.check-row input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  accent-color: #e8b425;
+}
+.avatar {
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(232, 180, 37, 0.45);
+  background: #101522;
+  display: inline-block;
+  vertical-align: middle;
+}
+.avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  color: #e8b425;
+}

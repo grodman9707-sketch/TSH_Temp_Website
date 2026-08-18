@@ -136,7 +136,9 @@
       "dartcounterName": "Gordon Rodman",
       "nickname": "Viking",
       "avg": 40.37,
-      "country": ""
+      "country": "",
+      "avatarFile": null,
+      "avatarUpdatedAt": null
     }
   ],
   "applications": [],
