@@ -64,10 +64,20 @@ function saveSessions() {
   writeJson(sessionsPath, Object.fromEntries(sessions));
 }
 
-function sessionCookie(token, { remember = false, clear = false } = {}) {
-  if (clear) return "tsh_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
-  const persist = remember ? "; Max-Age=2592000" : "";
-  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax${persist}${cookieSecure ? "; Secure" : ""}`;
+function cookieSecureFor(req) {
+  const proto = String(req?.headers?.["x-forwarded-proto"] || "");
+  if (proto.includes("https")) return true;
+  if (proto.includes("http")) return false;
+  return cookieSecure;
+}
+
+function sessionCookie(token, { remember = false, clear = false, req } = {}) {
+  const secure = cookieSecureFor(req) ? "; Secure" : "";
+  if (clear) return `tsh_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+  const persist = remember
+    ? `; Max-Age=2592000; Expires=${new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString()}`
+    : "";
+  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax${persist}${secure}`;
 }
 
 ensureStore();
@@ -595,7 +605,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, created.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(created, db) }, { "Set-Cookie": sessionCookie(token, { remember: true }) });
+    return json(res, 200, { ok: true, token, user: publicUser(created, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
   if (method === "POST" && p === "/api/auth/login") {
@@ -610,7 +620,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, found.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember }) });
+    return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
   if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
@@ -621,12 +631,12 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && p === "/api/auth/me") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    return json(res, 200, { ok: true, user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
+    return json(res, 200, { ok: true, token: tokenFrom(req, url), user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
   }
   if (method === "POST" && p === "/api/auth/logout") {
     sessions.delete(tokenFrom(req, url));
     saveSessions();
-    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true }) });
+    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true, req }) });
   }
 
   const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);

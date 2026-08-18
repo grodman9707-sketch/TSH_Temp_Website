@@ -119,6 +119,26 @@ input[type="file"] {
   padding: 0;
   accent-color: #e8b425;
 }
+.password-wrap {
+  position: relative;
+}
+.password-wrap input {
+  padding-right: 4.4rem;
+}
+.password-toggle {
+  position: absolute;
+  right: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  color: #e8b425;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.2rem;
+}
 .avatar {
   border-radius: 999px;
   object-fit: cover;
