@@ -64,9 +64,10 @@ function saveSessions() {
   writeJson(sessionsPath, Object.fromEntries(sessions));
 }
 
-function sessionCookie(token, clear = false) {
+function sessionCookie(token, { remember = false, clear = false } = {}) {
   if (clear) return "tsh_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
-  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${cookieSecure ? "; Secure" : ""}`;
+  const persist = remember ? "; Max-Age=2592000" : "";
+  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax${persist}${cookieSecure ? "; Secure" : ""}`;
 }
 
 ensureStore();
@@ -91,8 +92,12 @@ function writeDb(db) {
   writeJson(dbPath, db);
 }
 function publicUser(u) {
-  const { password, ...rest } = u;
-  return rest;
+  const { password, avatarFile, ...rest } = u;
+  return {
+    ...rest,
+    hasAvatar: Boolean(avatarFile),
+    avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
+  };
 }
 function json(res, status, data, extraHeaders = {}) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...extraHeaders });
@@ -134,6 +139,15 @@ function migrate(db) {
   for (const u of db.users) {
     if (!("adminLeagueId" in u)) {
       u.adminLeagueId = null;
+      changed = true;
+    }
+    if (!("username" in u)) {
+      u.username = "";
+      changed = true;
+    }
+    if (!("avatarFile" in u)) {
+      u.avatarFile = null;
+      u.avatarUpdatedAt = null;
       changed = true;
     }
   }
@@ -186,6 +200,8 @@ function standingsForLeague(db, leagueId) {
   const rows = players.map((p) => ({
     playerId: p.id,
     name: p.name,
+    nickname: p.nickname || "",
+    hasAvatar: Boolean(p.avatarFile),
     avg: p.avg,
     played: 0,
     won: 0,
@@ -242,22 +258,22 @@ function withNames(db, f) {
   };
 }
 
-function saveDataUrlImage(dataUrl, destBase) {
+function saveDataUrlImage(dataUrl, destBase, maxBytes = 5 * 1024 * 1024) {
   const m = String(dataUrl || "").match(/^data:(image\/(png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=\s]+)$/i);
   if (!m) {
-    const err = new Error("Upload a PNG, JPG, or WEBP screenshot");
+    const err = new Error("Upload a PNG, JPG, or WEBP image");
     err.status = 400;
     throw err;
   }
   const ext = m[2].toLowerCase() === "jpeg" || m[2].toLowerCase() === "jpg" ? "jpg" : m[2].toLowerCase();
   const buf = Buffer.from(m[3].replace(/\s/g, ""), "base64");
   if (!buf.length) {
-    const err = new Error("Screenshot file was empty");
+    const err = new Error("Image file was empty");
     err.status = 400;
     throw err;
   }
-  if (buf.length > 5 * 1024 * 1024) {
-    const err = new Error("Screenshot must be under 5MB");
+  if (buf.length > maxBytes) {
+    const err = new Error("Image is too large");
     err.status = 400;
     throw err;
   }
@@ -265,6 +281,17 @@ function saveDataUrlImage(dataUrl, destBase) {
   const filename = `${destBase}.${ext}`;
   fs.writeFileSync(path.join(uploadsDir, filename), buf);
   return filename;
+}
+
+function removeUpload(filename) {
+  if (!filename) return;
+  const filePath = path.join(uploadsDir, path.basename(filename));
+  if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    /* ignore */
+  }
 }
 
 function validateLegs(homeLegs, awayLegs) {
@@ -382,6 +409,7 @@ async function handleApi(req, res, url) {
       id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
       name,
       email,
+      username: "",
       password,
       role: "player",
       leagueId: null,
@@ -393,6 +421,8 @@ async function handleApi(req, res, url) {
       nickname: body.nickname || "",
       avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
       country: "",
+      avatarFile: null,
+      avatarUpdatedAt: null,
     };
     db.users.push(created);
     db.applications.push({
@@ -413,7 +443,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, created.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(created) }, { "Set-Cookie": sessionCookie(token) });
+    return json(res, 200, { ok: true, token, user: publicUser(created) }, { "Set-Cookie": sessionCookie(token, { remember: true }) });
   }
 
   if (method === "POST" && p === "/api/auth/login") {
@@ -424,14 +454,15 @@ async function handleApi(req, res, url) {
       return String(u.username || "").toLowerCase() === ident;
     });
     if (!found) return json(res, 401, { ok: false, error: "Invalid username or password" });
+    const remember = body.remember === true || body.remember === "1" || body.remember === "on";
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, found.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(found) }, { "Set-Cookie": sessionCookie(token) });
+    return json(res, 200, { ok: true, token, user: publicUser(found), remember }, { "Set-Cookie": sessionCookie(token, { remember }) });
   }
 
   if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
-    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures"].some((x) => p === x || p.startsWith(x))) {
+    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
   }
@@ -443,7 +474,75 @@ async function handleApi(req, res, url) {
   if (method === "POST" && p === "/api/auth/logout") {
     sessions.delete(tokenFrom(req, url));
     saveSessions();
-    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", true) });
+    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true }) });
+  }
+
+  const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);
+  if (method === "GET" && avatarGet) {
+    const found = db.users.find((u) => u.id === Number(avatarGet[1]));
+    if (!found?.avatarFile) return json(res, 404, { ok: false, error: "No avatar" });
+    const filePath = path.join(uploadsDir, path.basename(found.avatarFile));
+    if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No avatar" });
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, { "Content-Type": mime[ext] || "image/jpeg", "Cache-Control": "public, max-age=3600" });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  if (method === "POST" && p === "/api/account/profile") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const name = String(body.name || "").trim();
+    if (!name) return json(res, 400, { ok: false, error: "Name is required" });
+    u.name = name;
+    u.nickname = String(body.nickname || "").trim();
+    u.dartcounterName = String(body.dartcounterName || "").trim() || u.name;
+    if (body.avg !== undefined && body.avg !== "") {
+      u.avg = Number(String(body.avg).replace(/[^0-9.]/g, "")) || 0;
+    }
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u) });
+  }
+
+  if (method === "POST" && p === "/api/account") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const email = String(body.email || "").trim();
+    const username = String(body.username || "").trim();
+    if (!email) return json(res, 400, { ok: false, error: "Email is required" });
+    if (db.users.some((x) => x.id !== u.id && x.email.toLowerCase() === email.toLowerCase())) {
+      return json(res, 400, { ok: false, error: "That email is already in use" });
+    }
+    if (username && db.users.some((x) => x.id !== u.id && String(x.username || "").toLowerCase() === username.toLowerCase())) {
+      return json(res, 400, { ok: false, error: "That username is already in use" });
+    }
+    const newPassword = String(body.newPassword || "");
+    if (newPassword) {
+      if (String(body.currentPassword || "") !== u.password) {
+        return json(res, 400, { ok: false, error: "Current password is incorrect" });
+      }
+      if (newPassword.length < 6) return json(res, 400, { ok: false, error: "New password must be at least 6 characters" });
+      u.password = newPassword;
+    }
+    u.email = email;
+    u.username = username;
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u) });
+  }
+
+  if (method === "POST" && p === "/api/account/avatar") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    try {
+      const filename = saveDataUrlImage(body.image, `avatar-${u.id}`, 2 * 1024 * 1024);
+      if (u.avatarFile && u.avatarFile !== filename) removeUpload(u.avatarFile);
+      u.avatarFile = filename;
+      u.avatarUpdatedAt = Date.now().toString();
+    } catch (err) {
+      return json(res, err.status || 400, { ok: false, error: err.message === "Image is too large" ? "Avatar must be under 2MB" : err.message });
+    }
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u) });
   }
   if (method === "POST" && p === "/api/apply") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });

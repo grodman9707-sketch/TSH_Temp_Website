@@ -21,7 +21,32 @@ const state = {
 };
 
 function token() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || "";
+}
+function storeToken(tok, remember) {
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  if (!tok) return;
+  if (remember) localStorage.setItem(TOKEN_KEY, tok);
+  else sessionStorage.setItem(TOKEN_KEY, tok);
+}
+function clearToken() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+}
+function avatarImg(user, size = 40) {
+  if (!user) return "";
+  const label = esc(user.nickname || user.name || "Player");
+  if (user.hasAvatar || user.avatarUrl) {
+    return `<img src="${esc(user.avatarUrl || `/api/users/${user.id}/avatar`)}" alt="${label}" class="avatar" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
+  }
+  const letter = String(user.nickname || user.name || "?").trim().slice(0, 1).toUpperCase() || "?";
+  return `<span class="avatar avatar-fallback" style="width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * 0.4))}px">${letter}</span>`;
+}
+function roleLabel(u) {
+  if (u?.role === "owner") return "Owner";
+  if (u?.role === "admin") return "League admin";
+  return "Player";
 }
 function isStaff(u = state.user) {
   return u?.role === "owner" || u?.role === "admin";
@@ -115,7 +140,7 @@ function layout(inner, { arena = false, home = false } = {}) {
           <div class="flex gap-2">
             ${
               state.user
-                ? `<a href="/dashboard" class="btn-gold">${esc(state.user.name.split(" ")[0].toUpperCase())}</a>`
+                ? `<a href="/dashboard" class="inline-flex items-center gap-2 btn-gold py-1 pl-1 pr-3">${avatarImg(state.user, 28)}<span>${esc((state.user.nickname || state.user.name).split(" ")[0].toUpperCase())}</span></a>`
                 : `<a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/sign-in" class="btn-ghost hidden sm:inline-flex">SIGN IN</a>`
             }
           </div>
@@ -313,7 +338,7 @@ async function pageLeague(slug, id) {
           : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
               .map(
                 (row, i) =>
-                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}">${esc(row.name)}</a></td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg).toFixed(1)}</td></tr>`
+                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a></td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg).toFixed(1)}</td></tr>`
               )
               .join("")}</tbody></table></div>`
       }
@@ -342,7 +367,8 @@ function pageSignIn() {
   return authForm(
     "Sign in",
     `<input name="email" type="text" placeholder="Username or email" required autocomplete="username">
-     <input name="password" type="password" placeholder="Password" required autocomplete="current-password">`,
+     <input name="password" type="password" placeholder="Password" required autocomplete="current-password">
+     <label class="check-row"><input type="checkbox" name="remember" value="1"> Remember me</label>`,
     "SIGN IN",
     `<p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
   );
@@ -445,19 +471,64 @@ async function pageApply() {
 }
 async function pageDashboard() {
   const d = await api("/api/my-fixtures");
+  const u = state.user;
   const next = d.fixtures.find((f) => f.status === "scheduled");
   const played = d.fixtures.filter((f) => f.status === "played");
   return layout(
     `<div class="mx-auto max-w-4xl px-4 py-10">
-      <p class="text-xs font-semibold tracking-[0.3em] gold">PLAYER HUB</p>
-      <h1 class="mt-2 text-4xl font-extrabold">${esc(state.user.nickname || state.user.name)}</h1>
-      <p class="mt-2 text-muted">${state.user.dartcounterName ? `DartCounter: ${esc(state.user.dartcounterName)} · ` : ""}${state.user.avg ? `3DA ${esc(state.user.avg)}` : "Application pending"}</p>
+      <div class="flex flex-wrap items-center gap-4">
+        ${avatarImg(u, 88)}
+        <div>
+          <p class="text-xs font-semibold tracking-[0.3em] gold">PLAYER HUB</p>
+          <h1 class="mt-2 text-4xl font-extrabold">${esc(u.nickname || u.name)}</h1>
+          <p class="mt-2 text-muted">${esc(roleLabel(u))}${u.dartcounterName ? ` · DartCounter: ${esc(u.dartcounterName)}` : ""}${u.avg ? ` · 3DA ${esc(u.avg)}` : ""}</p>
+        </div>
+      </div>
+      ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
+      ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 grid gap-4 md:grid-cols-3">
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>`)}
         ${panel(`<div class="text-xs tracking-widest text-muted">RESULTS IN</div><div class="mt-2 text-3xl font-extrabold gold">${played.length}</div>`)}
         ${panel(`<div class="text-xs tracking-widest text-muted">AWAITING ADMIN</div><div class="mt-2 text-3xl font-extrabold gold">${d.fixtures.filter((f) => f.status === "submitted").length}</div>`)}
       </div>
       <a href="/my-matches" class="mt-6 inline-block text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>
+
+      <div class="mt-10 grid gap-4 md:grid-cols-2">
+        ${panel(`<h2 class="text-lg font-bold">Player profile</h2>
+          <p class="mt-1 text-sm text-muted">How you appear on tables and in matches.</p>
+          <form class="mt-4 space-y-3" data-form="PROFILE">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Name</label>
+            <input name="name" value="${esc(u.name || "")}" required>
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Nickname</label>
+            <input name="nickname" value="${esc(u.nickname || "")}" placeholder="Optional">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">DartCounter name</label>
+            <input name="dartcounterName" value="${esc(u.dartcounterName || "")}">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">3DA</label>
+            <input name="avg" data-numeric="avg" inputmode="decimal" value="${esc(u.avg || "")}">
+            <button class="btn-gold">SAVE PROFILE</button>
+          </form>`)}
+        ${panel(`<h2 class="text-lg font-bold">User account</h2>
+          <p class="mt-1 text-sm text-muted">Sign-in details. Role: ${esc(roleLabel(u))}.</p>
+          <form class="mt-4 space-y-3" data-form="ACCOUNT">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Username</label>
+            <input name="username" value="${esc(u.username || "")}" placeholder="Optional login name" autocomplete="username">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Email</label>
+            <input name="email" type="email" value="${esc(u.email || "")}" required autocomplete="email">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Current password</label>
+            <input name="currentPassword" type="password" placeholder="Needed to change password" autocomplete="current-password">
+            <label class="block text-xs font-semibold uppercase tracking-widest text-muted">New password</label>
+            <input name="newPassword" type="password" placeholder="Leave blank to keep current" autocomplete="new-password">
+            <button class="btn-gold">SAVE ACCOUNT</button>
+          </form>`)}
+      </div>
+      ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
+        <p class="mt-1 text-sm text-muted">PNG, JPG, or WEBP. Max 2MB. Shows on your dashboard, player page, and league table.</p>
+        <div class="mt-4 flex flex-wrap items-center gap-4">${avatarImg(u, 72)}
+          <form class="space-y-2" data-form="AVATAR">
+            <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required>
+            <button class="btn-gold">UPLOAD PHOTO</button>
+          </form>
+        </div>`, "mt-4")}
     </div>`,
     { arena: true }
   );
@@ -498,9 +569,9 @@ async function pagePlayer(id) {
   const d = await api(`/api/player/${id}`);
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
-      ${panel(`<p class="text-xs tracking-[0.3em] gold">${esc(d.regional?.fullTitle || "Unplaced")}</p>
-        <h1 class="mt-2 text-4xl font-extrabold">${esc(d.player.name)}</h1>
-        <p class="mt-2 text-muted">${esc(d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p>`)}
+      ${panel(`<div class="flex items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div><p class="text-xs tracking-[0.3em] gold">${esc(d.regional?.fullTitle || "Unplaced")}</p>
+        <h1 class="mt-2 text-4xl font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
+        <p class="mt-2 text-muted">${esc(d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
       <div class="mt-4 space-y-3">${d.fixtures
         .map((f) => panel(`<div class="flex justify-between"><div>${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
         .join("")}</div>
@@ -745,7 +816,7 @@ document.addEventListener("click", async (e) => {
     try {
       await api("/api/auth/logout", { method: "POST" });
     } catch {}
-    localStorage.removeItem(TOKEN_KEY);
+    clearToken();
     state.user = null;
     go("/");
   }
@@ -783,8 +854,9 @@ document.addEventListener("submit", async (e) => {
   const kind = form.dataset.form;
   try {
     if (kind === "SIGN IN") {
-      const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify(fd) });
-      localStorage.setItem(TOKEN_KEY, d.token);
+      const remember = fd.remember === "1" || fd.remember === "on";
+      const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ ...fd, remember }) });
+      storeToken(d.token, remember);
       state.user = d.user;
       go(isStaff(d.user) ? "/admin" : "/dashboard");
     } else if (kind === "SIGNUP") {
@@ -807,7 +879,7 @@ document.addEventListener("submit", async (e) => {
           method: "POST",
           body: JSON.stringify(state.signup),
         });
-        localStorage.setItem(TOKEN_KEY, d.token);
+        storeToken(d.token, true);
         state.user = d.user;
         state.signup = { step: 1, name: "", email: "", password: "", regional: "", dartcounterName: "", nickname: "", avg: "" };
         go("/dashboard");
@@ -818,7 +890,7 @@ document.addEventListener("submit", async (e) => {
       }
     } else if (kind === "CREATE ACCOUNT") {
       const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify(fd) });
-      localStorage.setItem(TOKEN_KEY, d.token);
+      storeToken(d.token, true);
       state.user = d.user;
       go("/apply");
     } else if (kind === "APPLY" || kind === "SUBMIT APPLICATION" || kind === "SIGN UP TO APPLY") {
@@ -849,6 +921,24 @@ document.addEventListener("submit", async (e) => {
       await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id }) });
       state.notice = "Admin access removed.";
       render();
+    } else if (kind === "PROFILE") {
+      const d = await api("/api/account/profile", { method: "POST", body: JSON.stringify(fd) });
+      state.user = d.user;
+      state.notice = "Profile saved.";
+      render();
+    } else if (kind === "ACCOUNT") {
+      const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });
+      state.user = d.user;
+      state.notice = "Account saved.";
+      render();
+    } else if (kind === "AVATAR") {
+      const file = form.querySelector('input[type="file"]')?.files?.[0];
+      if (!file) throw new Error("Choose a photo");
+      const image = await fileToDataUrl(file);
+      const d = await api("/api/account/avatar", { method: "POST", body: JSON.stringify({ image }) });
+      state.user = d.user;
+      state.notice = "Profile picture updated.";
+      render();
     } else if (kind === "SAVE" || kind === "RESULT") {
       throw new Error("Players upload a screenshot. Admins enter the official score.");
     } else if (kind === "PLACE") {
@@ -876,7 +966,7 @@ async function boot() {
       const d = await api("/api/auth/me");
       state.user = d.user;
     } catch {
-      localStorage.removeItem(TOKEN_KEY);
+      clearToken();
     }
   }
   render();
