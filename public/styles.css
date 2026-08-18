@@ -134,3 +134,119 @@ input[type="file"] {
   font-weight: 800;
   color: #e8b425;
 }
+.stats-desk {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  align-items: start;
+  margin-top: 1rem;
+}
+.match-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.match-chip {
+  background: rgba(9, 11, 17, 0.72);
+  border: 1px solid #1c2433;
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: left;
+}
+.match-chip span {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #999;
+}
+.match-chip.selected {
+  border-color: #e8b425;
+  box-shadow: 0 0 0 1px #e8b425;
+  color: #e8b425;
+}
+.stats-shots {
+  max-height: 75vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-right: 0.35rem;
+}
+.stats-form-wrap {
+  position: sticky;
+  top: 1rem;
+  max-height: 75vh;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+.shot-card {
+  text-align: left;
+  width: 100%;
+  background: rgba(9, 11, 17, 0.72);
+  border: 1px solid #1c2433;
+  border-radius: 0.75rem;
+  padding: 0.85rem;
+  color: inherit;
+}
+.shot-card.selected {
+  border-color: #e8b425;
+  box-shadow: 0 0 0 1px #e8b425;
+}
+.shot-empty {
+  min-height: 8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  border: 1px dashed #1c2433;
+  border-radius: 0.5rem;
+  color: #999;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stats-shots .result-shot {
+  max-height: none;
+}
+.stat-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.stat-player {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #e8b425;
+}
+.stat-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  margin-top: 0.55rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #999;
+}
+.stat-field input {
+  text-transform: none;
+  letter-spacing: 0;
+  color: #fff;
+  padding: 0.55rem 0.7rem;
+}
+@media (max-width: 900px) {
+  .stats-desk {
+    grid-template-columns: 1fr;
+  }
+  .stats-shots,
+  .stats-form-wrap {
+    max-height: none;
+    position: static;
+  }
+}

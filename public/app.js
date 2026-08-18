@@ -8,6 +8,7 @@ const state = {
   data: {},
   error: "",
   notice: "",
+  selectedResultId: null,
   signup: {
     step: 1,
     name: "",
@@ -51,8 +52,78 @@ function roleLabel(u) {
 function isStaff(u = state.user) {
   return u?.role === "owner" || u?.role === "admin";
 }
-function screenshotUrl(id) {
-  return `/api/fixtures/${id}/screenshot?token=${encodeURIComponent(token())}`;
+function screenshotUrl(id, slot = 1) {
+  return `/api/fixtures/${id}/screenshot?slot=${slot}&token=${encodeURIComponent(token())}`;
+}
+function nDisp(v) {
+  return v || v === 0 ? v : "";
+}
+function sideStat(f, side, key) {
+  if (key === "180") return nDisp(f[`${side}180`] ?? f[`${side}OneEighties`]);
+  return nDisp(f[`${side}${key}`]);
+}
+function matchStatsForm(f, formKind, buttonLabel) {
+  const field = (side, key, label, extra = "") =>
+    `<label class="stat-field"><span>${label}</span><input name="${side}${key}" type="number" min="0" ${extra} value="${sideStat(f, side, key)}"></label>`;
+  const col = (side, name) => `
+    <div class="stat-col">
+      <h3 class="stat-player">${esc(name)}</h3>
+      ${field(side, "Legs", "Legs won", 'max="5" required')}
+      ${field(side, "Avg", "3DA", 'step="0.01"')}
+      ${field(side, "Checkout", "Highest checkout", 'max="170"')}
+      ${field(side, "BestLeg", "Best leg (fewest darts)")}
+      ${field(side, "60", "60+")}
+      ${field(side, "80", "80+")}
+      ${field(side, "100", "100+")}
+      ${field(side, "120", "120+")}
+      ${field(side, "140", "140+")}
+      ${field(side, "160", "160+")}
+      ${field(side, "180", "180s")}
+    </div>`;
+  return `<form class="stat-entry" data-form="${formKind}" data-id="${f.id}">
+    <div class="stat-cols">${col("home", f.homeName)}${col("away", f.awayName)}</div>
+    <button class="btn-gold w-full mt-4">${buttonLabel}</button>
+  </form>`;
+}
+function matchShot(f, slot) {
+  const has = slot === 2 ? f.screenshot2 : f.screenshot1;
+  const by = slot === 2 ? f.screenshot2ByName : f.screenshot1ByName;
+  return `<div class="shot-card current">
+    <div class="text-xs uppercase tracking-widest text-muted">Screenshot ${slot}${by ? ` · ${esc(by)}` : ""}</div>
+    ${
+      has
+        ? `<img class="result-shot mt-3" src="${screenshotUrl(f.id, slot)}" alt="Screenshot ${slot} for ${esc(f.homeName)} vs ${esc(f.awayName)}">`
+        : `<div class="shot-empty mt-3">Screenshot ${slot} not uploaded yet</div>`
+    }
+  </div>`;
+}
+function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, actions } = {}) {
+  if (!matches.length) return `<p class="mt-3 text-muted">${emptyText || "Nothing waiting."}</p>`;
+  const selected = matches.find((f) => f.id === Number(selectedId)) || matches[0];
+  return `<div class="match-picker">
+      ${matches
+        .map(
+          (f) =>
+            `<button type="button" class="match-chip${f.id === selected.id ? " selected" : ""}" data-act="pick-result" data-id="${f.id}">
+              ${esc(f.homeName)} vs ${esc(f.awayName)}
+              <span>Week ${f.week}${f.screenshotCount ? ` · ${f.screenshotCount}/2 shots` : ""}</span>
+            </button>`
+        )
+        .join("")}
+    </div>
+    <div class="stats-desk">
+      <div class="stats-shots">
+        ${matchShot(selected, 1)}
+        ${matchShot(selected, 2)}
+      </div>
+      <div class="stats-form-wrap">
+        <div class="text-xs uppercase tracking-widest text-muted">${esc(selected.leagueName)} · Week ${selected.week}</div>
+        <h3 class="mt-1 font-semibold">${esc(selected.homeName)} vs ${esc(selected.awayName)}</h3>
+        <p class="mt-1 text-sm text-muted">Enter stats for each player from this match’s two screenshots. Saving updates the league table (1 point per leg + 2 for the win).</p>
+        ${matchStatsForm(selected, formKind, buttonLabel)}
+        ${actions ? actions(selected) : ""}
+      </div>
+    </div>`;
 }
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -64,7 +135,8 @@ function fileToDataUrl(file) {
 }
 function fixtureStatus(f) {
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
-  if (f.status === "submitted" || f.hasScreenshot) return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
+  if (f.status === "submitted" || f.hasBothScreenshots) return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
+  if (f.screenshotCount) return `<div class="text-xs font-bold tracking-widest gold">${f.screenshotCount}/2 SCREENSHOTS</div>`;
   return `<div class="text-xs font-bold tracking-widest text-red-500">SCHEDULED</div>`;
 }
 async function api(path, options = {}) {
@@ -335,10 +407,10 @@ async function pageLeague(slug, id) {
                   panel(`<div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-xs uppercase tracking-widest text-muted">Week ${f.week} · ${esc(f.date)}</div><div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div><div>${fixtureStatus(f)}</div></div>`)
               )
               .join("")}</div>`
-          : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
+          : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
               .map(
                 (row, i) =>
-                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a></td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg).toFixed(1)}</td></tr>`
+                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a></td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg || 0).toFixed(1)}</td><td>${row.oneEighties || 0}</td></tr>`
               )
               .join("")}</tbody></table></div>`
       }
@@ -538,24 +610,33 @@ async function pageMyMatches() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="text-3xl font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">Play on DartCounter. One player from the fixture uploads a screenshot. A league admin then enters the official score.</p>
+      <p class="mt-2 text-sm text-muted">Play on DartCounter. Upload both match screenshots (2). A league admin then enters each player’s stats.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 space-y-3">
         ${d.fixtures
           .map((f) => {
             let action = fixtureStatus(f);
-            if (f.status === "scheduled") {
-              action = `<form class="space-y-2" data-form="UPLOAD" data-id="${f.id}">
-                <input type="file" name="screenshot" accept="image/png,image/jpeg,image/webp" required>
-                <button class="btn-gold w-full">UPLOAD SCREENSHOT</button>
-              </form>`;
-            } else if (f.status === "submitted") {
-              action = `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">SCREENSHOT IN</div><div class="mt-1 text-xs text-muted">Uploaded by ${esc(f.screenshotByName || "a player")}. Waiting on admin to confirm stats.</div></div>`;
+            if (f.status !== "played") {
+              const slots = [1, 2].filter((slot) => !(slot === 1 ? f.screenshot1 : f.screenshot2));
+              if (slots.length) {
+                action = `<div class="space-y-2">${slots
+                  .map(
+                    (slot) => `<form class="space-y-2" data-form="UPLOAD" data-id="${f.id}" data-slot="${slot}">
+                      <div class="text-[11px] font-bold tracking-widest text-muted">SCREENSHOT ${slot} OF 2</div>
+                      <input type="file" name="screenshot" accept="image/png,image/jpeg,image/webp" required>
+                      <button class="btn-gold w-full">UPLOAD SCREENSHOT ${slot}</button>
+                    </form>`
+                  )
+                  .join("")}</div>`;
+              } else {
+                action = `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">Waiting on admin to enter each player’s stats.</div></div>`;
+              }
             }
             return panel(`<div class="grid gap-3 md:grid-cols-[1fr_220px] md:items-center">
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · Week ${f.week} · ${esc(f.date)}</div>
-                <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div>
+                <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded</div></div>
                 ${action}
               </div>`);
           })
@@ -595,9 +676,9 @@ function pageRules() {
           <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
         </ul>
         <h2 class="text-lg font-bold text-white">Results</h2>
-        <p>One player from the fixture uploads a DartCounter screenshot. League admins check the screenshot and enter the official legs, 180s, and checkout for the table.</p>
+        <p>Either player from the fixture uploads both DartCounter screenshots (2). League admins check those two shots for that match and enter official stats for each player.</p>
         <h2 class="text-lg font-bold text-white">Scheduling</h2>
-        <p>Arrange a time, play on DartCounter, then upload the screenshot from My Matches. Owners place players and assign league admins.</p>
+        <p>Arrange a time, play on DartCounter, then upload both screenshots from My Matches. Owners place players and assign league admins.</p>
       </div>
     `)}</div>`,
     { arena: true }
@@ -621,9 +702,17 @@ async function pageNews() {
 }
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
-  const registered = d.users.filter((u) => u.role === "player" || u.role === "admin");
+  const everyone = d.users;
+  const registered = everyone.filter((u) => u.role === "player" || u.role === "admin");
+  const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
+  const playerOption = (p) => {
+    const league = leaguesById[p.leagueId];
+    const where = league ? league.title || league.name : "Unplaced";
+    const tag = p.role === "owner" ? " · Owner" : p.role === "admin" ? " · Admin" : "";
+    return `<option value="${p.id}">${esc(p.name)}${tag} · ${esc(where)}</option>`;
+  };
   const pending = d.applications.filter((a) => a.status === "pending");
-  const review = d.fixtures.filter((f) => f.status === "submitted");
+  const review = d.fixtures.filter((f) => f.status === "submitted" || f.hasBothScreenshots);
   const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const ownerSection = d.isOwner
@@ -660,7 +749,7 @@ async function pageAdmin() {
         </form>`, "mt-4")}`
     : "";
   return layout(
-    `<div class="mx-auto max-w-5xl px-4 py-10">
+    `<div class="mx-auto max-w-7xl px-4 py-10">
       <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : "League admin"}</h1>
       <p class="mt-2 text-muted">${d.isOwner ? "Promote owners (max 3), assign league admins, and run the league." : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`}</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
@@ -676,31 +765,9 @@ async function pageAdmin() {
           .join("")}
       </div>
       ${ownerSection}
-      ${panel(`<h2 class="text-lg font-bold">Results to confirm</h2>
-        <p class="mt-1 text-sm text-muted">Check the screenshot, then enter legs (first to 5), 180s, and highest checkout. Points: 1 per leg won + 2 for the match win.</p>
-        ${
-          review.length
-            ? review
-                .map(
-                  (f) =>
-                    `<div class="mt-4 border-t border-white/10 pt-4">
-                      <div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · Week ${f.week}</div>
-                      <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
-                      <p class="mt-1 text-xs text-muted">Screenshot by ${esc(f.screenshotByName || "a player")}</p>
-                      <img class="result-shot mt-3" src="${screenshotUrl(f.id)}" alt="Match screenshot">
-                      <form class="mt-3 grid gap-2 md:grid-cols-6" data-form="CONFIRM" data-id="${f.id}">
-                        <input name="homeLegs" type="number" min="0" max="5" placeholder="${esc(f.homeName)} legs" required>
-                        <input name="awayLegs" type="number" min="0" max="5" placeholder="${esc(f.awayName)} legs" required>
-                        <input name="homeOneEighties" type="number" min="0" placeholder="${esc(f.homeName)} 180s">
-                        <input name="awayOneEighties" type="number" min="0" placeholder="${esc(f.awayName)} 180s">
-                        <input name="topCheckout" type="number" min="0" max="170" placeholder="Top checkout">
-                        <button class="btn-gold">CONFIRM</button>
-                      </form>
-                    </div>`
-                )
-                .join("")
-            : `<p class="mt-3 text-muted">No screenshots waiting.</p>`
-        }`, "mt-6")}
+      ${panel(`<h2 class="text-lg font-bold">Enter match stats</h2>
+        <p class="mt-1 text-sm text-muted">Pick a match. Only that match’s two screenshots show on the left. Enter stats for each player on the right. Saving updates the league table immediately.</p>
+        ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Pending applications</h2>${
         pending.length
           ? pending
@@ -713,7 +780,7 @@ async function pageAdmin() {
       }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
-          <select name="userId" required><option value="">Player</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="userId" required><option value="">Player</option>${everyone.map(playerOption).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <button class="btn-gold">PLACE</button>
         </form>`, "mt-4")}
@@ -721,11 +788,50 @@ async function pageAdmin() {
         <form class="mt-3 grid gap-3 md:grid-cols-5" data-form="FIXTURE">
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <input name="week" value="1" placeholder="Week">
-          <select name="homeId" required><option value="">Home</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
-          <select name="awayId" required><option value="">Away</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="homeId" required><option value="">Home</option>${everyone.map(playerOption).join("")}</select>
+          <select name="awayId" required><option value="">Away</option>${everyone.map(playerOption).join("")}</select>
           <input name="date" type="date">
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
+      ${
+        d.isOwner
+          ? `${panel(`<h2 class="text-lg font-bold">Owner override</h2>
+        <p class="mt-1 text-sm text-muted">Only owners can add, move, or delete players and enter or overwrite match stats here. This updates the live league immediately — no screenshot and no GitHub PR.</p>
+        <h3 class="mt-5 text-sm font-bold tracking-widest gold">ADD PLAYER</h3>
+        <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="ADDPLAYER">
+          <input name="name" placeholder="Name" required>
+          <input name="email" type="email" placeholder="Email" required>
+          <input name="username" placeholder="Username (optional)">
+          <input name="password" type="text" placeholder="Temporary password" required>
+          <input name="dartcounterName" placeholder="DartCounter name">
+          <input name="avg" data-numeric="avg" placeholder="3DA">
+          <select name="leagueId"><option value="">Unplaced</option>${allLeagueOptions}</select>
+          <button class="btn-gold">ADD PLAYER</button>
+        </form>
+        <h3 class="mt-6 text-sm font-bold tracking-widest gold">REMOVE FROM LEAGUE</h3>
+        <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="UNPLACE">
+          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => p.leagueId).map(playerOption).join("")}</select>
+          <button class="btn-ghost">UNPLACE</button>
+        </form>
+        <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
+        <p class="mt-1 text-xs text-muted">Deletes the account and their fixtures. Owners cannot be deleted here.</p>
+        <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="DELETEPLAYER">
+          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => p.role !== "owner").map(playerOption).join("")}</select>
+          <button class="btn-ghost">DELETE</button>
+        </form>`, "mt-4")}
+        ${panel(`<h2 class="text-lg font-bold">Overwrite match stats</h2>
+        <p class="mt-1 text-sm text-muted">Enter or correct official stats. Tables update as soon as you save. Owners can do this without a screenshot.</p>
+        ${statsDesk(d.fixtures, state.selectedResultId, {
+          formKind: "OVERRIDE",
+          buttonLabel: "SAVE STATS",
+          emptyText: "No fixtures yet. Create one above.",
+          actions: (f) => `<div class="mt-2 flex gap-2">
+            <form data-form="CLEARRESULT" data-id="${f.id}"><button class="btn-ghost">CLEAR RESULT</button></form>
+            <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE MATCH</button></form>
+          </div>`,
+        })}`, "mt-4")}`
+          : ""
+      }
       ${
         d.isOwner
           ? panel(`<h2 class="text-lg font-bold">Post announcement</h2>
@@ -798,6 +904,13 @@ async function render() {
 }
 
 document.addEventListener("click", async (e) => {
+  const pick = e.target.closest("[data-act=pick-result]");
+  if (pick) {
+    e.preventDefault();
+    state.selectedResultId = Number(pick.dataset.id);
+    render();
+    return;
+  }
   const a = e.target.closest("a");
   if (a && a.href && a.origin === location.origin && !a.hasAttribute("download")) {
     e.preventDefault();
@@ -902,12 +1015,15 @@ document.addEventListener("submit", async (e) => {
       const file = form.querySelector('input[type="file"]')?.files?.[0];
       if (!file) throw new Error("Choose a screenshot");
       const image = await fileToDataUrl(file);
-      await api(`/api/my-fixtures/${form.dataset.id}/screenshot`, { method: "POST", body: JSON.stringify({ image }) });
-      state.notice = "Screenshot uploaded. A league admin will enter the official score.";
+      const d = await api(`/api/my-fixtures/${form.dataset.id}/screenshot`, { method: "POST", body: JSON.stringify({ image, slot: Number(form.dataset.slot) || undefined }) });
+      state.notice = d.fixture?.hasBothScreenshots
+        ? "Both screenshots uploaded. A league admin will enter each player’s stats."
+        : "Screenshot uploaded. Upload the second screenshot for this match.";
       render();
     } else if (kind === "CONFIRM") {
       await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Result confirmed. Table updated.";
+      state.selectedResultId = null;
+      state.notice = "Result saved. League table updated.";
       render();
     } else if (kind === "ASSIGN") {
       await api("/api/admin/assign-admin", { method: "POST", body: JSON.stringify(fd) });
@@ -948,6 +1064,32 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE") {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Fixture created.";
+      render();
+    } else if (kind === "ADDPLAYER") {
+      await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Player added.";
+      render();
+    } else if (kind === "UNPLACE") {
+      await api("/api/admin/unplace-player", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Player removed from their league.";
+      render();
+    } else if (kind === "DELETEPLAYER") {
+      if (!window.confirm("Delete this player and all of their matches? This cannot be undone.")) return;
+      await api("/api/admin/delete-player", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Player deleted.";
+      render();
+    } else if (kind === "OVERRIDE" || kind === "SAVE STATS") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Match stats saved. Table updated.";
+      render();
+    } else if (kind === "CLEARRESULT") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/clear`, { method: "POST", body: "{}" });
+      state.notice = "Result cleared.";
+      render();
+    } else if (kind === "DELETEFIXTURE") {
+      if (!window.confirm("Delete this match?")) return;
+      await api(`/api/admin/fixtures/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
+      state.notice = "Match deleted.";
       render();
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });

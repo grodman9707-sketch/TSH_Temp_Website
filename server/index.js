@@ -185,10 +185,16 @@ function migrate(db) {
     changed = true;
   }
   for (const f of db.fixtures) {
-    if (!("screenshotFile" in f)) {
-      f.screenshotFile = null;
-      f.screenshotBy = null;
-      f.screenshotAt = null;
+    if (!("screenshot1File" in f)) {
+      f.screenshot1File = f.screenshotFile || null;
+      f.screenshot1By = f.screenshotBy || null;
+      f.screenshot1At = f.screenshotAt || null;
+      changed = true;
+    }
+    if (!("screenshot2File" in f)) {
+      f.screenshot2File = null;
+      f.screenshot2By = null;
+      f.screenshot2At = null;
       changed = true;
     }
   }
@@ -210,6 +216,8 @@ function standingsForLeague(db, leagueId) {
     legsAgainst: 0,
     points: 0,
     oneEighties: 0,
+    matchAvgSum: 0,
+    matchAvgCount: 0,
   }));
   const byId = Object.fromEntries(rows.map((r) => [r.playerId, r]));
   for (const f of db.fixtures.filter((x) => x.leagueId === leagueId && x.status === "played")) {
@@ -222,8 +230,16 @@ function standingsForLeague(db, leagueId) {
     home.legsAgainst += f.awayLegs;
     away.legsFor += f.awayLegs;
     away.legsAgainst += f.homeLegs;
-    home.oneEighties += f.homeOneEighties || 0;
-    away.oneEighties += f.awayOneEighties || 0;
+    home.oneEighties += f.home180 || f.homeOneEighties || 0;
+    away.oneEighties += f.away180 || f.awayOneEighties || 0;
+    if (Number(f.homeAvg)) {
+      home.matchAvgSum += Number(f.homeAvg);
+      home.matchAvgCount += 1;
+    }
+    if (Number(f.awayAvg)) {
+      away.matchAvgSum += Number(f.awayAvg);
+      away.matchAvgCount += 1;
+    }
     home.points += f.homeLegs;
     away.points += f.awayLegs;
     if (f.homeLegs > f.awayLegs) {
@@ -236,26 +252,57 @@ function standingsForLeague(db, leagueId) {
       home.lost += 1;
     }
   }
-  return rows.map((r) => ({ ...r, diff: r.legsFor - r.legsAgainst })).sort((a, b) => b.points - a.points || b.diff - a.diff || b.legsFor - a.legsFor);
+  return rows
+    .map((r) => {
+      const { matchAvgSum, matchAvgCount, ...rest } = r;
+      return {
+        ...rest,
+        diff: r.legsFor - r.legsAgainst,
+        avg: matchAvgCount ? Math.round((matchAvgSum / matchAvgCount) * 10) / 10 : r.avg,
+      };
+    })
+    .sort((a, b) => b.points - a.points || b.diff - a.diff || b.legsFor - a.legsFor);
 }
 function stats(db) {
   const played = db.fixtures.filter((f) => f.status === "played");
   return {
     activePlayers: db.users.filter((u) => u.leagueId).length,
     divisions: db.leagues.length,
-    total180s: played.reduce((s, f) => s + (f.oneEighties || 0) + (f.homeOneEighties || 0) + (f.awayOneEighties || 0), 0),
+    total180s: played.reduce((s, f) => s + (f.home180 || f.homeOneEighties || 0) + (f.away180 || f.awayOneEighties || 0), 0),
     topCheckout: played.reduce((m, f) => Math.max(m, f.topCheckout || 0), 0),
   };
 }
+function shotFile(f, slot) {
+  if (Number(slot) === 2) return f.screenshot2File || null;
+  return f.screenshot1File || f.screenshotFile || null;
+}
+function shotCount(f) {
+  return [shotFile(f, 1), shotFile(f, 2)].filter(Boolean).length;
+}
+function shotByName(db, userId) {
+  return userId ? db.users.find((u) => u.id === userId)?.name || null : null;
+}
 function withNames(db, f) {
-  return {
+  const shot1 = shotFile(f, 1);
+  const shot2 = shotFile(f, 2);
+  const named = {
     ...f,
     homeName: db.users.find((u) => u.id === f.homeId)?.name,
     awayName: db.users.find((u) => u.id === f.awayId)?.name,
     leagueName: leagueTitle(db, db.leagues.find((l) => l.id === f.leagueId) || { name: "", regionalId: 0 }),
-    hasScreenshot: Boolean(f.screenshotFile),
-    screenshotByName: f.screenshotBy ? db.users.find((u) => u.id === f.screenshotBy)?.name : null,
+    screenshot1: Boolean(shot1),
+    screenshot2: Boolean(shot2),
+    screenshotCount: shotCount(f),
+    hasScreenshot: Boolean(shot1 || shot2),
+    hasBothScreenshots: Boolean(shot1 && shot2),
+    screenshot1ByName: shotByName(db, f.screenshot1By || f.screenshotBy),
+    screenshot2ByName: shotByName(db, f.screenshot2By),
+    screenshotByName: shotByName(db, f.screenshot1By || f.screenshot2By || f.screenshotBy),
   };
+  delete named.screenshotFile;
+  delete named.screenshot1File;
+  delete named.screenshot2File;
+  return named;
 }
 
 function saveDataUrlImage(dataUrl, destBase, maxBytes = 5 * 1024 * 1024) {
@@ -292,6 +339,52 @@ function removeUpload(filename) {
   } catch {
     /* ignore */
   }
+}
+
+function numOrZero(v) {
+  if (v === undefined || v === null || v === "") return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function applyMatchStats(fixture, body) {
+  fixture.homeLegs = Number(body.homeLegs);
+  fixture.awayLegs = Number(body.awayLegs);
+  fixture.homeAvg = numOrZero(body.homeAvg);
+  fixture.awayAvg = numOrZero(body.awayAvg);
+  fixture.homeCheckout = numOrZero(body.homeCheckout);
+  fixture.awayCheckout = numOrZero(body.awayCheckout);
+  fixture.topCheckout = Math.max(fixture.homeCheckout, fixture.awayCheckout, numOrZero(body.topCheckout));
+  fixture.homeBestLeg = body.homeBestLeg === "" || body.homeBestLeg == null ? null : numOrZero(body.homeBestLeg);
+  fixture.awayBestLeg = body.awayBestLeg === "" || body.awayBestLeg == null ? null : numOrZero(body.awayBestLeg);
+  for (const band of [60, 80, 100, 120, 140, 160, 180]) {
+    fixture[`home${band}`] = numOrZero(body[`home${band}`]);
+    fixture[`away${band}`] = numOrZero(body[`away${band}`]);
+  }
+  if (body.homeOneEighties !== undefined && body.homeOneEighties !== "") fixture.home180 = numOrZero(body.homeOneEighties);
+  if (body.awayOneEighties !== undefined && body.awayOneEighties !== "") fixture.away180 = numOrZero(body.awayOneEighties);
+  fixture.homeOneEighties = fixture.home180 || 0;
+  fixture.awayOneEighties = fixture.away180 || 0;
+  fixture.oneEighties = fixture.homeOneEighties + fixture.awayOneEighties;
+}
+
+function clearMatchStats(fixture) {
+  fixture.homeLegs = null;
+  fixture.awayLegs = null;
+  fixture.homeAvg = 0;
+  fixture.awayAvg = 0;
+  fixture.homeCheckout = 0;
+  fixture.awayCheckout = 0;
+  fixture.homeBestLeg = null;
+  fixture.awayBestLeg = null;
+  for (const band of [60, 80, 100, 120, 140, 160, 180]) {
+    fixture[`home${band}`] = 0;
+    fixture[`away${band}`] = 0;
+  }
+  fixture.homeOneEighties = 0;
+  fixture.awayOneEighties = 0;
+  fixture.oneEighties = 0;
+  fixture.topCheckout = 0;
 }
 
 function validateLegs(homeLegs, awayLegs) {
@@ -580,10 +673,12 @@ async function handleApi(req, res, url) {
   if (method === "GET" && screenshotGet) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     const fixture = db.fixtures.find((f) => f.id === Number(screenshotGet[1]));
-    if (!fixture || !fixture.screenshotFile) return json(res, 404, { ok: false, error: "No screenshot" });
+    const slot = Number(url.searchParams.get("slot") || 1) === 2 ? 2 : 1;
+    const filename = fixture ? shotFile(fixture, slot) : null;
+    if (!fixture || !filename) return json(res, 404, { ok: false, error: "No screenshot" });
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Forbidden" });
-    const filePath = path.join(uploadsDir, path.basename(fixture.screenshotFile));
+    const filePath = path.join(uploadsDir, path.basename(filename));
     if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No screenshot" });
     const ext = path.extname(filePath).toLowerCase();
     res.writeHead(200, { "Content-Type": mime[ext] || "image/jpeg", "Cache-Control": "private, max-age=60" });
@@ -598,15 +693,27 @@ async function handleApi(req, res, url) {
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
-    if (fixture.screenshotFile) return json(res, 400, { ok: false, error: "A screenshot is already uploaded for this match" });
+    const requested = Number(body.slot);
+    const slot = requested === 1 || requested === 2 ? requested : shotFile(fixture, 1) ? 2 : 1;
+    if (shotFile(fixture, slot)) return json(res, 400, { ok: false, error: `Screenshot ${slot} is already uploaded` });
     try {
-      fixture.screenshotFile = saveDataUrlImage(body.image, `fixture-${fixture.id}`);
+      const filename = saveDataUrlImage(body.image, `fixture-${fixture.id}-${slot}`);
+      if (slot === 2) {
+        fixture.screenshot2File = filename;
+        fixture.screenshot2By = user.id;
+        fixture.screenshot2At = new Date().toISOString();
+      } else {
+        fixture.screenshot1File = filename;
+        fixture.screenshot1By = user.id;
+        fixture.screenshot1At = new Date().toISOString();
+        fixture.screenshotFile = filename;
+        fixture.screenshotBy = user.id;
+        fixture.screenshotAt = fixture.screenshot1At;
+      }
     } catch (err) {
       return json(res, err.status || 400, { ok: false, error: err.message });
     }
-    fixture.screenshotBy = user.id;
-    fixture.screenshotAt = new Date().toISOString();
-    fixture.status = "submitted";
+    if (shotCount(fixture) >= 2) fixture.status = "submitted";
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -722,6 +829,12 @@ async function handleApi(req, res, url) {
         screenshotFile: null,
         screenshotBy: null,
         screenshotAt: null,
+        screenshot1File: null,
+        screenshot1By: null,
+        screenshot1At: null,
+        screenshot2File: null,
+        screenshot2By: null,
+        screenshot2At: null,
       };
       db.fixtures.push(fixture);
       writeDb(db);
@@ -732,20 +845,100 @@ async function handleApi(req, res, url) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
-      if (!fixture.screenshotFile) return json(res, 400, { ok: false, error: "Wait for a player to upload the screenshot" });
+      if (!isOwner(user) && shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1)) {
+        return json(res, 400, { ok: false, error: "Wait for both match screenshots" });
+      }
+      if (fixture.status === "played" && !isOwner(user)) return json(res, 400, { ok: false, error: "Only owners can overwrite a confirmed result" });
       const legsError = validateLegs(body.homeLegs, body.awayLegs);
       if (legsError) return json(res, 400, { ok: false, error: legsError });
-      fixture.homeLegs = Number(body.homeLegs);
-      fixture.awayLegs = Number(body.awayLegs);
-      fixture.homeOneEighties = Number(body.homeOneEighties) || 0;
-      fixture.awayOneEighties = Number(body.awayOneEighties) || 0;
-      fixture.oneEighties = fixture.homeOneEighties + fixture.awayOneEighties;
-      fixture.topCheckout = Number(body.topCheckout) || 0;
+      applyMatchStats(fixture, body);
       fixture.status = "played";
       fixture.confirmedBy = user.id;
       fixture.confirmedAt = new Date().toISOString();
+      if (isOwner(user)) {
+        fixture.overwrittenBy = user.id;
+        fixture.overwrittenAt = fixture.confirmedAt;
+      }
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    }
+    if (method === "POST" && p === "/api/admin/create-player") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can add players" });
+      const name = String(body.name || "").trim();
+      const email = String(body.email || "").trim();
+      const password = String(body.password || "").trim();
+      if (!name || !email || !password) return json(res, 400, { ok: false, error: "Name, email and password are required" });
+      if (db.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) return json(res, 400, { ok: false, error: "Email already registered" });
+      const league = body.leagueId ? db.leagues.find((l) => l.id === Number(body.leagueId)) : null;
+      const created = {
+        id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
+        name,
+        email,
+        username: String(body.username || "").trim(),
+        password,
+        role: "player",
+        leagueId: league ? league.id : null,
+        adminLeagueId: null,
+        regionalChoice: league ? (league.regionalId === 2 ? "americas" : "europe") : "europe",
+        regionalIds: league ? [league.regionalId] : [1],
+        regionalId: league ? league.regionalId : 1,
+        dartcounterName: String(body.dartcounterName || "").trim() || name,
+        nickname: String(body.nickname || "").trim(),
+        avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
+        country: "",
+        avatarFile: null,
+        avatarUpdatedAt: null,
+      };
+      if (created.username && db.users.some((u) => String(u.username || "").toLowerCase() === created.username.toLowerCase())) {
+        return json(res, 400, { ok: false, error: "That username is already in use" });
+      }
+      db.users.push(created);
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(created) });
+    }
+    if (method === "POST" && p === "/api/admin/unplace-player") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove players from a league" });
+      const u = db.users.find((x) => x.id === Number(body.userId));
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      u.leagueId = null;
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(u) });
+    }
+    if (method === "POST" && p === "/api/admin/delete-player") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete players" });
+      const u = db.users.find((x) => x.id === Number(body.userId));
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      if (u.role === "owner") return json(res, 400, { ok: false, error: "Owners cannot be deleted here" });
+      if (u.avatarFile) removeUpload(u.avatarFile);
+      db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
+      db.applications = db.applications.filter((a) => a.userId !== u.id);
+      db.users = db.users.filter((x) => x.id !== u.id);
+      writeDb(db);
+      return json(res, 200, { ok: true });
+    }
+    const clearMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/clear$/);
+    if (method === "POST" && clearMatch) {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can clear results" });
+      const fixture = db.fixtures.find((f) => f.id === Number(clearMatch[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      clearMatchStats(fixture);
+      fixture.status = shotCount(fixture) >= 2 ? "submitted" : "scheduled";
+      fixture.confirmedBy = null;
+      fixture.confirmedAt = null;
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    }
+    const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
+    if (method === "POST" && deleteMatch) {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete fixtures" });
+      const id = Number(deleteMatch[1]);
+      const fixture = db.fixtures.find((f) => f.id === id);
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      removeUpload(shotFile(fixture, 1));
+      removeUpload(shotFile(fixture, 2));
+      db.fixtures = db.fixtures.filter((f) => f.id !== id);
+      writeDb(db);
+      return json(res, 200, { ok: true });
     }
     if (method === "POST" && p === "/api/admin/announcements") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can post news" });
