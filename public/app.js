@@ -52,6 +52,11 @@ function roleLabel(u) {
 function isStaff(u = state.user) {
   return u?.role === "owner" || u?.role === "admin";
 }
+function userLeagueIds(u) {
+  const ids = Array.isArray(u?.leagueIds) ? u.leagueIds.map(Number) : [];
+  if (u?.leagueId) ids.unshift(Number(u.leagueId));
+  return [...new Set(ids.filter(Boolean))];
+}
 function screenshotUrl(id, slot = 1) {
   return `/api/fixtures/${id}/screenshot?slot=${slot}&token=${encodeURIComponent(token())}`;
 }
@@ -477,11 +482,11 @@ function pageSignUp() {
         <div class="mt-1 text-xs text-muted">${note}</div>
       </button>`;
     body = `
-      <p class="text-sm text-muted">Choose where you want to compete.</p>
+      <p class="text-sm text-muted">Choose where you want to compete. Both lets you play in one Europe league and one Americas league.</p>
       <div class="grid gap-3">
         ${opt("europe", "TSH Europe", CRESTS.europe, "United Kingdom & Europe")}
         ${opt("americas", "TSH Americas", CRESTS.americas, "North & South America")}
-        ${opt("both", "Both", CRESTS.main, "Play in Europe and the Americas")}
+        ${opt("both", "Both", CRESTS.main, "One Europe league and one Americas league")}
       </div>
       ${!s.regional && state.error ? "" : ""}
     `;
@@ -553,7 +558,7 @@ async function pageDashboard() {
         <div>
           <p class="text-xs font-semibold tracking-[0.3em] gold">PLAYER HUB</p>
           <h1 class="mt-2 text-4xl font-extrabold">${esc(u.nickname || u.name)}</h1>
-          <p class="mt-2 text-muted">${esc(roleLabel(u))}${u.dartcounterName ? ` · DartCounter: ${esc(u.dartcounterName)}` : ""}${u.avg ? ` · 3DA ${esc(u.avg)}` : ""}</p>
+          <p class="mt-2 text-muted">${esc(roleLabel(u))}${(u.leagueTitles || []).length ? ` · ${esc(u.leagueTitles.join(" · "))}` : " · Awaiting division"}${u.dartcounterName ? ` · DartCounter: ${esc(u.dartcounterName)}` : ""}${u.avg ? ` · 3DA ${esc(u.avg)}` : ""}</p>
         </div>
       </div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
@@ -650,9 +655,9 @@ async function pagePlayer(id) {
   const d = await api(`/api/player/${id}`);
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
-      ${panel(`<div class="flex items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div><p class="text-xs tracking-[0.3em] gold">${esc(d.regional?.fullTitle || "Unplaced")}</p>
+      ${panel(`<div class="flex items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div><p class="text-xs tracking-[0.3em] gold">${esc((d.regionals || []).map((r) => r.fullTitle).join(" · ") || d.regional?.fullTitle || "Unplaced")}</p>
         <h1 class="mt-2 text-4xl font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
-        <p class="mt-2 text-muted">${esc(d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
+        <p class="mt-2 text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
       <div class="mt-4 space-y-3">${d.fixtures
         .map((f) => panel(`<div class="flex justify-between"><div>${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
         .join("")}</div>
@@ -671,6 +676,7 @@ function pageRules() {
         <ul class="list-disc space-y-1 pl-5">
           <li>501, double out.</li>
           <li>Each regional has League 1, League 2, League 3, and League 4.</li>
+          <li>Players who choose Both can be placed in one Europe league and one Americas league.</li>
           <li>Every match is Best of 9 (first to 5 legs).</li>
           <li>1 point per leg won, plus 2 extra points for the match win.</li>
           <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
@@ -706,12 +712,15 @@ async function pageAdmin() {
   const registered = everyone.filter((u) => u.role === "player" || u.role === "admin");
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
   const playerOption = (p) => {
-    const league = leaguesById[p.leagueId];
-    const where = league ? league.title || league.name : "Unplaced";
+    const names = userLeagueIds(p)
+      .map((id) => leaguesById[id]?.title || leaguesById[id]?.name)
+      .filter(Boolean);
+    const where = names.length ? names.join(" · ") : "Unplaced";
+    const both = p.regionalChoice === "both" ? " · Both" : "";
     const tag = p.role === "owner" ? " · Owner" : p.role === "admin" ? " · Admin" : "";
-    return `<option value="${p.id}">${esc(p.name)}${tag} · ${esc(where)}</option>`;
+    return `<option value="${p.id}">${esc(p.name)}${tag}${both} · ${esc(where)}</option>`;
   };
-  const pending = d.applications.filter((a) => a.status === "pending");
+  const pending = d.applications;
   const review = d.fixtures.filter((f) => f.status === "submitted" || f.hasBothScreenshots);
   const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
@@ -773,12 +782,13 @@ async function pageAdmin() {
           ? pending
               .map(
                 (a) =>
-                  `<div class="flex justify-between border-b border-white/10 py-2 text-sm"><span>${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
+                  `<div class="flex justify-between border-b border-white/10 py-2 text-sm"><span>${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}${a.placedLeagues?.length ? ` · already in ${esc(a.placedLeagues.join(" · "))}` : ""}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
               )
               .join("")
           : `<p class="mt-3 text-muted">None yet.</p>`
       }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
+        <p class="mt-1 text-sm text-muted">Players who chose Both can be in one Europe league and one Americas league. Placing them in a second regional does not remove the first.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
           <select name="userId" required><option value="">Player</option>${everyone.map(playerOption).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
@@ -809,8 +819,9 @@ async function pageAdmin() {
           <button class="btn-gold">ADD PLAYER</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">REMOVE FROM LEAGUE</h3>
-        <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="UNPLACE">
-          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => p.leagueId).map(playerOption).join("")}</select>
+        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="UNPLACE">
+          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
+          <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
           <button class="btn-ghost">UNPLACE</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
@@ -1058,8 +1069,12 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "SAVE" || kind === "RESULT") {
       throw new Error("Players upload a screenshot. Admins enter the official score.");
     } else if (kind === "PLACE") {
-      await api("/api/admin/place-player", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Player placed.";
+      const d = await api("/api/admin/place-player", { method: "POST", body: JSON.stringify(fd) });
+      const titles = d.user?.leagueTitles || [];
+      state.notice =
+        d.user?.regionalChoice === "both" && !d.fullyPlaced
+          ? `Placed in ${titles[titles.length - 1] || "that league"}. They can still be placed in the other regional.`
+          : "Player placed.";
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE") {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
@@ -1071,7 +1086,7 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "UNPLACE") {
       await api("/api/admin/unplace-player", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Player removed from their league.";
+      state.notice = fd.leagueId ? "Player removed from that league." : "Player removed from their leagues.";
       render();
     } else if (kind === "DELETEPLAYER") {
       if (!window.confirm("Delete this player and all of their matches? This cannot be undone.")) return;
