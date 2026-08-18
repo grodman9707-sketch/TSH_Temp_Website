@@ -91,10 +91,16 @@ function readDb() {
 function writeDb(db) {
   writeJson(dbPath, db);
 }
-function publicUser(u) {
+function publicUser(u, db) {
   const { password, avatarFile, ...rest } = u;
+  const leagueIds = userLeagueIds(u);
   return {
     ...rest,
+    leagueId: leagueIds[0] || null,
+    leagueIds,
+    leagueTitles: db
+      ? leagueIds.map((id) => leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "League", regionalId: 0 }))
+      : [],
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
   };
@@ -134,6 +140,49 @@ function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
   return `${regional?.fullTitle || "TSH"} ${league.name}`;
 }
+function userRegionalIds(u) {
+  if (Array.isArray(u?.regionalIds) && u.regionalIds.length) return [...new Set(u.regionalIds.map(Number))];
+  if (u?.regionalChoice === "both") return [1, 2];
+  if (u?.regionalChoice === "americas" || Number(u?.regionalId) === 2) return [2];
+  return [1];
+}
+function userLeagueIds(u) {
+  const ids = Array.isArray(u?.leagueIds) ? u.leagueIds.map(Number) : [];
+  if (u?.leagueId) ids.unshift(Number(u.leagueId));
+  return [...new Set(ids.filter(Boolean))];
+}
+function inLeague(u, leagueId) {
+  return userLeagueIds(u).includes(Number(leagueId));
+}
+function leagueRegionalId(db, leagueId) {
+  return db.leagues.find((l) => l.id === Number(leagueId))?.regionalId || null;
+}
+function placedRegionalIds(db, u) {
+  return [...new Set(userLeagueIds(u).map((id) => leagueRegionalId(db, id)).filter(Boolean))];
+}
+function isFullyPlaced(db, u) {
+  const have = new Set(placedRegionalIds(db, u));
+  return userRegionalIds(u).every((id) => have.has(id));
+}
+function syncUserLeagues(u) {
+  const ids = userLeagueIds(u);
+  u.leagueIds = ids;
+  u.leagueId = ids[0] || null;
+}
+function placeUserInLeague(db, u, league) {
+  const allowed = userRegionalIds(u);
+  if (!allowed.includes(league.regionalId)) {
+    const names = allowed.map((id) => db.regionals.find((r) => r.id === id)?.fullTitle || "a regional").join(" and ");
+    return `This player signed up for ${names} only`;
+  }
+  const current = userLeagueIds(u);
+  const sameRegionalId = current.find((id) => leagueRegionalId(db, id) === league.regionalId);
+  const next = current.filter((id) => id !== sameRegionalId);
+  next.push(league.id);
+  u.leagueIds = next;
+  u.leagueId = next[0] || null;
+  return null;
+}
 function migrate(db) {
   let changed = false;
   for (const u of db.users) {
@@ -148,6 +197,13 @@ function migrate(db) {
     if (!("avatarFile" in u)) {
       u.avatarFile = null;
       u.avatarUpdatedAt = null;
+      changed = true;
+    }
+    if (!Array.isArray(u.leagueIds)) {
+      u.leagueIds = u.leagueId ? [u.leagueId] : [];
+      changed = true;
+    } else if (u.leagueId && !u.leagueIds.includes(u.leagueId)) {
+      u.leagueIds = [u.leagueId, ...u.leagueIds];
       changed = true;
     }
   }
@@ -202,7 +258,7 @@ function migrate(db) {
 }
 
 function standingsForLeague(db, leagueId) {
-  const players = db.users.filter((u) => u.leagueId === leagueId);
+  const players = db.users.filter((u) => inLeague(u, leagueId));
   const rows = players.map((p) => ({
     playerId: p.id,
     name: p.name,
@@ -266,7 +322,7 @@ function standingsForLeague(db, leagueId) {
 function stats(db) {
   const played = db.fixtures.filter((f) => f.status === "played");
   return {
-    activePlayers: db.users.filter((u) => u.leagueId).length,
+    activePlayers: db.users.filter((u) => userLeagueIds(u).length).length,
     divisions: db.leagues.length,
     total180s: played.reduce((s, f) => s + (f.home180 || f.homeOneEighties || 0) + (f.away180 || f.awayOneEighties || 0), 0),
     topCheckout: played.reduce((m, f) => Math.max(m, f.topCheckout || 0), 0),
@@ -455,7 +511,7 @@ async function handleApi(req, res, url) {
     const regional = db.regionals.find((r) => r.slug === regionalMatch[1]);
     if (!regional) return json(res, 404, { ok: false, error: "Not found" });
     const leagues = db.leagues.filter((l) => l.regionalId === regional.id);
-    const players = db.users.filter((u) => u.regionalId === regional.id && u.leagueId);
+    const players = db.users.filter((u) => placedRegionalIds(db, u).includes(regional.id));
     return json(res, 200, { ok: true, regional, leagues, counts: { players: players.length, teams: 0, leagues: leagues.length } });
   }
 
@@ -483,9 +539,11 @@ async function handleApi(req, res, url) {
     if (!found) return json(res, 404, { ok: false, error: "Not found" });
     return json(res, 200, {
       ok: true,
-      player: publicUser(found),
-      league: db.leagues.find((l) => l.id === found.leagueId) || null,
+      player: publicUser(found, db),
+      league: db.leagues.find((l) => l.id === userLeagueIds(found)[0]) || null,
+      leagues: userLeagueIds(found).map((id) => db.leagues.find((l) => l.id === id)).filter(Boolean).map((l) => ({ ...l, title: leagueTitle(db, l) })),
       regional: db.regionals.find((r) => r.id === found.regionalId) || null,
+      regionals: [...new Set(placedRegionalIds(db, found))].map((id) => db.regionals.find((r) => r.id === id)).filter(Boolean),
       fixtures: db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id).map((f) => {
         const named = withNames(db, f);
         delete named.screenshotFile;
@@ -506,6 +564,7 @@ async function handleApi(req, res, url) {
       password,
       role: "player",
       leagueId: null,
+      leagueIds: [],
       adminLeagueId: null,
       regionalChoice: body.regional || "europe",
       regionalIds: body.regional === "americas" ? [2] : body.regional === "both" ? [1, 2] : [1],
@@ -536,7 +595,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, created.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(created) }, { "Set-Cookie": sessionCookie(token, { remember: true }) });
+    return json(res, 200, { ok: true, token, user: publicUser(created, db) }, { "Set-Cookie": sessionCookie(token, { remember: true }) });
   }
 
   if (method === "POST" && p === "/api/auth/login") {
@@ -551,7 +610,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, found.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(found), remember }, { "Set-Cookie": sessionCookie(token, { remember }) });
+    return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember }) });
   }
 
   if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
@@ -562,7 +621,7 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && p === "/api/auth/me") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    return json(res, 200, { ok: true, user: publicUser(user), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
+    return json(res, 200, { ok: true, user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
   }
   if (method === "POST" && p === "/api/auth/logout") {
     sessions.delete(tokenFrom(req, url));
@@ -594,7 +653,7 @@ async function handleApi(req, res, url) {
       u.avg = Number(String(body.avg).replace(/[^0-9.]/g, "")) || 0;
     }
     writeDb(db);
-    return json(res, 200, { ok: true, user: publicUser(u) });
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
 
   if (method === "POST" && p === "/api/account") {
@@ -620,7 +679,7 @@ async function handleApi(req, res, url) {
     u.email = email;
     u.username = username;
     writeDb(db);
-    return json(res, 200, { ok: true, user: publicUser(u) });
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
 
   if (method === "POST" && p === "/api/account/avatar") {
@@ -635,7 +694,7 @@ async function handleApi(req, res, url) {
       return json(res, err.status || 400, { ok: false, error: err.message === "Image is too large" ? "Avatar must be under 2MB" : err.message });
     }
     writeDb(db);
-    return json(res, 200, { ok: true, user: publicUser(u) });
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
   if (method === "POST" && p === "/api/apply") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
@@ -721,39 +780,56 @@ async function handleApi(req, res, url) {
   if (p.startsWith("/api/admin")) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Forbidden" });
-    if (method === "GET" && p === "/api/admin/me") return json(res, 200, { ok: true, user: publicUser(user) });
+    if (method === "GET" && p === "/api/admin/me") return json(res, 200, { ok: true, user: publicUser(user, db) });
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));
       const fixtures = scopedFixtures(db, user).map((f) => withNames(db, f));
       const users = isOwner(user)
-        ? db.users.map(publicUser)
+        ? db.users.map((u) => publicUser(u, db))
         : db.users
             .filter((u) => {
-              if (u.leagueId === user.adminLeagueId || u.id === user.id) return true;
+              if (inLeague(u, user.adminLeagueId) || u.id === user.id) return true;
               const league = db.leagues.find((l) => l.id === user.adminLeagueId);
               if (!league || u.role === "owner") return false;
-              return !u.leagueId && (u.regionalId === league.regionalId || (u.regionalIds || []).includes(league.regionalId));
+              if (!userRegionalIds(u).includes(league.regionalId)) return false;
+              return !placedRegionalIds(db, u).includes(league.regionalId);
             })
-            .map(publicUser);
+            .map((u) => publicUser(u, db));
+      const enrichApp = (a) => {
+        const applicant = db.users.find((x) => x.id === a.userId);
+        return {
+          ...a,
+          placedLeagues: applicant ? publicUser(applicant, db).leagueTitles : [],
+          fullyPlaced: applicant ? isFullyPlaced(db, applicant) : false,
+        };
+      };
+      const applications = (isOwner(user) ? db.applications : db.applications.filter((a) => {
+        const league = db.leagues.find((l) => l.id === user.adminLeagueId);
+        if (!league) return false;
+        return a.regionalId === league.regionalId || (a.regionalIds || []).includes(league.regionalId);
+      }))
+        .map(enrichApp)
+        .filter((a) => {
+          if (a.fullyPlaced) return false;
+          if (isOwner(user)) return true;
+          const league = db.leagues.find((l) => l.id === user.adminLeagueId);
+          const applicant = db.users.find((x) => x.id === a.userId);
+          if (!league || !applicant) return true;
+          return !placedRegionalIds(db, applicant).includes(league.regionalId);
+        });
       return json(res, 200, {
         ok: true,
         stats: stats(db),
-        me: publicUser(user),
+        me: publicUser(user, db),
         isOwner: isOwner(user),
         ownerSlots: { used: ownerCount(db), max: MAX_OWNERS },
         users,
-        owners: db.users.filter((u) => u.role === "owner").map(publicUser),
+        owners: db.users.filter((u) => u.role === "owner").map((u) => publicUser(u, db)),
         leagueAdmins: db.users.filter((u) => u.role === "admin").map((u) => ({
-          ...publicUser(u),
+          ...publicUser(u, db),
           adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === u.adminLeagueId) || { name: "Unassigned", regionalId: 0 }),
         })),
-        applications: isOwner(user)
-          ? db.applications
-          : db.applications.filter((a) => {
-              const league = db.leagues.find((l) => l.id === user.adminLeagueId);
-              if (!league) return false;
-              return a.regionalId === league.regionalId || (a.regionalIds || []).includes(league.regionalId);
-            }),
+        applications,
         leagues,
         allLeagues: db.leagues.map((l) => ({ ...l, title: leagueTitle(db, l) })),
         fixtures,
@@ -768,7 +844,7 @@ async function handleApi(req, res, url) {
       u.role = "owner";
       u.adminLeagueId = null;
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/assign-admin") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can assign admins" });
@@ -779,7 +855,7 @@ async function handleApi(req, res, url) {
       u.role = "admin";
       u.adminLeagueId = league.id;
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/revoke-admin") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can do this" });
@@ -788,23 +864,21 @@ async function handleApi(req, res, url) {
       u.role = "player";
       u.adminLeagueId = null;
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/place-player") {
       const u = db.users.find((x) => x.id === Number(body.userId));
       const league = db.leagues.find((l) => l.id === Number(body.leagueId));
       if (!u || !league) return json(res, 400, { ok: false, error: "Invalid player or league" });
       if (!managesLeague(user, league.id)) return json(res, 403, { ok: false, error: "You can only place players in your league" });
-      u.leagueId = league.id;
-      u.regionalId = league.regionalId;
-      if (body.applicationId) {
-        const appn = db.applications.find((a) => a.id === Number(body.applicationId));
-        if (appn) appn.status = "placed";
+      const placeError = placeUserInLeague(db, u, league);
+      if (placeError) return json(res, 400, { ok: false, error: placeError });
+      const apps = db.applications.filter((a) => a.userId === u.id || a.id === Number(body.applicationId));
+      for (const appn of apps) {
+        appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
-      const pending = db.applications.find((a) => a.userId === u.id && a.status === "pending");
-      if (pending) pending.status = "placed";
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db), fullyPlaced: isFullyPlaced(db, u) });
     }
     if (method === "POST" && p === "/api/admin/fixtures") {
       const leagueId = Number(body.leagueId);
@@ -812,6 +886,9 @@ async function handleApi(req, res, url) {
       const home = db.users.find((x) => x.id === Number(body.homeId));
       const away = db.users.find((x) => x.id === Number(body.awayId));
       if (!home || !away || home.id === away.id) return json(res, 400, { ok: false, error: "Choose two different players" });
+      if (!inLeague(home, leagueId) || !inLeague(away, leagueId)) {
+        return json(res, 400, { ok: false, error: "Both players must already be placed in that league" });
+      }
       const fixture = {
         id: Math.max(0, ...db.fixtures.map((f) => f.id)) + 1,
         leagueId,
@@ -878,6 +955,7 @@ async function handleApi(req, res, url) {
         password,
         role: "player",
         leagueId: league ? league.id : null,
+        leagueIds: league ? [league.id] : [],
         adminLeagueId: null,
         regionalChoice: league ? (league.regionalId === 2 ? "americas" : "europe") : "europe",
         regionalIds: league ? [league.regionalId] : [1],
@@ -894,15 +972,26 @@ async function handleApi(req, res, url) {
       }
       db.users.push(created);
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(created) });
+      return json(res, 200, { ok: true, user: publicUser(created, db) });
     }
     if (method === "POST" && p === "/api/admin/unplace-player") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove players from a league" });
       const u = db.users.find((x) => x.id === Number(body.userId));
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
-      u.leagueId = null;
+      const leagueId = Number(body.leagueId);
+      const ids = userLeagueIds(u);
+      if (leagueId) {
+        if (!ids.includes(leagueId)) return json(res, 400, { ok: false, error: "Player is not in that league" });
+        u.leagueIds = ids.filter((id) => id !== leagueId);
+      } else {
+        u.leagueIds = [];
+      }
+      syncUserLeagues(u);
+      for (const appn of db.applications.filter((a) => a.userId === u.id)) {
+        appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
+      }
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/delete-player") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete players" });
