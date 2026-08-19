@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
+import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -64,10 +65,20 @@ function saveSessions() {
   writeJson(sessionsPath, Object.fromEntries(sessions));
 }
 
-function sessionCookie(token, { remember = false, clear = false } = {}) {
-  if (clear) return "tsh_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
-  const persist = remember ? "; Max-Age=2592000" : "";
-  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax${persist}${cookieSecure ? "; Secure" : ""}`;
+function cookieSecureFor(req) {
+  const proto = String(req?.headers?.["x-forwarded-proto"] || "");
+  if (proto.includes("https")) return true;
+  if (proto.includes("http")) return false;
+  return cookieSecure;
+}
+
+function sessionCookie(token, { remember = false, clear = false, req } = {}) {
+  const secure = cookieSecureFor(req) ? "; Secure" : "";
+  if (clear) return `tsh_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+  const persist = remember
+    ? `; Max-Age=2592000; Expires=${new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString()}`
+    : "";
+  return `tsh_token=${token}; Path=/; HttpOnly; SameSite=Lax${persist}${secure}`;
 }
 
 ensureStore();
@@ -505,6 +516,7 @@ async function handleApi(req, res, url) {
   if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
   if (method === "GET" && p === "/api/regionals") return json(res, 200, { ok: true, regionals: db.regionals });
   if (method === "GET" && p === "/api/announcements") return json(res, 200, { ok: true, announcements: db.announcements });
+  if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
 
   const regionalMatch = p.match(/^\/api\/regionals\/([^/]+)$/);
   if (method === "GET" && regionalMatch) {
@@ -595,7 +607,7 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, created.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(created, db) }, { "Set-Cookie": sessionCookie(token, { remember: true }) });
+    return json(res, 200, { ok: true, token, user: publicUser(created, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
   if (method === "POST" && p === "/api/auth/login") {
@@ -610,10 +622,10 @@ async function handleApi(req, res, url) {
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, found.id);
     saveSessions();
-    return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember }) });
+    return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
@@ -621,12 +633,12 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && p === "/api/auth/me") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    return json(res, 200, { ok: true, user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
+    return json(res, 200, { ok: true, token: tokenFrom(req, url), user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
   }
   if (method === "POST" && p === "/api/auth/logout") {
     sessions.delete(tokenFrom(req, url));
     saveSessions();
-    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true }) });
+    return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true, req }) });
   }
 
   const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);
@@ -1065,4 +1077,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`TSH Darts League running on ${host}:${port}`);
   console.log(`Data directory: ${dataDir}`);
+  warmPdcTicker();
 });

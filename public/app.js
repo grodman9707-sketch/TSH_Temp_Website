@@ -1,4 +1,5 @@
 const TOKEN_KEY = "tsh_token";
+const REMEMBER_KEY = "tsh_remember";
 const $ = (sel, el = document) => el.querySelector(sel);
 
 const state = {
@@ -22,18 +23,40 @@ const state = {
 };
 
 function token() {
-  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || "";
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function wantsRemember() {
+  try {
+    return localStorage.getItem(REMEMBER_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 function storeToken(tok, remember) {
-  sessionStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(TOKEN_KEY);
-  if (!tok) return;
-  if (remember) localStorage.setItem(TOKEN_KEY, tok);
-  else sessionStorage.setItem(TOKEN_KEY, tok);
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    if (remember) localStorage.setItem(REMEMBER_KEY, "1");
+    else localStorage.removeItem(REMEMBER_KEY);
+    if (!tok) return;
+    if (remember) localStorage.setItem(TOKEN_KEY, tok);
+    else sessionStorage.setItem(TOKEN_KEY, tok);
+  } catch {
+    /* private mode */
+  }
 }
 function clearToken() {
-  sessionStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(TOKEN_KEY);
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REMEMBER_KEY);
+  } catch {
+    /* private mode */
+  }
 }
 function avatarImg(user, size = 40) {
   if (!user) return "";
@@ -148,7 +171,7 @@ async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   if (token()) headers.Authorization = `Bearer ${token()}`;
-  const res = await fetch(path, { ...options, headers });
+  const res = await fetch(path, { credentials: "same-origin", ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -238,21 +261,14 @@ function panel(html, extra = "") {
 }
 
 async function pageHome() {
-  const [stats, content, regionals] = await Promise.all([api("/api/stats"), api("/api/content"), api("/api/regionals")]);
-  let ticker = [];
-  for (const r of regionals.regionals) {
-    const detail = await api(`/api/regionals/${r.slug}`);
-    for (const league of detail.leagues) {
-      const table = await api(`/api/leagues/${league.id}`);
-      for (const f of table.fixtures.filter((x) => x.status === "played").slice(0, 2)) {
-        ticker.push({ div: league.name.toUpperCase(), text: `${f.homeName} vs ${f.awayName} — ${f.homeLegs}-${f.awayLegs}`, live: false });
-      }
-      for (const f of table.fixtures.filter((x) => x.status === "scheduled").slice(0, 1)) {
-        ticker.push({ div: league.name.toUpperCase(), text: `${f.homeName} vs ${f.awayName}`, live: true });
-      }
-    }
-  }
-  if (!ticker.length) ticker = [{ div: "TSH", text: "Sign up to join TSH Darts League", live: true }];
+  const [stats, content, regionals, tickerData] = await Promise.all([
+    api("/api/stats"),
+    api("/api/content"),
+    api("/api/regionals"),
+    api("/api/ticker").catch(() => ({ items: [] })),
+  ]);
+  let ticker = Array.isArray(tickerData.items) ? tickerData.items : [];
+  if (!ticker.length) ticker = [{ div: "PDC", text: "Upcoming live darts dates will appear here", live: false }];
   const loop = [...ticker, ...ticker];
   const faq = content.content.faq || [];
   return layout(
@@ -424,6 +440,12 @@ async function pageLeague(slug, id) {
   );
 }
 
+function passwordField(name, placeholder, autocomplete, extra = "") {
+  return `<div class="password-wrap">
+    <input name="${name}" type="password" placeholder="${placeholder}" autocomplete="${autocomplete}" ${extra}>
+    <button type="button" class="password-toggle" data-act="toggle-password" aria-label="Show password">Show</button>
+  </div>`;
+}
 function authForm(title, fields, submitLabel, extra = "") {
   return layout(
     `<div class="mx-auto max-w-md px-4 py-10">${panel(`
@@ -444,7 +466,7 @@ function pageSignIn() {
   return authForm(
     "Sign in",
     `<input name="email" type="text" placeholder="Username or email" required autocomplete="username">
-     <input name="password" type="password" placeholder="Password" required autocomplete="current-password">
+     ${passwordField("password", "Password", "current-password", "required")}
      <label class="check-row"><input type="checkbox" name="remember" value="1"> Remember me</label>`,
     "SIGN IN",
     `<p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
@@ -472,7 +494,7 @@ function pageSignUp() {
       <label class="block text-xs font-semibold uppercase tracking-widest text-muted">E-mail</label>
       <input name="email" type="email" value="${esc(s.email)}" placeholder="you@email.com" required autocomplete="email">
       <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Password</label>
-      <input name="password" type="password" value="${esc(s.password)}" placeholder="Password" required autocomplete="new-password">
+      ${passwordField("password", "Password", "new-password", `required value="${esc(s.password)}"`)}
     `;
   } else if (step === 2) {
     const opt = (key, title, img, note) => `
@@ -592,9 +614,9 @@ async function pageDashboard() {
             <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Email</label>
             <input name="email" type="email" value="${esc(u.email || "")}" required autocomplete="email">
             <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Current password</label>
-            <input name="currentPassword" type="password" placeholder="Needed to change password" autocomplete="current-password">
+            ${passwordField("currentPassword", "Needed to change password", "current-password")}
             <label class="block text-xs font-semibold uppercase tracking-widest text-muted">New password</label>
-            <input name="newPassword" type="password" placeholder="Leave blank to keep current" autocomplete="new-password">
+            ${passwordField("newPassword", "Leave blank to keep current", "new-password")}
             <button class="btn-gold">SAVE ACCOUNT</button>
           </form>`)}
       </div>
@@ -915,6 +937,18 @@ async function render() {
 }
 
 document.addEventListener("click", async (e) => {
+  const toggle = e.target.closest("[data-act=toggle-password]");
+  if (toggle) {
+    e.preventDefault();
+    const wrap = toggle.closest(".password-wrap");
+    const input = wrap?.querySelector("input");
+    if (!input) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    toggle.textContent = show ? "Hide" : "Show";
+    toggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    return;
+  }
   const pick = e.target.closest("[data-act=pick-result]");
   if (pick) {
     e.preventDefault();
@@ -978,9 +1012,9 @@ document.addEventListener("submit", async (e) => {
   const kind = form.dataset.form;
   try {
     if (kind === "SIGN IN") {
-      const remember = fd.remember === "1" || fd.remember === "on";
+      const remember = form.querySelector('input[name="remember"]')?.checked === true;
       const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ ...fd, remember }) });
-      storeToken(d.token, remember);
+      storeToken(d.token, remember || d.remember === true);
       state.user = d.user;
       go(isStaff(d.user) ? "/admin" : "/dashboard");
     } else if (kind === "SIGNUP") {
@@ -1118,13 +1152,20 @@ document.addEventListener("submit", async (e) => {
 });
 
 async function boot() {
-  if (token()) {
+  const hadJsToken = Boolean(token());
+  const remembered = wantsRemember() || Boolean((() => {
     try {
-      const d = await api("/api/auth/me");
-      state.user = d.user;
+      return localStorage.getItem(TOKEN_KEY);
     } catch {
-      clearToken();
+      return "";
     }
+  })());
+  try {
+    const d = await api("/api/auth/me");
+    state.user = d.user;
+    if (d.token) storeToken(d.token, remembered || !hadJsToken);
+  } catch {
+    if (hadJsToken) clearToken();
   }
   render();
 }
