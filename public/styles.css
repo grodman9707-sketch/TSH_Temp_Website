@@ -2,11 +2,17 @@
 html, body, #app { min-height: 100%; margin: 0; background: #090b11; color: #fff; font-family: Inter, system-ui, sans-serif; }
 .arena-bg {
   background-image:
-    linear-gradient(to bottom, rgba(9,11,17,.32), rgba(9,11,17,.78) 58%, rgba(9,11,17,.94)),
+    linear-gradient(to bottom, rgba(9,11,17,.36), rgba(9,11,17,.78) 58%, rgba(9,11,17,.94)),
+    url("/images/tsh-main-crest.png"),
     url("/images/arena-bg.png");
-  background-size: cover;
-  background-position: center;
+  background-repeat: no-repeat;
   background-attachment: fixed;
+  background-position: center, center 40%, center;
+  background-size: cover, min(380px, 52vw) auto, cover;
+}
+.arena-home {
+  background-size: cover, min(540px, 70vw) auto, cover;
+  background-position: center, center 36%, center;
 }
 .glass {
   background: rgba(12, 16, 26, 0.72);
@@ -25,6 +31,7 @@ input, select, textarea {
   border-radius: .5rem;
   width: 100%;
   padding: .75rem .9rem;
+  color-scheme: dark;
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
@@ -119,6 +126,10 @@ input[type="file"] {
   padding: 0;
   accent-color: #e8b425;
 }
+input[type="datetime-local"] {
+  width: auto;
+  min-width: 13.5rem;
+}
 .password-wrap {
   position: relative;
 }
@@ -153,6 +164,10 @@ input[type="file"] {
   justify-content: center;
   font-weight: 800;
   color: #e8b425;
+}
+.fixture-highlight {
+  box-shadow: 0 0 0 1px #e8b425;
+  border-radius: 0.75rem;
 }
 .stats-desk {
   display: grid;

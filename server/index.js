@@ -4,11 +4,25 @@ import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
+import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const seedDbPath = path.join(root, "data", "db.json");
-const dataDir = process.env.DATA_DIR || path.join(root, "data");
+const onRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME);
+function resolveDataDir() {
+  if (process.env.DATA_DIR) return process.env.DATA_DIR;
+  if (!onRailway) return path.join(root, "data");
+  try {
+    fs.mkdirSync("/data", { recursive: true });
+    fs.accessSync("/data", fs.constants.W_OK);
+    return "/data";
+  } catch {
+    console.warn("Railway /data is not writable. Attach a Volume mounted at /data so signups survive deploys.");
+    return path.join(root, "data");
+  }
+}
+const dataDir = resolveDataDir();
 const dbPath = path.join(dataDir, "db.json");
 const sessionsPath = path.join(dataDir, "sessions.json");
 const uploadsDir = path.join(dataDir, "uploads");
@@ -26,7 +40,7 @@ const MOCK_EMAILS = new Set([
   "taylor@tshdarts.com",
   "drew@tshdarts.com",
 ]);
-const cookieSecure = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.NODE_ENV === "production";
+const cookieSecure = onRailway || process.env.NODE_ENV === "production";
 
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -105,12 +119,21 @@ function writeDb(db) {
 function publicUser(u, db) {
   const { password, avatarFile, ...rest } = u;
   const leagueIds = userLeagueIds(u);
+  const adminIds = adminLeagueIds(u);
+  const roles = userRoles(u);
   return {
     ...rest,
+    role: primaryRole(u),
+    roles,
     leagueId: leagueIds[0] || null,
     leagueIds,
     leagueTitles: db
       ? leagueIds.map((id) => leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "League", regionalId: 0 }))
+      : [],
+    adminLeagueId: adminIds[0] || null,
+    adminLeagueIds: adminIds,
+    adminLeagueTitles: db
+      ? adminIds.map((id) => leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "Unassigned", regionalId: 0 }))
       : [],
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
@@ -133,19 +156,73 @@ function currentUser(req, db, url) {
   const id = sessions.get(tokenFrom(req, url));
   return db.users.find((u) => u.id === id) || null;
 }
+function userRoles(u) {
+  const roles = Array.isArray(u?.roles) ? u.roles.map(String) : [];
+  if (u?.role && u.role !== "player") roles.unshift(String(u.role));
+  return [...new Set(roles.filter((r) => r && r !== "player"))];
+}
+function hasRole(u, role) {
+  if (!u) return false;
+  if (role === "player") return true;
+  return userRoles(u).includes(role);
+}
+function primaryRole(u) {
+  const roles = userRoles(u);
+  if (roles.includes("owner")) return "owner";
+  if (roles.includes("head_admin")) return "head_admin";
+  if (roles.includes("admin")) return "admin";
+  return "player";
+}
+function addRole(u, role) {
+  if (!role || role === "player") {
+    u.roles = userRoles(u);
+    u.role = primaryRole(u);
+    return;
+  }
+  u.roles = [...new Set([...userRoles(u), role])];
+  u.role = primaryRole(u);
+}
+function removeRole(u, role) {
+  u.roles = userRoles(u).filter((r) => r !== role);
+  u.role = primaryRole(u);
+}
+function adminLeagueIds(u) {
+  const ids = Array.isArray(u?.adminLeagueIds) ? u.adminLeagueIds.map(Number) : [];
+  if (u?.adminLeagueId) ids.unshift(Number(u.adminLeagueId));
+  return [...new Set(ids.filter(Boolean))];
+}
+function syncAdminLeagues(u) {
+  const ids = adminLeagueIds(u);
+  u.adminLeagueIds = ids;
+  u.adminLeagueId = ids[0] || null;
+  if (ids.length) addRole(u, "admin");
+  else removeRole(u, "admin");
+}
 function isOwner(u) {
-  return u?.role === "owner";
+  return hasRole(u, "owner");
+}
+function isHeadAdmin(u) {
+  return hasRole(u, "head_admin");
+}
+function isDivisionAdmin(u) {
+  return hasRole(u, "admin") || adminLeagueIds(u).length > 0;
+}
+function canOverride(u) {
+  return isOwner(u) || isHeadAdmin(u);
 }
 function isStaff(u) {
-  return u?.role === "owner" || u?.role === "admin";
+  return isOwner(u) || isHeadAdmin(u) || isDivisionAdmin(u);
 }
 function managesLeague(u, leagueId) {
   if (!u) return false;
-  if (u.role === "owner") return true;
-  return u.role === "admin" && Number(u.adminLeagueId) === Number(leagueId);
+  if (canOverride(u)) return true;
+  return isDivisionAdmin(u) && adminLeagueIds(u).includes(Number(leagueId));
 }
 function ownerCount(db) {
-  return db.users.filter((u) => u.role === "owner").length;
+  return db.users.filter((u) => isOwner(u)).length;
+}
+function divisionAdminsForLeague(db, leagueId) {
+  return db.users.filter((u) => adminLeagueIds(u).includes(Number(leagueId))).map((u) => publicUser(u, db));
 }
 function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
@@ -217,12 +294,27 @@ function migrate(db) {
       u.leagueIds = [u.leagueId, ...u.leagueIds];
       changed = true;
     }
+    if (!Array.isArray(u.roles)) {
+      u.roles = u.role && u.role !== "player" ? [u.role] : [];
+      changed = true;
+    }
+    if (!Array.isArray(u.adminLeagueIds)) {
+      u.adminLeagueIds = u.adminLeagueId ? [u.adminLeagueId] : [];
+      changed = true;
+    }
+    const beforeRole = u.role;
+    const beforeRoles = JSON.stringify(u.roles);
+    const beforeIds = JSON.stringify(u.adminLeagueIds);
+    syncAdminLeagues(u);
+    addRole(u, u.role);
+    if (u.role !== beforeRole || JSON.stringify(u.roles) !== beforeRoles || JSON.stringify(u.adminLeagueIds) !== beforeIds) {
+      changed = true;
+    }
   }
   const founder = db.users.find((u) => u.email.toLowerCase() === FOUNDING_OWNER_EMAIL);
   if (founder) {
-    if (founder.role !== "owner") {
-      founder.role = "owner";
-      founder.adminLeagueId = null;
+    if (founder.role !== "owner" || !hasRole(founder, "owner")) {
+      addRole(founder, "owner");
       changed = true;
     }
     if (founder.username !== "GViking") {
@@ -262,6 +354,27 @@ function migrate(db) {
       f.screenshot2File = null;
       f.screenshot2By = null;
       f.screenshot2At = null;
+      changed = true;
+    }
+    if (!("season" in f)) {
+      f.season = 1;
+      changed = true;
+    }
+    if (!("time" in f)) {
+      f.time = "";
+      changed = true;
+    }
+    if (!("proposedDate" in f)) {
+      f.proposedDate = "";
+      f.proposedTime = "";
+      f.proposedBy = null;
+      f.proposedAt = null;
+      f.agreedAt = null;
+      f.scheduleStatus = null;
+      changed = true;
+    }
+    if (!("extractedStats" in f)) {
+      f.extractedStats = null;
       changed = true;
     }
   }
@@ -349,6 +462,12 @@ function shotCount(f) {
 function shotByName(db, userId) {
   return userId ? db.users.find((u) => u.id === userId)?.name || null : null;
 }
+function fixtureScheduleLabel(f) {
+  const date = f.date || "";
+  const time = f.time || "";
+  if (date && time) return `${date} ${time}`;
+  return date || time || "";
+}
 function withNames(db, f) {
   const shot1 = shotFile(f, 1);
   const shot2 = shotFile(f, 2);
@@ -365,6 +484,9 @@ function withNames(db, f) {
     screenshot1ByName: shotByName(db, f.screenshot1By || f.screenshotBy),
     screenshot2ByName: shotByName(db, f.screenshot2By),
     screenshotByName: shotByName(db, f.screenshot1By || f.screenshot2By || f.screenshotBy),
+    proposedByName: shotByName(db, f.proposedBy),
+    when: fixtureScheduleLabel(f),
+    extractedPending: Boolean(f.extractedStats && f.status !== "played"),
   };
   delete named.screenshotFile;
   delete named.screenshot1File;
@@ -372,15 +494,92 @@ function withNames(db, f) {
   return named;
 }
 
+function newFixture(partial) {
+  return {
+    week: 1,
+    season: 1,
+    homeLegs: null,
+    awayLegs: null,
+    status: "scheduled",
+    date: new Date().toISOString().slice(0, 10),
+    time: "",
+    oneEighties: 0,
+    homeOneEighties: 0,
+    awayOneEighties: 0,
+    topCheckout: 0,
+    screenshotFile: null,
+    screenshotBy: null,
+    screenshotAt: null,
+    screenshot1File: null,
+    screenshot1By: null,
+    screenshot1At: null,
+    screenshot2File: null,
+    screenshot2By: null,
+    screenshot2At: null,
+    proposedDate: "",
+    proposedTime: "",
+    proposedBy: null,
+    proposedAt: null,
+    agreedAt: null,
+    scheduleStatus: null,
+    extractedStats: null,
+    ...partial,
+  };
+}
+
+const EXTRACT_STAT_FIELDS = [
+  "homeLegs",
+  "awayLegs",
+  "homeAvg",
+  "awayAvg",
+  "homeCheckout",
+  "awayCheckout",
+  "homeBestLeg",
+  "awayBestLeg",
+  "topCheckout",
+  "home60",
+  "away60",
+  "home80",
+  "away80",
+  "home100",
+  "away100",
+  "home120",
+  "away120",
+  "home140",
+  "away140",
+  "home160",
+  "away160",
+  "home180",
+  "away180",
+  "homeOneEighties",
+  "awayOneEighties",
+];
+
+function pickExtractedStats(body) {
+  const out = {};
+  for (const key of EXTRACT_STAT_FIELDS) {
+    if (body[key] === undefined || body[key] === "") continue;
+    out[key] = numOrZero(body[key]);
+  }
+  if (out.home180 != null) out.homeOneEighties = out.home180;
+  if (out.away180 != null) out.awayOneEighties = out.away180;
+  if (out.homeOneEighties != null && out.home180 == null) out.home180 = out.homeOneEighties;
+  if (out.awayOneEighties != null && out.away180 == null) out.away180 = out.awayOneEighties;
+  if (body.notes) out.notes = String(body.notes).slice(0, 400);
+  if (body.rawText) out.rawText = String(body.rawText).slice(0, 4000);
+  return out;
+}
+
 function saveDataUrlImage(dataUrl, destBase, maxBytes = 5 * 1024 * 1024) {
-  const m = String(dataUrl || "").match(/^data:(image\/(png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=\s]+)$/i);
+  const m = String(dataUrl || "").match(/^data:image\/(png|jpeg|jpg|pjpeg|webp)(?:;charset=[^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/i);
   if (!m) {
     const err = new Error("Upload a PNG, JPG, or WEBP image");
     err.status = 400;
     throw err;
   }
-  const ext = m[2].toLowerCase() === "jpeg" || m[2].toLowerCase() === "jpg" ? "jpg" : m[2].toLowerCase();
-  const buf = Buffer.from(m[3].replace(/\s/g, ""), "base64");
+  const kind = m[1].toLowerCase();
+  const ext = kind === "jpeg" || kind === "jpg" || kind === "pjpeg" ? "jpg" : kind;
+  const buf = Buffer.from(m[2].replace(/\s/g, ""), "base64");
   if (!buf.length) {
     const err = new Error("Image file was empty");
     err.status = 400;
@@ -397,10 +596,18 @@ function saveDataUrlImage(dataUrl, destBase, maxBytes = 5 * 1024 * 1024) {
   return filename;
 }
 
+function safeUploadPath(filename) {
+  if (!filename) return null;
+  const resolvedDir = path.resolve(uploadsDir);
+  const filePath = path.resolve(resolvedDir, path.basename(String(filename)));
+  const rel = path.relative(resolvedDir, filePath);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return filePath;
+}
+
 function removeUpload(filename) {
-  if (!filename) return;
-  const filePath = path.join(uploadsDir, path.basename(filename));
-  if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return;
+  const filePath = safeUploadPath(filename);
+  if (!filePath || !fs.existsSync(filePath)) return;
   try {
     fs.unlinkSync(filePath);
   } catch {
@@ -472,7 +679,7 @@ async function readBody(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 8 * 1024 * 1024) {
+    if (size > 12 * 1024 * 1024) {
       const err = new Error("Upload too large");
       err.status = 413;
       throw err;
@@ -497,12 +704,14 @@ function serveStatic(req, res, urlPath) {
 }
 
 function scopedLeagues(db, user) {
-  if (isOwner(user)) return db.leagues;
-  return db.leagues.filter((l) => l.id === user.adminLeagueId);
+  if (canOverride(user)) return db.leagues;
+  const ids = new Set(adminLeagueIds(user));
+  return db.leagues.filter((l) => ids.has(l.id));
 }
 function scopedFixtures(db, user) {
-  if (isOwner(user)) return db.fixtures;
-  return db.fixtures.filter((f) => f.leagueId === user.adminLeagueId);
+  if (canOverride(user)) return db.fixtures;
+  const ids = new Set(adminLeagueIds(user));
+  return db.fixtures.filter((f) => ids.has(f.leagueId));
 }
 
 async function handleApi(req, res, url) {
@@ -522,7 +731,10 @@ async function handleApi(req, res, url) {
   if (method === "GET" && regionalMatch) {
     const regional = db.regionals.find((r) => r.slug === regionalMatch[1]);
     if (!regional) return json(res, 404, { ok: false, error: "Not found" });
-    const leagues = db.leagues.filter((l) => l.regionalId === regional.id);
+    const leagues = db.leagues.filter((l) => l.regionalId === regional.id).map((l) => ({
+      ...l,
+      divisionAdmins: divisionAdminsForLeague(db, l.id).map((a) => ({ id: a.id, name: a.name, nickname: a.nickname })),
+    }));
     const players = db.users.filter((u) => placedRegionalIds(db, u).includes(regional.id));
     return json(res, 200, { ok: true, regional, leagues, counts: { players: players.length, teams: 0, leagues: leagues.length } });
   }
@@ -537,9 +749,11 @@ async function handleApi(req, res, url) {
       league: { ...league, title: leagueTitle(db, league) },
       regional,
       standings: standingsForLeague(db, league.id),
+      divisionAdmins: divisionAdminsForLeague(db, league.id),
       fixtures: db.fixtures.filter((f) => f.leagueId === league.id).map((f) => {
         const named = withNames(db, f);
         delete named.screenshotFile;
+        delete named.extractedStats;
         return named;
       }),
     });
@@ -559,6 +773,7 @@ async function handleApi(req, res, url) {
       fixtures: db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id).map((f) => {
         const named = withNames(db, f);
         delete named.screenshotFile;
+        delete named.extractedStats;
         return named;
       }),
     });
@@ -575,9 +790,11 @@ async function handleApi(req, res, url) {
       username: "",
       password,
       role: "player",
+      roles: [],
       leagueId: null,
       leagueIds: [],
       adminLeagueId: null,
+      adminLeagueIds: [],
       regionalChoice: body.regional || "europe",
       regionalIds: body.regional === "americas" ? [2] : body.regional === "both" ? [1, 2] : [1],
       regionalId: body.regional === "americas" ? 2 : 1,
@@ -645,8 +862,8 @@ async function handleApi(req, res, url) {
   if (method === "GET" && avatarGet) {
     const found = db.users.find((u) => u.id === Number(avatarGet[1]));
     if (!found?.avatarFile) return json(res, 404, { ok: false, error: "No avatar" });
-    const filePath = path.join(uploadsDir, path.basename(found.avatarFile));
-    if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No avatar" });
+    const filePath = safeUploadPath(found.avatarFile);
+    if (!filePath || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No avatar" });
     const ext = path.extname(filePath).toLowerCase();
     res.writeHead(200, { "Content-Type": mime[ext] || "image/jpeg", "Cache-Control": "public, max-age=3600" });
     fs.createReadStream(filePath).pipe(res);
@@ -749,8 +966,8 @@ async function handleApi(req, res, url) {
     if (!fixture || !filename) return json(res, 404, { ok: false, error: "No screenshot" });
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Forbidden" });
-    const filePath = path.join(uploadsDir, path.basename(filename));
-    if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No screenshot" });
+    const filePath = safeUploadPath(filename);
+    if (!filePath || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No screenshot" });
     const ext = path.extname(filePath).toLowerCase();
     res.writeHead(200, { "Content-Type": mime[ext] || "image/jpeg", "Cache-Control": "private, max-age=60" });
     fs.createReadStream(filePath).pipe(res);
@@ -789,6 +1006,68 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
 
+  const extractedPost = p.match(/^\/api\/my-fixtures\/(\d+)\/extracted-stats$/);
+  if (method === "POST" && extractedPost) {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const fixture = db.fixtures.find((f) => f.id === Number(extractedPost[1]));
+    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+    const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
+    if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your match" });
+    if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
+    const extracted = pickExtractedStats(body);
+    if (!Object.keys(extracted).length) return json(res, 400, { ok: false, error: "No stats could be read from the screenshots" });
+    fixture.extractedStats = {
+      ...extracted,
+      extractedAt: new Date().toISOString(),
+      extractedBy: user.id,
+      pending: true,
+    };
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  const proposeMatch = p.match(/^\/api\/fixtures\/(\d+)\/propose$/);
+  if (method === "POST" && proposeMatch) {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const fixture = db.fixtures.find((f) => f.id === Number(proposeMatch[1]));
+    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
+    const raw = String(body.datetime || `${body.date || ""}T${body.time || ""}`);
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+    if (!m) return json(res, 400, { ok: false, error: "Choose a date and time" });
+    const proposedDate = m[1];
+    const proposedTime = m[2];
+    fixture.proposedDate = proposedDate;
+    fixture.proposedTime = proposedTime;
+    fixture.proposedBy = user.id;
+    fixture.proposedAt = new Date().toISOString();
+    fixture.scheduleStatus = "proposed";
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  const acceptTime = p.match(/^\/api\/fixtures\/(\d+)\/accept-time$/);
+  if (method === "POST" && acceptTime) {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const fixture = db.fixtures.find((f) => f.id === Number(acceptTime[1]));
+    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
+    if (!fixture.proposedDate || !fixture.proposedTime || !fixture.proposedBy) {
+      return json(res, 400, { ok: false, error: "No time has been proposed yet" });
+    }
+    if (Number(fixture.proposedBy) === user.id) {
+      return json(res, 400, { ok: false, error: "Your opponent needs to accept this time" });
+    }
+    fixture.date = fixture.proposedDate;
+    fixture.time = fixture.proposedTime;
+    fixture.scheduleStatus = "agreed";
+    fixture.agreedAt = new Date().toISOString();
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
   if (p.startsWith("/api/admin")) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Forbidden" });
@@ -796,15 +1075,17 @@ async function handleApi(req, res, url) {
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));
       const fixtures = scopedFixtures(db, user).map((f) => withNames(db, f));
-      const users = isOwner(user)
+      const adminIds = adminLeagueIds(user);
+      const users = canOverride(user)
         ? db.users.map((u) => publicUser(u, db))
         : db.users
             .filter((u) => {
-              if (inLeague(u, user.adminLeagueId) || u.id === user.id) return true;
-              const league = db.leagues.find((l) => l.id === user.adminLeagueId);
-              if (!league || u.role === "owner") return false;
-              if (!userRegionalIds(u).includes(league.regionalId)) return false;
-              return !placedRegionalIds(db, u).includes(league.regionalId);
+              if (adminIds.some((id) => inLeague(u, id)) || u.id === user.id) return true;
+              if (isOwner(u)) return false;
+              return scopedLeagues(db, user).some((league) => {
+                if (!userRegionalIds(u).includes(league.regionalId)) return false;
+                return !placedRegionalIds(db, u).includes(league.regionalId);
+              });
             })
             .map((u) => publicUser(u, db));
       const enrichApp = (a) => {
@@ -815,32 +1096,36 @@ async function handleApi(req, res, url) {
           fullyPlaced: applicant ? isFullyPlaced(db, applicant) : false,
         };
       };
-      const applications = (isOwner(user) ? db.applications : db.applications.filter((a) => {
-        const league = db.leagues.find((l) => l.id === user.adminLeagueId);
-        if (!league) return false;
-        return a.regionalId === league.regionalId || (a.regionalIds || []).includes(league.regionalId);
+      const applications = (canOverride(user) ? db.applications : db.applications.filter((a) => {
+        const regionals = new Set(scopedLeagues(db, user).map((l) => l.regionalId));
+        return regionals.has(a.regionalId) || (a.regionalIds || []).some((id) => regionals.has(id));
       }))
         .map(enrichApp)
         .filter((a) => {
           if (a.fullyPlaced) return false;
-          if (isOwner(user)) return true;
-          const league = db.leagues.find((l) => l.id === user.adminLeagueId);
+          if (canOverride(user)) return true;
           const applicant = db.users.find((x) => x.id === a.userId);
-          if (!league || !applicant) return true;
-          return !placedRegionalIds(db, applicant).includes(league.regionalId);
+          if (!applicant) return true;
+          return scopedLeagues(db, user).some((league) => !placedRegionalIds(db, applicant).includes(league.regionalId));
         });
       return json(res, 200, {
         ok: true,
         stats: stats(db),
         me: publicUser(user, db),
         isOwner: isOwner(user),
+        isHeadAdmin: isHeadAdmin(user),
+        canOverride: canOverride(user),
         ownerSlots: { used: ownerCount(db), max: MAX_OWNERS },
         users,
-        owners: db.users.filter((u) => u.role === "owner").map((u) => publicUser(u, db)),
-        leagueAdmins: db.users.filter((u) => u.role === "admin").map((u) => ({
-          ...publicUser(u, db),
-          adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === u.adminLeagueId) || { name: "Unassigned", regionalId: 0 }),
-        })),
+        owners: db.users.filter((u) => isOwner(u)).map((u) => publicUser(u, db)),
+        headAdmins: db.users.filter((u) => isHeadAdmin(u)).map((u) => publicUser(u, db)),
+        leagueAdmins: db.users.flatMap((u) =>
+          adminLeagueIds(u).map((id) => ({
+            ...publicUser(u, db),
+            adminLeagueId: id,
+            adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "Unassigned", regionalId: 0 }),
+          }))
+        ),
         applications,
         leagues,
         allLeagues: db.leagues.map((l) => ({ ...l, title: leagueTitle(db, l) })),
@@ -852,29 +1137,48 @@ async function handleApi(req, res, url) {
       if (ownerCount(db) >= MAX_OWNERS) return json(res, 400, { ok: false, error: `There can only be ${MAX_OWNERS} owners` });
       const u = db.users.find((x) => x.id === Number(body.userId));
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
-      if (u.role === "owner") return json(res, 400, { ok: false, error: "Already an owner" });
-      u.role = "owner";
-      u.adminLeagueId = null;
+      if (isOwner(u)) return json(res, 400, { ok: false, error: "Already an owner" });
+      addRole(u, "owner");
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/assign-admin") {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can assign admins" });
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can assign division admins" });
       const u = db.users.find((x) => x.id === Number(body.userId));
       const league = db.leagues.find((l) => l.id === Number(body.leagueId));
       if (!u || !league) return json(res, 400, { ok: false, error: "Choose a registered player and a league" });
-      if (u.role === "owner") return json(res, 400, { ok: false, error: "Owners already have access to every league" });
-      u.role = "admin";
-      u.adminLeagueId = league.id;
+      if (adminLeagueIds(u).includes(league.id)) return json(res, 400, { ok: false, error: "Already the admin of that division" });
+      u.adminLeagueIds = [...adminLeagueIds(u), league.id];
+      syncAdminLeagues(u);
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
+    }
+    if (method === "POST" && p === "/api/admin/assign-head-admin") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can assign head admins" });
+      const u = db.users.find((x) => x.id === Number(body.userId));
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      if (isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Already a head admin" });
+      addRole(u, "head_admin");
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/revoke-admin") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can do this" });
       const u = db.users.find((x) => x.id === Number(body.userId));
-      if (!u || u.role !== "admin") return json(res, 400, { ok: false, error: "Not a league admin" });
-      u.role = "player";
-      u.adminLeagueId = null;
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      const which = String(body.role || "admin");
+      if (which === "head_admin") {
+        if (!isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Not a head admin" });
+        removeRole(u, "head_admin");
+      } else if (which === "owner") {
+        return json(res, 400, { ok: false, error: "Owners cannot be removed here" });
+      } else {
+        const leagueId = Number(body.leagueId || u.adminLeagueId);
+        if (!isDivisionAdmin(u)) return json(res, 400, { ok: false, error: "Not a division admin" });
+        u.adminLeagueIds = adminLeagueIds(u).filter((id) => id !== leagueId);
+        if (!leagueId) u.adminLeagueIds = [];
+        syncAdminLeagues(u);
+      }
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -901,50 +1205,97 @@ async function handleApi(req, res, url) {
       if (!inLeague(home, leagueId) || !inLeague(away, leagueId)) {
         return json(res, 400, { ok: false, error: "Both players must already be placed in that league" });
       }
-      const fixture = {
+      const fixture = newFixture({
         id: Math.max(0, ...db.fixtures.map((f) => f.id)) + 1,
         leagueId,
         week: Number(body.week) || 1,
+        season: Number(body.season) || 1,
         homeId: home.id,
         awayId: away.id,
-        homeLegs: null,
-        awayLegs: null,
-        status: "scheduled",
         date: body.date || new Date().toISOString().slice(0, 10),
-        oneEighties: 0,
-        homeOneEighties: 0,
-        awayOneEighties: 0,
-        topCheckout: 0,
-        screenshotFile: null,
-        screenshotBy: null,
-        screenshotAt: null,
-        screenshot1File: null,
-        screenshot1By: null,
-        screenshot1At: null,
-        screenshot2File: null,
-        screenshot2By: null,
-        screenshot2At: null,
-      };
+        time: String(body.time || "").slice(0, 5),
+      });
       db.fixtures.push(fixture);
       writeDb(db);
       return json(res, 200, { ok: true, fixture });
+    }
+    if (method === "POST" && p === "/api/admin/fixtures/generate") {
+      const leagueId = Number(body.leagueId);
+      if (!managesLeague(user, leagueId)) return json(res, 403, { ok: false, error: "You can only generate fixtures in your league" });
+      const league = db.leagues.find((l) => l.id === leagueId);
+      if (!league) return json(res, 400, { ok: false, error: "League not found" });
+      const players = db.users.filter((u) => inLeague(u, leagueId));
+      if (players.length < 2) return json(res, 400, { ok: false, error: "Place at least two players in this league first" });
+      const season = Number(body.season) || 1;
+      const doubleRound = body.doubleRound === true || body.doubleRound === "1" || body.doubleRound === "on";
+      const replaceScheduled = body.replaceScheduled === true || body.replaceScheduled === "1" || body.replaceScheduled === "on";
+      const startDate = String(body.startDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
+      const weekGapDays = Math.max(1, Number(body.weekGapDays) || 7);
+      if (replaceScheduled) {
+        const keep = [];
+        for (const f of db.fixtures) {
+          if (f.leagueId === leagueId && Number(f.season || 1) === season && f.status === "scheduled" && shotCount(f) === 0) {
+            continue;
+          }
+          keep.push(f);
+        }
+        db.fixtures = keep;
+      }
+      const existing = new Set(
+        db.fixtures
+          .filter((f) => f.leagueId === leagueId && Number(f.season || 1) === season)
+          .map((f) => pairingKey(f.homeId, f.awayId))
+      );
+      const weeks = roundRobinWeeks(players.map((p) => p.id), { doubleRound });
+      let nextId = Math.max(0, ...db.fixtures.map((f) => f.id)) + 1;
+      const created = [];
+      weeks.forEach((matches, index) => {
+        const week = index + 1;
+        const date = addDays(startDate, (week - 1) * weekGapDays);
+        for (const m of matches) {
+          const key = pairingKey(m.homeId, m.awayId);
+          if (existing.has(key)) continue;
+          existing.add(key);
+          const fixture = newFixture({
+            id: nextId++,
+            leagueId,
+            season,
+            week,
+            homeId: m.homeId,
+            awayId: m.awayId,
+            date,
+          });
+          db.fixtures.push(fixture);
+          created.push(fixture);
+        }
+      });
+      writeDb(db);
+      return json(res, 200, {
+        ok: true,
+        created: created.length,
+        weeks: weeks.length,
+        skipped: weeks.reduce((n, m) => n + m.length, 0) - created.length,
+        fixtures: created.map((f) => withNames(db, f)),
+      });
     }
     const confirmMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/result$/);
     if (method === "POST" && confirmMatch) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
-      if (!isOwner(user) && shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1)) {
+      if (!canOverride(user) && shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1)) {
         return json(res, 400, { ok: false, error: "Wait for both match screenshots" });
       }
-      if (fixture.status === "played" && !isOwner(user)) return json(res, 400, { ok: false, error: "Only owners can overwrite a confirmed result" });
+      if (fixture.status === "played" && !canOverride(user)) return json(res, 400, { ok: false, error: "Only a head admin or owner can overwrite a confirmed result" });
       const legsError = validateLegs(body.homeLegs, body.awayLegs);
       if (legsError) return json(res, 400, { ok: false, error: legsError });
+      const wasPlayed = fixture.status === "played";
       applyMatchStats(fixture, body);
       fixture.status = "played";
       fixture.confirmedBy = user.id;
       fixture.confirmedAt = new Date().toISOString();
-      if (isOwner(user)) {
+      fixture.extractedStats = fixture.extractedStats ? { ...fixture.extractedStats, pending: false, verifiedBy: user.id, verifiedAt: fixture.confirmedAt } : null;
+      if (canOverride(user) && wasPlayed) {
         fixture.overwrittenBy = user.id;
         fixture.overwrittenAt = fixture.confirmedAt;
       }
@@ -966,9 +1317,11 @@ async function handleApi(req, res, url) {
         username: String(body.username || "").trim(),
         password,
         role: "player",
+        roles: [],
         leagueId: league ? league.id : null,
         leagueIds: league ? [league.id] : [],
         adminLeagueId: null,
+        adminLeagueIds: [],
         regionalChoice: league ? (league.regionalId === 2 ? "americas" : "europe") : "europe",
         regionalIds: league ? [league.regionalId] : [1],
         regionalId: league ? league.regionalId : 1,
@@ -1009,7 +1362,7 @@ async function handleApi(req, res, url) {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete players" });
       const u = db.users.find((x) => x.id === Number(body.userId));
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
-      if (u.role === "owner") return json(res, 400, { ok: false, error: "Owners cannot be deleted here" });
+      if (isOwner(u)) return json(res, 400, { ok: false, error: "Owners cannot be deleted here" });
       if (u.avatarFile) removeUpload(u.avatarFile);
       db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
       db.applications = db.applications.filter((a) => a.userId !== u.id);
@@ -1019,9 +1372,10 @@ async function handleApi(req, res, url) {
     }
     const clearMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/clear$/);
     if (method === "POST" && clearMatch) {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can clear results" });
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only a head admin or owner can clear results" });
       const fixture = db.fixtures.find((f) => f.id === Number(clearMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
       clearMatchStats(fixture);
       fixture.status = shotCount(fixture) >= 2 ? "submitted" : "scheduled";
       fixture.confirmedBy = null;
@@ -1077,5 +1431,14 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`TSH Darts League running on ${host}:${port}`);
   console.log(`Data directory: ${dataDir}`);
+  try {
+    const stored = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+    console.log(`Stored accounts: ${(stored.users || []).length}`);
+  } catch {
+    console.log("Stored accounts: none yet");
+  }
+  if (onRailway && dataDir === "/data") {
+    console.log("Railway data stays on the /data volume. Attach a volume at /data so signups survive deploys.");
+  }
   warmPdcTicker();
 });
