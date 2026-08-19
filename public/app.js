@@ -261,21 +261,14 @@ function panel(html, extra = "") {
 }
 
 async function pageHome() {
-  const [stats, content, regionals] = await Promise.all([api("/api/stats"), api("/api/content"), api("/api/regionals")]);
-  let ticker = [];
-  for (const r of regionals.regionals) {
-    const detail = await api(`/api/regionals/${r.slug}`);
-    for (const league of detail.leagues) {
-      const table = await api(`/api/leagues/${league.id}`);
-      for (const f of table.fixtures.filter((x) => x.status === "played").slice(0, 2)) {
-        ticker.push({ div: league.name.toUpperCase(), text: `${f.homeName} vs ${f.awayName} — ${f.homeLegs}-${f.awayLegs}`, live: false });
-      }
-      for (const f of table.fixtures.filter((x) => x.status === "scheduled").slice(0, 1)) {
-        ticker.push({ div: league.name.toUpperCase(), text: `${f.homeName} vs ${f.awayName}`, live: true });
-      }
-    }
-  }
-  if (!ticker.length) ticker = [{ div: "TSH", text: "Sign up to join TSH Darts League", live: true }];
+  const [stats, content, regionals, tickerData] = await Promise.all([
+    api("/api/stats"),
+    api("/api/content"),
+    api("/api/regionals"),
+    api("/api/ticker").catch(() => ({ items: [] })),
+  ]);
+  let ticker = Array.isArray(tickerData.items) ? tickerData.items : [];
+  if (!ticker.length) ticker = [{ div: "PDC", text: "Upcoming live darts dates will appear here", live: false }];
   const loop = [...ticker, ...ticker];
   const faq = content.content.faq || [];
   return layout(

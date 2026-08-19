@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
+import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -515,6 +516,7 @@ async function handleApi(req, res, url) {
   if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
   if (method === "GET" && p === "/api/regionals") return json(res, 200, { ok: true, regionals: db.regionals });
   if (method === "GET" && p === "/api/announcements") return json(res, 200, { ok: true, announcements: db.announcements });
+  if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
 
   const regionalMatch = p.match(/^\/api\/regionals\/([^/]+)$/);
   if (method === "GET" && regionalMatch) {
@@ -623,7 +625,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
@@ -1075,4 +1077,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`TSH Darts League running on ${host}:${port}`);
   console.log(`Data directory: ${dataDir}`);
+  warmPdcTicker();
 });
