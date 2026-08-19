@@ -67,13 +67,35 @@ function avatarImg(user, size = 40) {
   const letter = String(user.nickname || user.name || "?").trim().slice(0, 1).toUpperCase() || "?";
   return `<span class="avatar avatar-fallback" style="width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * 0.4))}px">${letter}</span>`;
 }
+function userRoles(u) {
+  const roles = Array.isArray(u?.roles) ? u.roles.map(String) : [];
+  if (u?.role && u.role !== "player") roles.unshift(String(u.role));
+  return [...new Set(roles.filter((r) => r && r !== "player"))];
+}
+function hasRole(u, role) {
+  if (!u) return false;
+  if (role === "player") return true;
+  return userRoles(u).includes(role);
+}
 function roleLabel(u) {
-  if (u?.role === "owner") return "Owner";
-  if (u?.role === "admin") return "League admin";
-  return "Player";
+  const roles = userRoles(u);
+  const labels = [];
+  if (roles.includes("owner")) labels.push("Owner");
+  if (roles.includes("head_admin")) labels.push("Head Admin");
+  if (roles.includes("admin")) labels.push("Division Admin");
+  return labels.length ? labels.join(" · ") : "Player";
+}
+function isOwner(u = state.user) {
+  return hasRole(u, "owner");
+}
+function isHeadAdmin(u = state.user) {
+  return hasRole(u, "head_admin");
+}
+function canOverride(u = state.user) {
+  return isOwner(u) || isHeadAdmin(u);
 }
 function isStaff(u = state.user) {
-  return u?.role === "owner" || u?.role === "admin";
+  return hasRole(u, "owner") || hasRole(u, "head_admin") || hasRole(u, "admin");
 }
 function userLeagueIds(u) {
   const ids = Array.isArray(u?.leagueIds) ? u.leagueIds.map(Number) : [];
@@ -87,8 +109,9 @@ function nDisp(v) {
   return v || v === 0 ? v : "";
 }
 function sideStat(f, side, key) {
-  if (key === "180") return nDisp(f[`${side}180`] ?? f[`${side}OneEighties`]);
-  return nDisp(f[`${side}${key}`]);
+  const src = f.status === "played" ? f : f.extractedStats && Object.keys(f.extractedStats).length ? { ...f, ...f.extractedStats } : f;
+  if (key === "180") return nDisp(src[`${side}180`] ?? src[`${side}OneEighties`]);
+  return nDisp(src[`${side}${key}`]);
 }
 function matchStatsForm(f, formKind, buttonLabel) {
   const field = (side, key, label, extra = "") =>
@@ -134,7 +157,7 @@ function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, acti
           (f) =>
             `<button type="button" class="match-chip${f.id === selected.id ? " selected" : ""}" data-act="pick-result" data-id="${f.id}">
               ${esc(f.homeName)} vs ${esc(f.awayName)}
-              <span>Week ${f.week}${f.screenshotCount ? ` · ${f.screenshotCount}/2 shots` : ""}</span>
+              <span>Week ${f.week}${f.screenshotCount ? ` · ${f.screenshotCount}/2 shots` : ""}${f.extractedPending ? " · extracted" : ""}</span>
             </button>`
         )
         .join("")}
@@ -147,7 +170,13 @@ function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, acti
       <div class="stats-form-wrap">
         <div class="text-xs uppercase tracking-widest text-muted">${esc(selected.leagueName)} · Week ${selected.week}</div>
         <h3 class="mt-1 font-semibold">${esc(selected.homeName)} vs ${esc(selected.awayName)}</h3>
-        <p class="mt-1 text-sm text-muted">Enter stats for each player from this match’s two screenshots. Saving updates the league table (1 point per leg + 2 for the win).</p>
+        <p class="mt-1 text-sm text-muted">${
+          selected.extractedStats
+            ? "Stats were read from the screenshots. Check every number, correct anything that looks wrong, then save. Nothing hits the table until you verify."
+            : "Enter stats for each player from this match’s two screenshots. Saving updates the league table (1 point per leg + 2 for the win)."
+        }</p>
+        ${selected.extractedStats ? `<p class="mt-2 text-xs font-bold tracking-widest gold">EXTRACTED · AWAITING YOUR VERIFY</p>` : ""}
+        <form class="mt-3" data-form="SCANSTATS" data-id="${selected.id}"><button type="submit" class="btn-ghost">SCAN SCREENSHOTS</button></form>
         ${matchStatsForm(selected, formKind, buttonLabel)}
         ${actions ? actions(selected) : ""}
       </div>
@@ -161,11 +190,176 @@ function fileToDataUrl(file) {
     reader.readAsDataURL(file);
   });
 }
+function fileToAvatarDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 512;
+      const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+      canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.86));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read that photo. Use a PNG, JPG, or WEBP."));
+    };
+    img.src = url;
+  });
+}
+
+let tesseractLoader = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (tesseractLoader) return tesseractLoader;
+  tesseractLoader = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    s.onload = () => resolve(window.Tesseract);
+    s.onerror = () => {
+      tesseractLoader = null;
+      reject(new Error("Could not load screenshot reader"));
+    };
+    document.head.appendChild(s);
+  });
+  return tesseractLoader;
+}
+
+function nameHits(text, name) {
+  if (!name) return 0;
+  const t = String(text).toLowerCase();
+  const n = String(name).toLowerCase().trim();
+  if (!n) return 0;
+  if (t.includes(n)) return 3;
+  return n.split(/\s+/).filter((p) => p.length > 2 && t.includes(p)).length;
+}
+
+function firstNum(text, re) {
+  const m = String(text).match(re);
+  return m ? Number(m[1]) : null;
+}
+
+function parsePlayerBlock(text) {
+  const t = String(text);
+  return {
+    Legs: firstNum(t, /(?:legs?\s*(?:won)?|score)\s*[:.]?\s*(\d{1,2})/i),
+    Avg: firstNum(t, /(?:3[\s-]?d(?:art)?\s*a(?:verage)?|3da|average|avg)\s*[:.]?\s*(\d{1,3}(?:\.\d{1,2})?)/i),
+    Checkout: firstNum(t, /(?:highest\s*)?(?:co|checkout|check\s*out)\s*[:.]?\s*(\d{1,3})/i),
+    BestLeg: firstNum(t, /(?:best\s*leg|fewest\s*darts)\s*[:.]?\s*(\d{1,3})/i),
+    60: firstNum(t, /(?:60\+|60\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    80: firstNum(t, /(?:80\+|80\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    100: firstNum(t, /(?:100\+|100\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    120: firstNum(t, /(?:120\+|120\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    140: firstNum(t, /(?:140\+|140\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    160: firstNum(t, /(?:160\+|160\s*\+)\s*[:.]?\s*(\d{1,3})/i),
+    180: firstNum(t, /(?:180s?|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
+  };
+}
+
+function parseDartCounterText(text, homeName, awayName) {
+  const raw = String(text || "").replace(/\u00a0/g, " ");
+  const stats = {};
+  const score = raw.match(/\b([0-5])\s*[-–:]\s*([0-5])\b/);
+  if (score) {
+    const a = Number(score[1]);
+    const b = Number(score[2]);
+    const before = raw.slice(0, score.index).toLowerCase();
+    const homeFirst = nameHits(before, homeName) >= nameHits(before, awayName);
+    stats.homeLegs = homeFirst ? a : b;
+    stats.awayLegs = homeFirst ? b : a;
+  }
+  const mid = Math.floor(raw.length / 2);
+  const homeIdx = raw.toLowerCase().indexOf(String(homeName || "").toLowerCase());
+  const awayIdx = raw.toLowerCase().indexOf(String(awayName || "").toLowerCase());
+  let homeBlock = raw.slice(0, mid);
+  let awayBlock = raw.slice(mid);
+  if (homeIdx >= 0 && awayIdx >= 0 && homeIdx !== awayIdx) {
+    if (homeIdx < awayIdx) {
+      homeBlock = raw.slice(homeIdx, awayIdx);
+      awayBlock = raw.slice(awayIdx);
+    } else {
+      awayBlock = raw.slice(awayIdx, homeIdx);
+      homeBlock = raw.slice(homeIdx);
+    }
+  } else if (nameHits(raw.slice(0, mid), awayName) > nameHits(raw.slice(0, mid), homeName)) {
+    homeBlock = raw.slice(mid);
+    awayBlock = raw.slice(0, mid);
+  }
+  const home = parsePlayerBlock(homeBlock);
+  const away = parsePlayerBlock(awayBlock);
+  const both = parsePlayerBlock(raw);
+  const assign = (side, parsed, fallback) => {
+    for (const [key, val] of Object.entries(parsed)) {
+      const field = `${side}${key}`;
+      const v = val != null ? val : fallback[key];
+      if (v == null || Number.isNaN(v)) continue;
+      if (stats[field] == null) stats[field] = v;
+    }
+  };
+  assign("home", home, both);
+  assign("away", away, both);
+  if (stats.home180 != null) stats.homeOneEighties = stats.home180;
+  if (stats.away180 != null) stats.awayOneEighties = stats.away180;
+  stats.rawText = raw.slice(0, 2500);
+  return stats;
+}
+
+async function ocrImage(src) {
+  const Tesseract = await loadTesseract();
+  const worker = await Tesseract.createWorker("eng");
+  try {
+    const { data } = await worker.recognize(src);
+    return data?.text || "";
+  } finally {
+    await worker.terminate();
+  }
+}
+
+async function ocrFixtureStats(fixture, extraSrcs = []) {
+  const srcs = [...extraSrcs];
+  if (fixture.screenshot1) srcs.push(screenshotUrl(fixture.id, 1));
+  if (fixture.screenshot2) srcs.push(screenshotUrl(fixture.id, 2));
+  const unique = [...new Set(srcs.filter(Boolean))];
+  if (!unique.length) return null;
+  const texts = [];
+  for (const src of unique) {
+    try {
+      texts.push(await ocrImage(src));
+    } catch {
+      /* keep going */
+    }
+  }
+  const merged = parseDartCounterText(texts.join("\n\n"), fixture.homeName, fixture.awayName);
+  const keys = Object.keys(merged).filter((k) => k !== "rawText");
+  if (!keys.length) return null;
+  return merged;
+}
 function fixtureStatus(f) {
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
-  if (f.status === "submitted" || f.hasBothScreenshots) return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
+  if (f.status === "submitted" || f.hasBothScreenshots) return `<div class="text-xs font-bold tracking-widest gold">${f.extractedPending ? "STATS TO VERIFY" : "AWAITING ADMIN"}</div>`;
   if (f.screenshotCount) return `<div class="text-xs font-bold tracking-widest gold">${f.screenshotCount}/2 SCREENSHOTS</div>`;
-  return `<div class="text-xs font-bold tracking-widest text-red-500">SCHEDULED</div>`;
+  return `<div class="text-xs font-bold tracking-widest text-red-500">${f.scheduleStatus === "agreed" ? "AGREED" : f.scheduleStatus === "proposed" ? "TIME PROPOSED" : "SCHEDULED"}</div>`;
+}
+function fixtureWhen(f) {
+  const bits = [`Week ${f.week}`];
+  if (f.season && Number(f.season) !== 1) bits[0] = `Season ${f.season} · ${bits[0]}`;
+  if (f.when) bits.push(f.when);
+  else if (f.date) bits.push(f.time ? `${f.date} ${f.time}` : f.date);
+  return bits.join(" · ");
+}
+function toLocalInput(date, time) {
+  if (!date) return "";
+  const t = time && /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : "19:00";
+  return `${date}T${t}`;
+}
+function inThisMatch(f, u = state.user) {
+  if (!u || !f) return false;
+  return Number(f.homeId) === Number(u.id) || Number(f.awayId) === Number(u.id);
 }
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -216,7 +410,7 @@ function layout(inner, { arena = false, home = false } = {}) {
     if (isStaff()) links.push(["/admin", "Admin"]);
   }
   return `
-    <div class="${home ? "arena-bg min-h-screen" : "min-h-screen bg-background"}">
+    <div class="${home ? "arena-bg arena-home min-h-screen" : "min-h-screen bg-background"}">
       ${state.menu ? `<div class="nav-overlay" data-act="close-menu"></div>` : ""}
       <aside class="sidebar ${state.menu ? "open" : ""}">
         <div class="flex items-center justify-between px-4 py-4">
@@ -274,9 +468,6 @@ async function pageHome() {
   return layout(
     `
     <section class="relative flex min-h-[calc(100vh-3.5rem)] flex-col justify-end pb-24 pt-10">
-      <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <img src="${CRESTS.main}" alt="The Social Hub" class="crest-hero">
-      </div>
       <div class="relative z-10 px-6 md:px-12">
         <p class="mb-3 text-xs font-semibold tracking-[0.35em] gold">THE SOCIAL HUB PRESENTS</p>
         <h1 class="max-w-xl text-5xl font-extrabold leading-[0.95] tracking-tight sm:text-7xl">WHERE THE<br><span class="gold">CHAMPIONS</span><br>COMPETE</h1>
@@ -400,7 +591,9 @@ async function pageRegional(slug) {
         ${d.leagues
           .map(
             (l) =>
-              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass flex items-center justify-between rounded-xl px-5 py-4"><div><div class="font-bold">${esc(l.name)}</div><div class="text-sm text-muted">${esc(l.format)}</div></div><span class="text-xs font-semibold tracking-widest gold">TABLE</span></a>`
+              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass flex items-center justify-between rounded-xl px-5 py-4"><div><div class="font-bold">${esc(l.name)}</div><div class="text-sm text-muted">${esc(l.format)}${
+                (l.divisionAdmins || []).length ? ` · Admin: ${esc(l.divisionAdmins.map((a) => a.nickname || a.name).join(", "))}` : ""
+              }</div></div><span class="text-xs font-semibold tracking-widest gold">TABLE</span></a>`
           )
           .join("")}
       </div>
@@ -416,18 +609,84 @@ async function pageLeague(slug, id) {
     `<div class="mx-auto max-w-5xl px-4 py-10">
       <a href="/regionals/${slug}" class="gold text-sm font-bold inline-flex items-center gap-2">${crest(36, regionalCrest(slug))} ← ${esc(d.regional?.fullTitle || "")}</a>
       ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc(d.league.name.toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
+      ${panel(
+        (d.divisionAdmins || []).length
+          ? `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div>
+            <p class="mt-1 text-sm text-muted">For issues in this division, contact the admin listed here.</p>
+            <div class="mt-3 space-y-3">${d.divisionAdmins
+              .map(
+                (a) =>
+                  `<a href="/player/${a.id}" class="flex items-center gap-3">
+                    ${avatarImg(a, 48)}
+                    <div>
+                      <div class="font-semibold">${esc(a.nickname || a.name)}</div>
+                      <div class="text-sm text-muted">${esc(a.name)}${a.email ? ` · ${esc(a.email)}` : ""}${hasRole(a, "head_admin") ? " · Head Admin" : ""}</div>
+                    </div>
+                  </a>`
+              )
+              .join("")}</div>`
+          : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from Contact.</p>`,
+        "mt-4"
+      )}
       <div class="mt-4 flex gap-2">
         <a href="/regionals/${slug}/leagues/${id}" class="${tab === "table" ? "btn-gold" : "btn-ghost"}">TABLE</a>
         <a href="/regionals/${slug}/leagues/${id}?tab=fixtures" class="${tab === "fixtures" ? "btn-gold" : "btn-ghost"}">FIXTURES</a>
       </div>
+      ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
+      ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       ${
         tab === "fixtures"
-          ? `<div class="mt-4 space-y-3">${d.fixtures
-              .map(
-                (f) =>
-                  panel(`<div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-xs uppercase tracking-widest text-muted">Week ${f.week} · ${esc(f.date)}</div><div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div></div><div>${fixtureStatus(f)}</div></div>`)
-              )
-              .join("")}</div>`
+          ? `<div class="mt-4 space-y-4">${
+              d.fixtures.length
+                ? d.fixtures
+                    .slice()
+                    .sort((a, b) => Number(a.week || 0) - Number(b.week || 0) || String(a.date || "").localeCompare(String(b.date || "")))
+                    .map((f) => {
+                      const mine = inThisMatch(f);
+                      const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
+                      const proposalLine = proposed
+                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(f.proposedDate)} ${esc(f.proposedTime || "")}${
+                            mine && Number(f.proposedBy) !== Number(state.user?.id) ? " · waiting on you" : mine ? " · waiting on opponent" : ""
+                          }</div>`
+                        : f.scheduleStatus === "agreed"
+                          ? `<div class="mt-1 text-xs gold">Agreed: ${esc(f.date)} ${esc(f.time || "")}</div>`
+                          : "";
+                      const actions =
+                        mine && f.status !== "played"
+                          ? `<div class="mt-3 flex flex-wrap items-end gap-2">
+                              <form class="flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
+                                <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time
+                                  <input name="datetime" type="datetime-local" required value="${esc(
+                                    toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time)
+                                  )}">
+                                </label>
+                                <button class="btn-gold">PROPOSE</button>
+                              </form>
+                              ${
+                                proposed && Number(f.proposedBy) !== Number(state.user?.id)
+                                  ? `<form data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`
+                                  : ""
+                              }
+                              <a href="/my-matches?fixture=${f.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>
+                            </div>`
+                          : !state.user && f.status !== "played"
+                            ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT SCREENSHOTS</a></div>`
+                            : "";
+                      return panel(
+                        `<div id="fixture-${f.id}" class="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
+                            <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                            ${proposalLine}
+                            ${actions}
+                          </div>
+                          <div>${fixtureStatus(f)}</div>
+                        </div>`
+                      );
+                    })
+                    .join("")
+                : `<p class="text-sm text-muted">No fixtures yet. Division admins can generate a season from the Admin desk.</p>`
+            }</div>`
           : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
               .map(
                 (row, i) =>
@@ -586,7 +845,14 @@ async function pageDashboard() {
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 grid gap-4 md:grid-cols-3">
-        ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>`)}
+        ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>${
+          next
+            ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
+               <div class="mt-3 flex flex-wrap gap-2">
+                 <a href="/my-matches?fixture=${next.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>
+               </div>`
+            : ""
+        }`)}
         ${panel(`<div class="text-xs tracking-widest text-muted">RESULTS IN</div><div class="mt-2 text-3xl font-extrabold gold">${played.length}</div>`)}
         ${panel(`<div class="text-xs tracking-widest text-muted">AWAITING ADMIN</div><div class="mt-2 text-3xl font-extrabold gold">${d.fixtures.filter((f) => f.status === "submitted").length}</div>`)}
       </div>
@@ -621,10 +887,10 @@ async function pageDashboard() {
           </form>`)}
       </div>
       ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
-        <p class="mt-1 text-sm text-muted">PNG, JPG, or WEBP. Max 2MB. Shows on your dashboard, player page, and league table.</p>
+        <p class="mt-1 text-sm text-muted">Phone photos, PNG, JPG, or WEBP. We resize it automatically. Shows on your dashboard, player page, and league table.</p>
         <div class="mt-4 flex flex-wrap items-center gap-4">${avatarImg(u, 72)}
           <form class="space-y-2" data-form="AVATAR">
-            <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required>
+            <input type="file" name="avatar" accept="image/*" required>
             <button class="btn-gold">UPLOAD PHOTO</button>
           </form>
         </div>`, "mt-4")}
@@ -637,7 +903,7 @@ async function pageMyMatches() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="text-3xl font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">Play on DartCounter. Upload both match screenshots (2). A league admin then enters each player’s stats.</p>
+      <p class="mt-2 text-sm text-muted">Play on DartCounter. Upload both match screenshots (2). The site will try to read the stats; a division admin verifies them before they count.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 space-y-3">
@@ -660,10 +926,33 @@ async function pageMyMatches() {
                 action = `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">Waiting on admin to enter each player’s stats.</div></div>`;
               }
             }
-            return panel(`<div class="grid gap-3 md:grid-cols-[1fr_220px] md:items-center">
-                <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · Week ${f.week} · ${esc(f.date)}</div>
+            return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_220px] md:items-center ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
+                <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · ${esc(fixtureWhen(f))}</div>
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
-                <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded</div></div>
+                <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded${f.extractedStats ? " · stats extracted, awaiting admin verify" : ""}</div>
+                ${
+                  f.scheduleStatus === "proposed"
+                    ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(f.proposedDate)} ${esc(f.proposedTime || "")}</div>`
+                    : f.scheduleStatus === "agreed"
+                      ? `<div class="mt-1 text-xs gold">Agreed kickoff ${esc(f.date)} ${esc(f.time || "")}</div>`
+                      : ""
+                }
+                ${
+                  f.status !== "played"
+                    ? `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
+                        <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time
+                          <input name="datetime" type="datetime-local" required value="${esc(toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
+                        </label>
+                        <button class="btn-gold">PROPOSE</button>
+                      </form>`
+                    : ""
+                }
+                ${
+                  f.scheduleStatus === "proposed" && Number(f.proposedBy) !== Number(state.user?.id) && f.status !== "played"
+                    ? `<form class="mt-2" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`
+                    : ""
+                }
+                </div>
                 ${action}
               </div>`);
           })
@@ -704,9 +993,9 @@ function pageRules() {
           <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
         </ul>
         <h2 class="text-lg font-bold text-white">Results</h2>
-        <p>Either player from the fixture uploads both DartCounter screenshots (2). League admins check those two shots for that match and enter official stats for each player.</p>
+        <p>Either player from the fixture uploads both DartCounter screenshots (2). The site tries to read the stats; a division admin verifies them before they are added to the table.</p>
         <h2 class="text-lg font-bold text-white">Scheduling</h2>
-        <p>Arrange a time, play on DartCounter, then upload both screenshots from My Matches. Owners place players and assign league admins.</p>
+        <p>Propose a date and time on the Fixtures tab, then play on DartCounter. Use Submit Screenshots on that same fixture. A person can hold more than one staff role — for example Division Admin and Head Admin together. Each division lists its Division Admin as The Admin for player issues. A Head Admin can override a confirmed result; owners assign those roles.</p>
       </div>
     `)}</div>`,
     { arena: true }
@@ -731,7 +1020,7 @@ async function pageNews() {
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
   const everyone = d.users;
-  const registered = everyone.filter((u) => u.role === "player" || u.role === "admin");
+  const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
   const playerOption = (p) => {
     const names = userLeagueIds(p)
@@ -739,7 +1028,11 @@ async function pageAdmin() {
       .filter(Boolean);
     const where = names.length ? names.join(" · ") : "Unplaced";
     const both = p.regionalChoice === "both" ? " · Both" : "";
-    const tag = p.role === "owner" ? " · Owner" : p.role === "admin" ? " · Admin" : "";
+    const tags = [];
+    if (hasRole(p, "owner")) tags.push("Owner");
+    if (hasRole(p, "head_admin")) tags.push("Head Admin");
+    if (hasRole(p, "admin")) tags.push("Division Admin");
+    const tag = tags.length ? ` · ${tags.join(" · ")}` : "";
     return `<option value="${p.id}">${esc(p.name)}${tag}${both} · ${esc(where)}</option>`;
   };
   const pending = d.applications;
@@ -748,25 +1041,44 @@ async function pageAdmin() {
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const ownerSection = d.isOwner
     ? `${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
-        <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can make someone a league admin.</p>
+        <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
         <div class="mt-3 space-y-2">${d.owners.map((o) => `<div class="text-sm">${esc(o.name)} · ${esc(o.email)}</div>`).join("")}</div>
         ${
           d.ownerSlots.used < d.ownerSlots.max
             ? `<form class="mt-4 grid gap-3 md:grid-cols-2" data-form="OWNER">
-                <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => p.role !== "owner").map((p) => `<option value="${p.id}">${esc(p.name)} · ${esc(p.email)}</option>`).join("")}</select>
+                <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => !hasRole(p, "owner")).map((p) => `<option value="${p.id}">${esc(p.name)} · ${esc(p.email)}</option>`).join("")}</select>
                 <button class="btn-gold">MAKE OWNER</button>
               </form>`
             : `<p class="mt-3 text-sm text-muted">All three owner slots are filled.</p>`
         }`, "mt-6")}
-      ${panel(`<h2 class="text-lg font-bold">League admins</h2>
-        <p class="mt-1 text-sm text-muted">Assign a registered player as admin of one league. They can view screenshots and enter official stats for that league.</p>
+      ${panel(`<h2 class="text-lg font-bold">Head Admins</h2>
+        <p class="mt-1 text-sm text-muted">Head Admins can override a confirmed result entered by another admin. They can also hold a Division Admin post at the same time.</p>
+        <div class="mt-3 space-y-2">${
+          (d.headAdmins || []).length
+            ? d.headAdmins
+                .map(
+                  (a) =>
+                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}" data-role="head_admin">
+                      <span>${esc(a.name)}${hasRole(a, "admin") ? ` · also Division Admin${(a.adminLeagueTitles || []).length ? ` (${esc(a.adminLeagueTitles.join(", "))})` : ""}` : ""}</span>
+                      <button class="btn-ghost">REMOVE HEAD ADMIN</button>
+                    </form>`
+                )
+                .join("")
+            : `<p class="text-sm text-muted">None assigned yet.</p>`
+        }</div>
+        <form class="mt-4 grid gap-3 md:grid-cols-2" data-form="HEADADMIN">
+          <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => !hasRole(p, "head_admin") && !hasRole(p, "owner")).map((p) => `<option value="${p.id}">${esc(p.name)}${hasRole(p, "admin") ? " · Division Admin" : ""}</option>`).join("")}</select>
+          <button class="btn-gold">MAKE HEAD ADMIN</button>
+        </form>`, "mt-4")}
+      ${panel(`<h2 class="text-lg font-bold">Division Admins</h2>
+        <p class="mt-1 text-sm text-muted">Each division lists this person as The Admin for player issues. Head Admins can also be assigned here.</p>
         <div class="mt-3 space-y-2">${
           d.leagueAdmins.length
             ? d.leagueAdmins
                 .map(
                   (a) =>
-                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}">
-                      <span>${esc(a.name)} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
+                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}" data-role="admin" data-league="${a.adminLeagueId || ""}">
+                      <span>${esc(a.name)}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
                       <button class="btn-ghost">REMOVE ADMIN</button>
                     </form>`
                 )
@@ -774,15 +1086,21 @@ async function pageAdmin() {
             : `<p class="text-sm text-muted">None assigned yet.</p>`
         }</div>
         <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="ASSIGN">
-          <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => p.role === "player").map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+          <select name="userId" required><option value="">Registered player</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}${hasRole(p, "head_admin") ? " · Head Admin" : ""}${hasRole(p, "admin") ? " · Division Admin" : ""}</option>`).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
           <button class="btn-gold">ASSIGN ADMIN</button>
         </form>`, "mt-4")}`
     : "";
   return layout(
     `<div class="mx-auto max-w-7xl px-4 py-10">
-      <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : "League admin"}</h1>
-      <p class="mt-2 text-muted">${d.isOwner ? "Promote owners (max 3), assign league admins, and run the league." : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`}</p>
+      <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
+      <p class="mt-2 text-muted">${
+        d.isOwner
+          ? "Promote owners (max 3), assign Head Admins and Division Admins, generate seasons, and run the league."
+          : d.isHeadAdmin
+            ? "Verify extracted match stats, generate fixtures, and override another admin’s confirmed result when needed."
+            : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
+      }</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
@@ -796,9 +1114,9 @@ async function pageAdmin() {
           .join("")}
       </div>
       ${ownerSection}
-      ${panel(`<h2 class="text-lg font-bold">Enter match stats</h2>
-        <p class="mt-1 text-sm text-muted">Pick a match. Only that match’s two screenshots show on the left. Enter stats for each player on the right. Saving updates the league table immediately.</p>
-        ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
+      ${panel(`<h2 class="text-lg font-bold">Verify match stats</h2>
+        <p class="mt-1 text-sm text-muted">Pick a match. Screenshots are on the left. If the site read numbers from those shots they are pre-filled — check them, then save. Nothing is added to the table until you verify.</p>
+        ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "VERIFY & SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Pending applications</h2>${
         pending.length
           ? pending
@@ -816,7 +1134,18 @@ async function pageAdmin() {
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <button class="btn-gold">PLACE</button>
         </form>`, "mt-4")}
-      ${panel(`<h2 class="text-lg font-bold">Create fixture</h2>
+      ${panel(`<h2 class="text-lg font-bold">Generate season fixtures</h2>
+        <p class="mt-1 text-sm text-muted">Builds a round-robin so every player in the league meets every other player. Odd numbers get a bye that week. Existing pairings for that season are skipped unless you replace unplayed matches.</p>
+        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="GENERATE">
+          <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
+          <input name="season" type="number" min="1" value="1" placeholder="Season">
+          <input name="startDate" type="date" value="${new Date().toISOString().slice(0, 10)}">
+          <input name="weekGapDays" type="number" min="1" value="7" placeholder="Days between weeks">
+          <label class="check-row"><input type="checkbox" name="doubleRound" value="1"> Home and away (double round-robin)</label>
+          <label class="check-row"><input type="checkbox" name="replaceScheduled" value="1"> Replace unplayed fixtures this season</label>
+          <button class="btn-gold md:col-span-3">GENERATE FIXTURES</button>
+        </form>`, "mt-4")}
+      ${panel(`<h2 class="text-lg font-bold">Create one fixture</h2>
         <form class="mt-3 grid gap-3 md:grid-cols-5" data-form="FIXTURE">
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <input name="week" value="1" placeholder="Week">
@@ -826,9 +1155,11 @@ async function pageAdmin() {
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
       ${
-        d.isOwner
-          ? `${panel(`<h2 class="text-lg font-bold">Owner override</h2>
-        <p class="mt-1 text-sm text-muted">Only owners can add, move, or delete players and enter or overwrite match stats here. This updates the live league immediately — no screenshot and no GitHub PR.</p>
+        d.canOverride
+          ? `${
+              d.isOwner
+                ? panel(`<h2 class="text-lg font-bold">Owner override</h2>
+        <p class="mt-1 text-sm text-muted">Only owners can add, move, or delete players here. Head Admins can override match stats below. This updates the live league immediately — no screenshot and no GitHub PR.</p>
         <h3 class="mt-5 text-sm font-bold tracking-widest gold">ADD PLAYER</h3>
         <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="ADDPLAYER">
           <input name="name" placeholder="Name" required>
@@ -849,18 +1180,20 @@ async function pageAdmin() {
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
         <p class="mt-1 text-xs text-muted">Deletes the account and their fixtures. Owners cannot be deleted here.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="DELETEPLAYER">
-          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => p.role !== "owner").map(playerOption).join("")}</select>
+          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => !hasRole(p, "owner")).map(playerOption).join("")}</select>
           <button class="btn-ghost">DELETE</button>
-        </form>`, "mt-4")}
-        ${panel(`<h2 class="text-lg font-bold">Overwrite match stats</h2>
-        <p class="mt-1 text-sm text-muted">Enter or correct official stats. Tables update as soon as you save. Owners can do this without a screenshot.</p>
+        </form>`, "mt-4")
+                : ""
+            }
+        ${panel(`<h2 class="text-lg font-bold">${d.isOwner ? "Overwrite match stats" : "Override another admin"}</h2>
+        <p class="mt-1 text-sm text-muted">${d.isOwner ? "Enter or correct official stats. Tables update as soon as you save. Owners can do this without a screenshot." : "Head Admins can correct or clear a result another admin already confirmed. Tables update as soon as you save."}</p>
         ${statsDesk(d.fixtures, state.selectedResultId, {
           formKind: "OVERRIDE",
           buttonLabel: "SAVE STATS",
           emptyText: "No fixtures yet. Create one above.",
           actions: (f) => `<div class="mt-2 flex gap-2">
             <form data-form="CLEARRESULT" data-id="${f.id}"><button class="btn-ghost">CLEAR RESULT</button></form>
-            <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE MATCH</button></form>
+            ${d.isOwner ? `<form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE MATCH</button></form>` : ""}
           </div>`,
         })}`, "mt-4")}`
           : ""
@@ -931,6 +1264,11 @@ async function render() {
       admin: pageAdmin,
     };
     app.innerHTML = await map[route[0]]();
+    const fixtureId = new URLSearchParams(location.search).get("fixture");
+    if (fixtureId) {
+      const el = document.getElementById(`fixture-${fixtureId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   } catch (err) {
     app.innerHTML = layout(`<div class="px-6 py-20 text-center"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
   }
@@ -1061,26 +1399,69 @@ document.addEventListener("submit", async (e) => {
       if (!file) throw new Error("Choose a screenshot");
       const image = await fileToDataUrl(file);
       const d = await api(`/api/my-fixtures/${form.dataset.id}/screenshot`, { method: "POST", body: JSON.stringify({ image, slot: Number(form.dataset.slot) || undefined }) });
-      state.notice = d.fixture?.hasBothScreenshots
-        ? "Both screenshots uploaded. A league admin will enter each player’s stats."
-        : "Screenshot uploaded. Upload the second screenshot for this match.";
+      if (d.fixture?.hasBothScreenshots) {
+        state.notice = "Both screenshots uploaded. Reading stats for admin review…";
+        render();
+        try {
+          const extracted = await ocrFixtureStats(d.fixture, [image]);
+          if (extracted) {
+            await api(`/api/my-fixtures/${form.dataset.id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+            state.notice = "Stats extracted from the screenshots. A division admin will verify them before they count.";
+          } else {
+            state.notice = "Both screenshots uploaded. Could not auto-read the stats — a division admin will enter them.";
+          }
+        } catch {
+          state.notice = "Both screenshots uploaded. A division admin will verify the stats.";
+        }
+      } else {
+        state.notice = "Screenshot uploaded. Upload the second screenshot for this match.";
+      }
+      render();
+    } else if (kind === "SCANSTATS") {
+      state.selectedResultId = Number(form.dataset.id);
+      state.notice = "Scanning screenshots…";
+      render();
+      const overview = await api("/api/admin/overview");
+      const fixture = overview.fixtures.find((f) => f.id === Number(form.dataset.id));
+      if (!fixture) throw new Error("Fixture not found");
+      const extracted = await ocrFixtureStats(fixture);
+      if (!extracted) throw new Error("Could not read numbers from those screenshots. Enter the stats by hand.");
+      await api(`/api/my-fixtures/${form.dataset.id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+      state.selectedResultId = fixture.id;
+      state.notice = "Stats extracted. Check every number, then verify to add them to the table.";
+      render();
+    } else if (kind === "PROPOSE") {
+      await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Date and time proposed. Your opponent can accept it on the Fixtures tab.";
+      render();
+    } else if (kind === "ACCEPTTIME") {
+      await api(`/api/fixtures/${form.dataset.id}/accept-time`, { method: "POST", body: "{}" });
+      state.notice = "Kickoff time agreed.";
+      render();
+    } else if (kind === "GENERATE") {
+      const d = await api("/api/admin/fixtures/generate", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = `Generated ${d.created} fixture${d.created === 1 ? "" : "s"} across ${d.weeks} week${d.weeks === 1 ? "" : "s"}${d.skipped ? ` (${d.skipped} already existed)` : ""}.`;
+      render();
+    } else if (kind === "HEADADMIN") {
+      await api("/api/admin/assign-head-admin", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Head Admin assigned.";
       render();
     } else if (kind === "CONFIRM") {
       await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
       state.selectedResultId = null;
-      state.notice = "Result saved. League table updated.";
+      state.notice = "Verified. League table updated.";
       render();
     } else if (kind === "ASSIGN") {
       await api("/api/admin/assign-admin", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "League admin assigned.";
+      state.notice = "Division Admin assigned.";
       render();
     } else if (kind === "OWNER") {
       await api("/api/admin/assign-owner", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Owner added.";
       render();
     } else if (kind === "REVOKE" || kind === "REMOVE ADMIN") {
-      await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id }) });
-      state.notice = "Admin access removed.";
+      await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id, role: form.dataset.role, leagueId: form.dataset.league }) });
+      state.notice = form.dataset.role === "head_admin" ? "Head Admin role removed. Other roles were kept." : "Division Admin role removed for that league. Other roles were kept.";
       render();
     } else if (kind === "PROFILE") {
       const d = await api("/api/account/profile", { method: "POST", body: JSON.stringify(fd) });
@@ -1095,7 +1476,7 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "AVATAR") {
       const file = form.querySelector('input[type="file"]')?.files?.[0];
       if (!file) throw new Error("Choose a photo");
-      const image = await fileToDataUrl(file);
+      const image = await fileToAvatarDataUrl(file);
       const d = await api("/api/account/avatar", { method: "POST", body: JSON.stringify({ image }) });
       state.user = d.user;
       state.notice = "Profile picture updated.";
