@@ -10,9 +10,22 @@ html, body, #app { min-height: 100%; margin: 0; background: #090b11; color: #fff
   background-size: cover;
 }
 .arena-home {
+  position: relative;
+  isolation: isolate;
   background-image:
-    linear-gradient(to bottom, rgba(9,11,17,.18), rgba(9,11,17,.42) 52%, rgba(9,11,17,.9)),
-    url("/images/arena-home-bg.png");
+    linear-gradient(to bottom, rgba(9,11,17,.2), rgba(9,11,17,.48) 52%, rgba(9,11,17,.92)),
+    url("/images/arena-bg.png");
+}
+.arena-home::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/images/tsh-main-crest.png") center 36% / min(540px, 68vw) no-repeat;
+  mix-blend-mode: screen;
+  opacity: 0.9;
+  pointer-events: none;
+  -webkit-mask-image: radial-gradient(circle at center 36%, #000 34%, transparent 48%);
+  mask-image: radial-gradient(circle at center 36%, #000 34%, transparent 48%);
 }
 .glass {
   background: rgba(12, 16, 26, 0.72);

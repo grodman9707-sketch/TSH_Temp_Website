@@ -698,7 +698,9 @@ function serveStatic(req, res, urlPath) {
   }
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
   const ext = path.extname(filePath).toLowerCase();
-  res.writeHead(200, { "Content-Type": mime[ext] || "application/octet-stream" });
+  const headers = { "Content-Type": mime[ext] || "application/octet-stream" };
+  if (ext === ".html" || ext === ".js" || ext === ".css") headers["Cache-Control"] = "no-cache";
+  res.writeHead(200, headers);
   fs.createReadStream(filePath).pipe(res);
   return true;
 }
