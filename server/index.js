@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { runDueNotifications, sendEmail } from "./notifications.js";
+import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -141,6 +142,7 @@ function publicUser(u, db) {
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
     notifyPrefs: { email: u.notifyPrefs?.email !== false },
+    timezone: u.timezone || "",
   };
 }
 function nextId(list) {
@@ -336,6 +338,10 @@ function migrate(db) {
       u.notifyPrefs = { email: true };
       changed = true;
     }
+    if (!u.timezone) {
+      u.timezone = defaultTimezoneForRegional(u.regionalChoice);
+      changed = true;
+    }
     if (!Array.isArray(u.adminLeagueIds)) {
       u.adminLeagueIds = u.adminLeagueId ? [u.adminLeagueId] : [];
       changed = true;
@@ -420,6 +426,11 @@ function migrate(db) {
     }
     if (!f.notify || typeof f.notify !== "object") {
       f.notify = { weekHomeAt: null, weekAwayAt: null, remind30At: null };
+      changed = true;
+    }
+    if (!("startAt" in f)) {
+      f.startAt = null;
+      f.proposedTz = "";
       changed = true;
     }
   }
@@ -520,6 +531,8 @@ function withNames(db, f) {
     ...f,
     homeName: db.users.find((u) => u.id === f.homeId)?.name,
     awayName: db.users.find((u) => u.id === f.awayId)?.name,
+    homeTz: db.users.find((u) => u.id === f.homeId)?.timezone || "",
+    awayTz: db.users.find((u) => u.id === f.awayId)?.timezone || "",
     leagueName: leagueTitle(db, db.leagues.find((l) => l.id === f.leagueId) || { name: "", regionalId: 0 }),
     screenshot1: Boolean(shot1),
     screenshot2: Boolean(shot2),
@@ -567,6 +580,8 @@ function newFixture(partial) {
     proposedAt: null,
     agreedAt: null,
     scheduleStatus: null,
+    startAt: null,
+    proposedTz: "",
     extractedStats: null,
     notify: { weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
@@ -852,6 +867,8 @@ async function handleApi(req, res, url) {
       country: "",
       avatarFile: null,
       avatarUpdatedAt: null,
+      notifyPrefs: { email: true },
+      timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(body.regional),
     };
     db.users.push(created);
     db.applications.push({
@@ -964,6 +981,15 @@ async function handleApi(req, res, url) {
     const u = db.users.find((x) => x.id === user.id);
     const emailOn = !(body.email === false || body.email === "false" || body.email === 0 || body.email === "0" || body.email === "off");
     u.notifyPrefs = { ...(u.notifyPrefs || {}), email: emailOn };
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/timezone") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    if (!isValidTimeZone(body.timezone)) return json(res, 400, { ok: false, error: "Unknown timezone" });
+    u.timezone = body.timezone;
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
@@ -1095,10 +1121,16 @@ async function handleApi(req, res, url) {
     if (!m) return json(res, 400, { ok: false, error: "Choose a date and time" });
     const proposedDate = m[1];
     const proposedTime = m[2];
+    // Interpret the proposer's chosen wall-clock time in their own timezone so we
+    // can store an absolute instant. Everyone then sees it in their local time.
+    const tz = isValidTimeZone(body.tz) ? body.tz : user.timezone || defaultTimezoneForRegional(user.regionalChoice);
+    const startAt = wallStringToUtc(proposedDate, proposedTime, tz);
     fixture.proposedDate = proposedDate;
     fixture.proposedTime = proposedTime;
     fixture.proposedBy = user.id;
     fixture.proposedAt = new Date().toISOString();
+    fixture.proposedTz = tz;
+    fixture.startAt = startAt ? startAt.toISOString() : null;
     fixture.scheduleStatus = "proposed";
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
@@ -1121,6 +1153,11 @@ async function handleApi(req, res, url) {
     fixture.time = fixture.proposedTime;
     fixture.scheduleStatus = "agreed";
     fixture.agreedAt = new Date().toISOString();
+    // startAt was set when the time was proposed; recompute as a fallback.
+    if (!fixture.startAt && fixture.proposedTz) {
+      const s = wallStringToUtc(fixture.proposedDate, fixture.proposedTime, fixture.proposedTz);
+      fixture.startAt = s ? s.toISOString() : null;
+    }
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }

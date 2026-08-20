@@ -5,6 +5,8 @@
 // messages to send plus whether the db changed. The server persists the markers
 // (claiming them) before actually sending, so a restart never double-sends.
 
+import { zonedWallTimeToUtc, zonedYmd, wallStringToUtc } from "./timezones.js";
+
 const LEAGUE_TZ = process.env.LEAGUE_TIMEZONE || "Europe/London";
 const REMINDER_MINUTES = Number(process.env.MATCH_REMINDER_MINUTES) || 30;
 const WEEK_AHEAD_DAYS = 7;
@@ -18,57 +20,20 @@ function esc(s) {
     .replaceAll('"', "&quot;");
 }
 
-// Offset (ms) that `timeZone` is ahead of UTC at the given instant.
-function zoneOffsetMs(instant, timeZone) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const p = {};
-  for (const part of dtf.formatToParts(instant)) p[part.type] = part.value;
-  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
-  return asUTC - instant.getTime();
-}
-
-// Interpret a wall-clock date/time in `timeZone` and return the UTC instant.
-// Two passes handle daylight-saving boundaries.
-function zonedWallTimeToUtc(y, mo, d, h, mi, timeZone) {
-  const base = Date.UTC(y, mo - 1, d, h, mi);
-  let ts = base - zoneOffsetMs(new Date(base), timeZone);
-  const o2 = zoneOffsetMs(new Date(ts), timeZone);
-  const ts2 = base - o2;
-  if (ts2 !== ts) ts = ts2;
-  return new Date(ts);
-}
-
-function zonedYmd(instant, timeZone) {
-  const dtf = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
-  const p = {};
-  for (const part of dtf.formatToParts(instant)) p[part.type] = part.value;
-  return { y: +p.year, mo: +p.month, d: +p.day };
-}
-
 function parseYmd(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
   return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
 }
-function parseHm(s) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ""));
-  return m ? { h: +m[1], mi: +m[2] } : null;
-}
 
+// Absolute kickoff instant. Prefers the stored UTC `startAt`; falls back to
+// interpreting a legacy fixture's naive date/time in the league timezone.
 function fixtureStartUtc(f, tz) {
+  if (f.startAt) {
+    const d = new Date(f.startAt);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
   if (f.scheduleStatus !== "agreed") return null;
-  const dd = parseYmd(f.date);
-  const tt = parseHm(f.time);
-  if (!dd || !tt) return null;
-  return zonedWallTimeToUtc(dd.y, dd.mo, dd.d, tt.h, tt.mi, tz);
+  return wallStringToUtc(f.date, f.time, tz);
 }
 
 function displayName(u) {
@@ -90,16 +55,18 @@ function weeklyEmail(to, opp, f, leagueName) {
 }
 function reminderEmail(to, opp, f, startUtc, tz) {
   const oppName = displayName(opp);
+  // Show the kickoff in the recipient's own timezone.
   const when = new Intl.DateTimeFormat("en-GB", {
-    timeZone: tz,
+    timeZone: to.timezone || tz,
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    timeZoneName: "short",
   }).format(startUtc);
   const subject = `Your TSH match starts soon vs ${oppName}`;
   const html =
     `<p>Hi ${esc(displayName(to))},</p>` +
-    `<p>Your match against <b>${esc(oppName)}</b> starts at <b>${esc(when)}</b>.</p>` +
+    `<p>Your match against <b>${esc(oppName)}</b> starts at <b>${esc(when)}</b> (your local time).</p>` +
     `<p>Get DartCounter ready — good luck!</p>` +
     `<p>— TSH Darts League</p>`;
   return { to: to.email, subject, html, userId: to.id, type: "reminder", fixtureId: f.id };
