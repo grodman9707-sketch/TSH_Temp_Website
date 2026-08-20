@@ -1535,6 +1535,14 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "APPROVE") {
       await api(`/api/admin/approvals/${form.dataset.id}/approve`, { method: "POST", body: "{}" });
       state.notice = "Request approved.";
+      // Approving can change your own roles (e.g. an owner approving their own
+      // removal), so refresh the current user before re-rendering.
+      try {
+        const me = await api("/api/auth/me");
+        state.user = me.user;
+      } catch {
+        /* keep existing user if refresh fails */
+      }
       render();
     } else if (kind === "REJECT") {
       await api(`/api/admin/approvals/${form.dataset.id}/reject`, { method: "POST", body: "{}" });
