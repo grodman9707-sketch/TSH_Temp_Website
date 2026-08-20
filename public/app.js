@@ -348,14 +348,81 @@ function fixtureStatus(f) {
 function fixtureWhen(f) {
   const bits = [`Week ${f.week}`];
   if (f.season && Number(f.season) !== 1) bits[0] = `Season ${f.season} · ${bits[0]}`;
-  if (f.when) bits.push(f.when);
-  else if (f.date) bits.push(f.time ? `${f.date} ${f.time}` : f.date);
+  const when = scheduleWhen(f);
+  if (when) bits.push(when);
+  else if (f.when) bits.push(f.when);
   return bits.join(" · ");
 }
 function toLocalInput(date, time) {
   if (!date) return "";
   const t = time && /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : "19:00";
   return `${date}T${t}`;
+}
+const BROWSER_TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+})();
+function fmtInstant(iso, tz) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const opts = { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  try {
+    return new Intl.DateTimeFormat(undefined, tz ? { ...opts, timeZone: tz } : opts).format(d);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, opts).format(d);
+  }
+}
+function tzAbbr(iso, tz) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone: tz || BROWSER_TZ || undefined, timeZoneName: "short" })
+      .formatToParts(d)
+      .find((x) => x.type === "timeZoneName");
+    return part ? part.value : "";
+  } catch {
+    return "";
+  }
+}
+function opponentInfo(f) {
+  const meId = Number(state.user?.id);
+  if (Number(f.homeId) === meId) return { name: f.awayName, tz: f.awayTz };
+  if (Number(f.awayId) === meId) return { name: f.homeName, tz: f.homeTz };
+  return null;
+}
+// Plain-text "when" for a proposed/agreed match, shown in the viewer's local
+// time (and the opponent's local time when we know who they are). Callers esc().
+function scheduleWhen(f) {
+  if (!f.startAt) {
+    if (f.date) return f.time ? `${f.date} ${f.time}` : f.date;
+    return "";
+  }
+  const mine = `${fmtInstant(f.startAt)} ${tzAbbr(f.startAt, BROWSER_TZ)}`.trim();
+  const opp = opponentInfo(f);
+  if (opp && opp.tz && opp.tz !== BROWSER_TZ) {
+    return `${mine} — your time · ${fmtInstant(f.startAt, opp.tz)} ${tzAbbr(f.startAt, opp.tz)} for ${opp.name || "opponent"}`;
+  }
+  return mine;
+}
+function toLocalInputFromInstant(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function syncTimezone() {
+  if (!state.user || !BROWSER_TZ || state.user.timezone === BROWSER_TZ) return;
+  api("/api/account/timezone", { method: "POST", body: JSON.stringify({ timezone: BROWSER_TZ }) })
+    .then((d) => {
+      if (d && d.user) state.user = d.user;
+    })
+    .catch(() => {});
 }
 function inThisMatch(f, u = state.user) {
   if (!u || !f) return false;
@@ -645,19 +712,19 @@ async function pageLeague(slug, id) {
                       const mine = inThisMatch(f);
                       const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
                       const proposalLine = proposed
-                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(f.proposedDate)} ${esc(f.proposedTime || "")}${
+                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(scheduleWhen(f))}${
                             mine && Number(f.proposedBy) !== Number(state.user?.id) ? " · waiting on you" : mine ? " · waiting on opponent" : ""
                           }</div>`
                         : f.scheduleStatus === "agreed"
-                          ? `<div class="mt-1 text-xs gold">Agreed: ${esc(f.date)} ${esc(f.time || "")}</div>`
+                          ? `<div class="mt-1 text-xs gold">Agreed: ${esc(scheduleWhen(f))}</div>`
                           : "";
                       const actions =
                         mine && f.status !== "played"
                           ? `<div class="mt-3 flex flex-wrap items-end gap-2">
                               <form class="flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
-                                <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time
+                                <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
                                   <input name="datetime" type="datetime-local" required value="${esc(
-                                    toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time)
+                                    toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time)
                                   )}">
                                 </label>
                                 <button class="btn-gold">PROPOSE</button>
@@ -886,6 +953,12 @@ async function pageDashboard() {
             <button class="btn-gold">SAVE ACCOUNT</button>
           </form>`)}
       </div>
+      ${panel(`<h2 class="text-lg font-bold">Match notifications</h2>
+        <p class="mt-1 text-sm text-muted">Get an email when you have a match coming up this week, and again shortly before it starts.</p>
+        <form class="mt-4" data-form="NOTIFY">
+          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches</label>
+          <button class="btn-gold mt-4">SAVE PREFERENCES</button>
+        </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
         <p class="mt-1 text-sm text-muted">Phone photos, PNG, JPG, or WEBP. We resize it automatically. Shows on your dashboard, player page, and league table.</p>
         <div class="mt-4 flex flex-wrap items-center gap-4">${avatarImg(u, 72)}
@@ -932,16 +1005,16 @@ async function pageMyMatches() {
                 <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded${f.extractedStats ? " · stats extracted, awaiting admin verify" : ""}</div>
                 ${
                   f.scheduleStatus === "proposed"
-                    ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(f.proposedDate)} ${esc(f.proposedTime || "")}</div>`
+                    ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(scheduleWhen(f))}</div>`
                     : f.scheduleStatus === "agreed"
-                      ? `<div class="mt-1 text-xs gold">Agreed kickoff ${esc(f.date)} ${esc(f.time || "")}</div>`
+                      ? `<div class="mt-1 text-xs gold">Agreed kickoff ${esc(scheduleWhen(f))}</div>`
                       : ""
                 }
                 ${
                   f.status !== "played"
                     ? `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
-                        <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time
-                          <input name="datetime" type="datetime-local" required value="${esc(toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
+                        <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
+                          <input name="datetime" type="datetime-local" required value="${esc(toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
                         </label>
                         <button class="btn-gold">PROPOSE</button>
                       </form>`
@@ -1416,6 +1489,7 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ ...fd, remember }) });
       storeToken(d.token, remember || d.remember === true);
       state.user = d.user;
+      syncTimezone();
       go(isStaff(d.user) ? "/admin" : "/dashboard");
     } else if (kind === "SIGNUP") {
       Object.assign(state.signup, fd);
@@ -1435,7 +1509,7 @@ document.addEventListener("submit", async (e) => {
         state.signup.avg = avg;
         const d = await api("/api/auth/register", {
           method: "POST",
-          body: JSON.stringify(state.signup),
+          body: JSON.stringify({ ...state.signup, timezone: BROWSER_TZ }),
         });
         storeToken(d.token, true);
         state.user = d.user;
@@ -1447,7 +1521,7 @@ document.addEventListener("submit", async (e) => {
         render();
       }
     } else if (kind === "CREATE ACCOUNT") {
-      const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify(fd) });
+      const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ ...fd, timezone: BROWSER_TZ }) });
       storeToken(d.token, true);
       state.user = d.user;
       go("/apply");
@@ -1493,8 +1567,8 @@ document.addEventListener("submit", async (e) => {
       state.notice = "Stats extracted. Check every number, then verify to add them to the table.";
       render();
     } else if (kind === "PROPOSE") {
-      await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Date and time proposed. Your opponent can accept it on the Fixtures tab.";
+      await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
+      state.notice = "Date and time proposed. Your opponent sees it in their own local time.";
       render();
     } else if (kind === "ACCEPTTIME") {
       await api(`/api/fixtures/${form.dataset.id}/accept-time`, { method: "POST", body: "{}" });
@@ -1557,6 +1631,12 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });
       state.user = d.user;
       state.notice = "Account saved.";
+      render();
+    } else if (kind === "NOTIFY") {
+      const emailOn = form.querySelector('input[name="email"]')?.checked === true;
+      const d = await api("/api/account/notifications", { method: "POST", body: JSON.stringify({ email: emailOn }) });
+      state.user = d.user;
+      state.notice = emailOn ? "You'll get match emails." : "Match emails turned off.";
       render();
     } else if (kind === "AVATAR") {
       const file = form.querySelector('input[type="file"]')?.files?.[0];
@@ -1630,6 +1710,7 @@ async function boot() {
     const d = await api("/api/auth/me");
     state.user = d.user;
     if (d.token) storeToken(d.token, remembered || !hadJsToken);
+    syncTimezone();
   } catch {
     if (hadJsToken) clearToken();
   }
