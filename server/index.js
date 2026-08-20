@@ -111,7 +111,9 @@ const mime = {
 };
 
 function readDb() {
-  return JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  if (!Array.isArray(db.approvals)) db.approvals = [];
+  return db;
 }
 function writeDb(db) {
   writeJson(dbPath, db);
@@ -137,6 +139,25 @@ function publicUser(u, db) {
       : [],
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
+  };
+}
+function nextId(list) {
+  return Math.max(0, ...(Array.isArray(list) ? list : []).map((x) => Number(x.id) || 0)) + 1;
+}
+function publicApproval(a, db) {
+  const target = db.users.find((u) => u.id === a.targetUserId);
+  const requester = db.users.find((u) => u.id === a.requestedById);
+  const league = a.leagueId ? db.leagues.find((l) => l.id === Number(a.leagueId)) : null;
+  return {
+    id: a.id,
+    kind: a.kind,
+    targetUserId: a.targetUserId,
+    targetName: target ? target.name : "Unknown player",
+    leagueId: a.leagueId || null,
+    leagueTitle: league ? leagueTitle(db, league) : "",
+    requestedById: a.requestedById,
+    requestedByName: requester ? requester.name : "Unknown",
+    createdAt: a.createdAt,
   };
 }
 function json(res, status, data, extraHeaders = {}) {
@@ -280,6 +301,10 @@ function placeUserInLeague(db, u, league) {
 }
 function migrate(db) {
   let changed = false;
+  if (!Array.isArray(db.approvals)) {
+    db.approvals = [];
+    changed = true;
+  }
   for (const u of db.users) {
     if (!("adminLeagueId" in u)) {
       u.adminLeagueId = null;
@@ -1120,6 +1145,18 @@ async function handleApi(req, res, url) {
           if (!applicant) return true;
           return scopedLeagues(db, user).some((league) => !placedRegionalIds(db, applicant).includes(league.regionalId));
         });
+      const visibleApprovals = db.approvals
+        .filter((a) => {
+          if (a.requestedById === user.id) return true;
+          if (a.kind === "remove_owner") return user.id === a.targetUserId;
+          if (a.kind === "remove_division_admin") return isOwner(user);
+          return false;
+        })
+        .map((a) => ({
+          ...publicApproval(a, db),
+          canApprove: a.kind === "remove_owner" ? isOwner(user) && user.id === a.targetUserId : isOwner(user),
+          mine: a.requestedById === user.id,
+        }));
       return json(res, 200, {
         ok: true,
         stats: stats(db),
@@ -1138,6 +1175,7 @@ async function handleApi(req, res, url) {
             adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "Unassigned", regionalId: 0 }),
           }))
         ),
+        approvals: visibleApprovals,
         applications,
         leagues,
         allLeagues: db.leagues.map((l) => ({ ...l, title: leagueTitle(db, l) })),
@@ -1175,24 +1213,87 @@ async function handleApi(req, res, url) {
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/revoke-admin") {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can do this" });
       const u = db.users.find((x) => x.id === Number(body.userId));
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       const which = String(body.role || "admin");
       if (which === "head_admin") {
+        if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove Head Admins" });
         if (!isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Not a head admin" });
         removeRole(u, "head_admin");
-      } else if (which === "owner") {
-        return json(res, 400, { ok: false, error: "Owners cannot be removed here" });
-      } else {
-        const leagueId = Number(body.leagueId || u.adminLeagueId);
-        if (!isDivisionAdmin(u)) return json(res, 400, { ok: false, error: "Not a division admin" });
+        writeDb(db);
+        return json(res, 200, { ok: true, user: publicUser(u, db) });
+      }
+      if (which === "owner") {
+        // Owners can never be removed directly. Only another owner may request it,
+        // and it takes effect solely after the targeted owner approves it.
+        if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove owners" });
+        if (!isOwner(u)) return json(res, 400, { ok: false, error: "Not an owner" });
+        if (u.id === user.id) return json(res, 400, { ok: false, error: "You cannot remove yourself as an owner" });
+        if (db.approvals.some((a) => a.kind === "remove_owner" && a.targetUserId === u.id)) {
+          return json(res, 400, { ok: false, error: "That owner already has a removal request awaiting their approval" });
+        }
+        const request = { id: nextId(db.approvals), kind: "remove_owner", targetUserId: u.id, leagueId: null, requestedById: user.id, createdAt: new Date().toISOString() };
+        db.approvals.push(request);
+        writeDb(db);
+        return json(res, 200, { ok: true, pending: true, approval: publicApproval(request, db) });
+      }
+      // Division Admin removal.
+      if (!isDivisionAdmin(u)) return json(res, 400, { ok: false, error: "Not a division admin" });
+      const leagueId = Number(body.leagueId || u.adminLeagueId);
+      if (isOwner(user)) {
         u.adminLeagueIds = adminLeagueIds(u).filter((id) => id !== leagueId);
         if (!leagueId) u.adminLeagueIds = [];
         syncAdminLeagues(u);
+        writeDb(db);
+        return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
+      if (isHeadAdmin(user)) {
+        // A Head Admin can only request the removal; an owner must approve it.
+        if (db.approvals.some((a) => a.kind === "remove_division_admin" && a.targetUserId === u.id && Number(a.leagueId) === leagueId)) {
+          return json(res, 400, { ok: false, error: "That removal is already awaiting an owner's approval" });
+        }
+        const request = { id: nextId(db.approvals), kind: "remove_division_admin", targetUserId: u.id, leagueId: leagueId || null, requestedById: user.id, createdAt: new Date().toISOString() };
+        db.approvals.push(request);
+        writeDb(db);
+        return json(res, 200, { ok: true, pending: true, approval: publicApproval(request, db) });
+      }
+      return json(res, 403, { ok: false, error: "You cannot remove Division Admins" });
+    }
+    if (method === "POST" && /^\/api\/admin\/approvals\/\d+\/(approve|reject)$/.test(p)) {
+      const m = p.match(/^\/api\/admin\/approvals\/(\d+)\/(approve|reject)$/);
+      const id = Number(m[1]);
+      const action = m[2];
+      const idx = db.approvals.findIndex((a) => a.id === id);
+      if (idx === -1) return json(res, 404, { ok: false, error: "Request not found" });
+      const a = db.approvals[idx];
+      const target = db.users.find((x) => x.id === a.targetUserId);
+      const isApprover = a.kind === "remove_owner" ? isOwner(user) && user.id === a.targetUserId : isOwner(user);
+      const isRequester = user.id === a.requestedById;
+      if (action === "reject") {
+        if (!isApprover && !isRequester) return json(res, 403, { ok: false, error: "You cannot dismiss this request" });
+        db.approvals.splice(idx, 1);
+        writeDb(db);
+        return json(res, 200, { ok: true, dismissed: true });
+      }
+      if (!isApprover) {
+        return json(res, 403, { ok: false, error: a.kind === "remove_owner" ? "Only the owner being removed can approve this" : "Only owners can approve this" });
+      }
+      if (!target) {
+        db.approvals.splice(idx, 1);
+        writeDb(db);
+        return json(res, 400, { ok: false, error: "That player no longer exists" });
+      }
+      if (a.kind === "remove_owner") {
+        if (isOwner(target)) removeRole(target, "owner");
+      } else {
+        const leagueId = Number(a.leagueId);
+        target.adminLeagueIds = adminLeagueIds(target).filter((lid) => lid !== leagueId);
+        if (!leagueId) target.adminLeagueIds = [];
+        syncAdminLeagues(target);
+      }
+      db.approvals.splice(idx, 1);
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u, db) });
+      return json(res, 200, { ok: true, user: publicUser(target, db) });
     }
     if (method === "POST" && p === "/api/admin/place-player") {
       const u = db.users.find((x) => x.id === Number(body.userId));

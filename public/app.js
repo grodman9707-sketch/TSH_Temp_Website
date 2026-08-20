@@ -1042,7 +1042,16 @@ async function pageAdmin() {
   const ownerSection = d.isOwner
     ? `${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
         <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
-        <div class="mt-3 space-y-2">${d.owners.map((o) => `<div class="text-sm">${esc(o.name)} · ${esc(o.email)}</div>`).join("")}</div>
+        <div class="mt-3 space-y-2">${d.owners
+          .map(
+            (o) =>
+              `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
+                <span>${esc(o.name)} · ${esc(o.email)}${o.id === d.me.id ? " · you" : ""}</span>
+                ${o.id === d.me.id ? "" : `<form data-form="REVOKE" data-id="${o.id}" data-role="owner"><button class="btn-ghost">REMOVE OWNER</button></form>`}
+              </div>`
+          )
+          .join("")}</div>
+        <p class="mt-2 text-xs text-muted">Owners can’t be removed directly. A removal only takes effect after that owner approves the request.</p>
         ${
           d.ownerSlots.used < d.ownerSlots.max
             ? `<form class="mt-4 grid gap-3 md:grid-cols-2" data-form="OWNER">
@@ -1052,7 +1061,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-sm text-muted">All three owner slots are filled.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Head Admins</h2>
-        <p class="mt-1 text-sm text-muted">Head Admins can override a confirmed result entered by another admin. They can also hold a Division Admin post at the same time.</p>
+        <p class="mt-1 text-sm text-muted">Head Admins can override a confirmed result entered by another admin. They can also hold a Division Admin post at the same time. Only owners can add or remove Head Admins.</p>
         <div class="mt-3 space-y-2">${
           (d.headAdmins || []).length
             ? d.headAdmins
@@ -1091,6 +1100,57 @@ async function pageAdmin() {
           <button class="btn-gold">ASSIGN ADMIN</button>
         </form>`, "mt-4")}`
     : "";
+  const approvalCard = (a) => {
+    const label =
+      a.kind === "remove_owner"
+        ? `Remove <b>${esc(a.targetName)}</b> as an owner`
+        : `Remove <b>${esc(a.targetName)}</b> as Division Admin${a.leagueTitle ? ` of ${esc(a.leagueTitle)}` : ""}`;
+    const sub =
+      a.kind === "remove_owner"
+        ? a.canApprove
+          ? "Approve to step down as an owner, or reject to stay."
+          : `Waiting for ${esc(a.targetName)} to approve their own removal.`
+        : a.canApprove
+          ? `Requested by ${esc(a.requestedByName)}.`
+          : "Requested by you. Waiting for an owner to approve.";
+    return `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-3 text-sm">
+      <div><div>${label}</div><div class="mt-0.5 text-xs text-muted">${sub}</div></div>
+      <div class="flex gap-2">
+        ${a.canApprove ? `<form data-form="APPROVE" data-id="${a.id}"><button class="btn-gold">APPROVE</button></form>` : ""}
+        <form data-form="REJECT" data-id="${a.id}"><button class="btn-ghost">${a.canApprove ? "REJECT" : "CANCEL"}</button></form>
+      </div>
+    </div>`;
+  };
+  const approvalsSection =
+    d.approvals && d.approvals.length
+      ? panel(
+          `<h2 class="text-lg font-bold">Pending approvals</h2>
+        <p class="mt-1 text-sm text-muted">Sensitive removals wait here until the right person approves them.</p>
+        <div class="mt-3">${d.approvals.map(approvalCard).join("")}</div>`,
+          "mt-6"
+        )
+      : "";
+  const headAdminSection =
+    d.isHeadAdmin && !d.isOwner
+      ? panel(
+          `<h2 class="text-lg font-bold">Division Admins</h2>
+        <p class="mt-1 text-sm text-muted">You can request the removal of a Division Admin — an owner must approve it before it takes effect. Only owners can assign Division Admins or manage Head Admins.</p>
+        <div class="mt-3 space-y-2">${
+          d.leagueAdmins.length
+            ? d.leagueAdmins
+                .map(
+                  (a) =>
+                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}" data-role="admin" data-league="${a.adminLeagueId || ""}">
+                      <span>${esc(a.name)}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
+                      <button class="btn-ghost">REQUEST REMOVAL</button>
+                    </form>`
+                )
+                .join("")
+            : `<p class="text-sm text-muted">None assigned yet.</p>`
+        }</div>`,
+          "mt-6"
+        )
+      : "";
   return layout(
     `<div class="mx-auto max-w-7xl px-4 py-10">
       <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
@@ -1113,7 +1173,9 @@ async function pageAdmin() {
           .map(([v, l]) => panel(`<div class="text-center"><div class="text-3xl font-extrabold gold">${v}</div><div class="mt-1 text-xs tracking-widest text-muted">${l}</div></div>`))
           .join("")}
       </div>
+      ${approvalsSection}
       ${ownerSection}
+      ${headAdminSection}
       ${panel(`<h2 class="text-lg font-bold">Verify match stats</h2>
         <p class="mt-1 text-sm text-muted">Pick a match. Screenshots are on the left. If the site read numbers from those shots they are pre-filled — check them, then save. Nothing is added to the table until you verify.</p>
         ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "VERIFY & SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
@@ -1460,8 +1522,23 @@ document.addEventListener("submit", async (e) => {
       state.notice = "Owner added.";
       render();
     } else if (kind === "REVOKE" || kind === "REMOVE ADMIN") {
-      await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id, role: form.dataset.role, leagueId: form.dataset.league }) });
-      state.notice = form.dataset.role === "head_admin" ? "Head Admin role removed. Other roles were kept." : "Division Admin role removed for that league. Other roles were kept.";
+      const res = await api("/api/admin/revoke-admin", { method: "POST", body: JSON.stringify({ userId: form.dataset.id, role: form.dataset.role, leagueId: form.dataset.league }) });
+      if (res.pending) {
+        state.notice =
+          form.dataset.role === "owner"
+            ? "Owner removal requested. It takes effect only after that owner approves it."
+            : "Division Admin removal requested. An owner must approve it before it takes effect.";
+      } else {
+        state.notice = form.dataset.role === "head_admin" ? "Head Admin role removed. Other roles were kept." : "Division Admin role removed for that league. Other roles were kept.";
+      }
+      render();
+    } else if (kind === "APPROVE") {
+      await api(`/api/admin/approvals/${form.dataset.id}/approve`, { method: "POST", body: "{}" });
+      state.notice = "Request approved.";
+      render();
+    } else if (kind === "REJECT") {
+      await api(`/api/admin/approvals/${form.dataset.id}/reject`, { method: "POST", body: "{}" });
+      state.notice = "Request dismissed.";
       render();
     } else if (kind === "PROFILE") {
       const d = await api("/api/account/profile", { method: "POST", body: JSON.stringify(fd) });
