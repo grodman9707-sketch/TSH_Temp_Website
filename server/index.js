@@ -183,8 +183,15 @@ function addRole(u, role) {
   u.role = primaryRole(u);
 }
 function removeRole(u, role) {
-  u.roles = userRoles(u).filter((r) => r !== role);
-  u.role = primaryRole(u);
+  const roles = userRoles(u).filter((r) => r !== role);
+  u.roles = roles;
+  u.role = roles.includes("owner")
+    ? "owner"
+    : roles.includes("head_admin")
+      ? "head_admin"
+      : roles.includes("admin")
+        ? "admin"
+        : "player";
 }
 function adminLeagueIds(u) {
   const ids = Array.isArray(u?.adminLeagueIds) ? u.adminLeagueIds.map(Number) : [];
@@ -192,7 +199,7 @@ function adminLeagueIds(u) {
   return [...new Set(ids.filter(Boolean))];
 }
 function syncAdminLeagues(u) {
-  const ids = adminLeagueIds(u);
+  const ids = [...new Set((Array.isArray(u.adminLeagueIds) ? u.adminLeagueIds : []).map(Number).filter(Boolean))];
   u.adminLeagueIds = ids;
   u.adminLeagueId = ids[0] || null;
   if (ids.length) addRole(u, "admin");
@@ -300,6 +307,9 @@ function migrate(db) {
     }
     if (!Array.isArray(u.adminLeagueIds)) {
       u.adminLeagueIds = u.adminLeagueId ? [u.adminLeagueId] : [];
+      changed = true;
+    } else if (u.adminLeagueId && !u.adminLeagueIds.includes(u.adminLeagueId)) {
+      u.adminLeagueIds = [u.adminLeagueId, ...u.adminLeagueIds];
       changed = true;
     }
     const beforeRole = u.role;
