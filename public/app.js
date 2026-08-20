@@ -886,6 +886,12 @@ async function pageDashboard() {
             <button class="btn-gold">SAVE ACCOUNT</button>
           </form>`)}
       </div>
+      ${panel(`<h2 class="text-lg font-bold">Match notifications</h2>
+        <p class="mt-1 text-sm text-muted">Get an email when you have a match coming up this week, and again shortly before it starts.</p>
+        <form class="mt-4" data-form="NOTIFY">
+          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches</label>
+          <button class="btn-gold mt-4">SAVE PREFERENCES</button>
+        </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
         <p class="mt-1 text-sm text-muted">Phone photos, PNG, JPG, or WEBP. We resize it automatically. Shows on your dashboard, player page, and league table.</p>
         <div class="mt-4 flex flex-wrap items-center gap-4">${avatarImg(u, 72)}
@@ -1557,6 +1563,12 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });
       state.user = d.user;
       state.notice = "Account saved.";
+      render();
+    } else if (kind === "NOTIFY") {
+      const emailOn = form.querySelector('input[name="email"]')?.checked === true;
+      const d = await api("/api/account/notifications", { method: "POST", body: JSON.stringify({ email: emailOn }) });
+      state.user = d.user;
+      state.notice = emailOn ? "You'll get match emails." : "Match emails turned off.";
       render();
     } else if (kind === "AVATAR") {
       const file = form.querySelector('input[type="file"]')?.files?.[0];

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
+import { runDueNotifications, sendEmail } from "./notifications.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -139,6 +140,7 @@ function publicUser(u, db) {
       : [],
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
+    notifyPrefs: { email: u.notifyPrefs?.email !== false },
   };
 }
 function nextId(list) {
@@ -330,6 +332,10 @@ function migrate(db) {
       u.roles = u.role && u.role !== "player" ? [u.role] : [];
       changed = true;
     }
+    if (!u.notifyPrefs || typeof u.notifyPrefs !== "object") {
+      u.notifyPrefs = { email: true };
+      changed = true;
+    }
     if (!Array.isArray(u.adminLeagueIds)) {
       u.adminLeagueIds = u.adminLeagueId ? [u.adminLeagueId] : [];
       changed = true;
@@ -410,6 +416,10 @@ function migrate(db) {
     }
     if (!("extractedStats" in f)) {
       f.extractedStats = null;
+      changed = true;
+    }
+    if (!f.notify || typeof f.notify !== "object") {
+      f.notify = { weekHomeAt: null, weekAwayAt: null, remind30At: null };
       changed = true;
     }
   }
@@ -558,6 +568,7 @@ function newFixture(partial) {
     agreedAt: null,
     scheduleStatus: null,
     extractedStats: null,
+    notify: { weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
 }
@@ -944,6 +955,15 @@ async function handleApi(req, res, url) {
     }
     u.email = email;
     u.username = username;
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/notifications") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const emailOn = !(body.email === false || body.email === "false" || body.email === 0 || body.email === "0" || body.email === "off");
+    u.notifyPrefs = { ...(u.notifyPrefs || {}), email: emailOn };
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
@@ -1554,4 +1574,29 @@ server.listen(port, host, () => {
     console.log("Railway data stays on the /data volume. Attach a volume at /data so signups survive deploys.");
   }
   warmPdcTicker();
+  startNotificationLoop();
 });
+
+function startNotificationLoop(intervalMs = 60000) {
+  const tick = () => {
+    let outbox = [];
+    try {
+      const db = readDb();
+      const result = runDueNotifications(db, new Date());
+      outbox = result.outbox;
+      // Persist the dedupe markers before sending so a crash/restart never
+      // re-sends. This claim is synchronous, so it can't clobber concurrent
+      // request writes.
+      if (result.changed) writeDb(db);
+    } catch (err) {
+      console.error("Notification poll failed:", err);
+      return;
+    }
+    for (const msg of outbox) {
+      Promise.resolve(sendEmail(msg)).catch((err) => console.error("Notification email failed:", err));
+    }
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  if (timer.unref) timer.unref();
+}
