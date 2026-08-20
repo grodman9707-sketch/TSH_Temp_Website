@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { Crest } from "../components/Crest.jsx";
 import { ChevronDown } from "lucide-react";
 
 export function Home() {
@@ -48,11 +47,6 @@ export function Home() {
   return (
     <div>
       <section className="relative flex min-h-[calc(100vh-3.5rem)] flex-col justify-end pb-24 pt-10">
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="mt-[-3rem] flex flex-col items-center opacity-90">
-            <Crest className="h-56 w-56 drop-shadow-2xl sm:h-72 sm:w-72" />
-          </div>
-        </div>
         <div className="relative z-10 px-6 md:px-12">
           <p className="mb-3 text-xs font-semibold tracking-[0.35em] text-primary">THE SOCIAL HUB PRESENTS</p>
           <h1 className="max-w-xl text-5xl font-extrabold leading-[0.95] tracking-tight sm:text-7xl">

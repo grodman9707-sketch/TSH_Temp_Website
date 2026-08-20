@@ -12,7 +12,7 @@ export function Layout({ children, transparentNav = false }) {
   const home = location.pathname === "/";
 
   return (
-    <div className={`min-h-screen bg-background text-foreground ${home ? "arena-bg" : ""}`}>
+    <div className={`min-h-screen bg-background text-foreground ${home ? "arena-bg arena-home" : ""}`}>
       <Sidebar open={open} onClose={() => setOpen(false)} />
       <nav className={`sticky top-0 z-30 border-b border-border/50 ${transparentNav ? "bg-background/40 backdrop-blur-md" : "bg-background"}`}>
         <div className="flex h-14 items-center justify-between px-4">

@@ -37,9 +37,16 @@ body {
   background-image:
     linear-gradient(to bottom, rgba(9, 11, 17, 0.35), rgba(9, 11, 17, 0.72) 55%, rgba(9, 11, 17, 0.92)),
     url("/images/arena-bg.png");
+  background-repeat: no-repeat;
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
+}
+
+.arena-home {
+  background-image:
+    linear-gradient(to bottom, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42) 52%, rgba(9, 11, 17, 0.9)),
+    url("/images/arena-home-bg.png");
 }
 
 .glass {

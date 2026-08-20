@@ -76,13 +76,6 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   object-fit: contain;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));
 }
-.crest-hero {
-  width: min(336px, 62vw);
-  height: auto;
-  margin-top: -2.5rem;
-  object-fit: contain;
-  filter: drop-shadow(0 18px 40px rgba(0, 80, 180, 0.35));
-}
 .crest-regional {
   width: min(280px, 70vw);
   height: auto;
