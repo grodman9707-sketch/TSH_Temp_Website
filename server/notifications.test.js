@@ -30,7 +30,9 @@ function londonParts(instant) {
 }
 
 const now = new Date("2026-08-20T12:00:00Z");
-const stamped = { weekHomeAt: "seen", weekAwayAt: "seen", remind30At: null };
+const stamped = { newHomeAt: "seen", newAwayAt: "seen", weekHomeAt: "seen", weekAwayAt: "seen", remind30At: null };
+// Suppress the scheduled-alert so weekly/reminder-focused fixtures stay isolated.
+const noNew = { newHomeAt: "seen", newAwayAt: "seen", weekHomeAt: null, weekAwayAt: null, remind30At: null };
 
 const soon = londonParts(new Date(now.getTime() + 20 * 60000)); // +20 min
 const later = londonParts(new Date(now.getTime() + 90 * 60000)); // +90 min
@@ -52,7 +54,7 @@ const db = {
   ],
   fixtures: [
     // F1: match in 2 days -> weekly for both, no reminder (not agreed).
-    { id: 1, leagueId: 1, week: 3, homeId: 1, awayId: 2, status: "scheduled", scheduleStatus: null, date: in2days, time: "" },
+    { id: 1, leagueId: 1, week: 3, homeId: 1, awayId: 2, status: "scheduled", scheduleStatus: null, date: in2days, time: "", notify: { ...noNew } },
     // F2: agreed, starts in 20 min -> reminder for both (weekly already sent).
     { id: 2, leagueId: 1, week: 3, homeId: 3, awayId: 4, status: "scheduled", scheduleStatus: "agreed", date: soon.date, time: soon.time, notify: { ...stamped } },
     // F3: agreed, starts in 90 min -> nothing yet (weekly already sent).
@@ -60,9 +62,11 @@ const db = {
     // F4: played -> nothing.
     { id: 4, leagueId: 1, week: 2, homeId: 1, awayId: 3, status: "played", scheduleStatus: "agreed", date: soon.date, time: soon.time },
     // F5: match in 3 days, one player opted out -> weekly for H only.
-    { id: 5, leagueId: 1, week: 3, homeId: 7, awayId: 8, status: "scheduled", scheduleStatus: null, date: in3days, time: "" },
+    { id: 5, leagueId: 1, week: 3, homeId: 7, awayId: 8, status: "scheduled", scheduleStatus: null, date: in3days, time: "", notify: { ...noNew } },
     // F6: match next month -> outside the 7-day window, nothing.
-    { id: 6, leagueId: 1, week: 8, homeId: 1, awayId: 5, status: "scheduled", scheduleStatus: null, date: nextMonth, time: "" },
+    { id: 6, leagueId: 1, week: 8, homeId: 1, awayId: 5, status: "scheduled", scheduleStatus: null, date: nextMonth, time: "", notify: { ...noNew } },
+    // F7: brand-new fixture (newHomeAt/newAwayAt null) -> "scheduled" alert to both.
+    { id: 7, leagueId: 1, week: 9, homeId: 1, awayId: 2, status: "scheduled", scheduleStatus: null, date: nextMonth, time: "", notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: "seen", weekAwayAt: "seen", remind30At: null } },
   ],
 };
 
@@ -71,6 +75,9 @@ const r1 = runDueNotifications(db, now);
 const weekly = r1.outbox.filter((m) => m.type === "weekly");
 const reminders = r1.outbox.filter((m) => m.type === "reminder");
 
+const scheduled = r1.outbox.filter((m) => m.type === "new_match");
+check("brand-new fixture sends a 'scheduled' alert to both players", scheduled.filter((m) => m.fixtureId === 7).length === 2);
+check("no 'scheduled' alert for fixtures already marked as seen", scheduled.filter((m) => m.fixtureId !== 7).length === 0);
 check("2 weekly emails for the in-2-days match", weekly.filter((m) => m.fixtureId === 1).length === 2);
 check("2 reminder emails for the match starting in 20 min", reminders.filter((m) => m.fixtureId === 2).length === 2);
 check("no emails for the match 90 min away", r1.outbox.filter((m) => m.fixtureId === 3).length === 0);

@@ -43,6 +43,16 @@ function wantsEmail(u) {
   return !!u && !!u.email && (!u.notifyPrefs || u.notifyPrefs.email !== false);
 }
 
+function newMatchEmail(to, opp, f, leagueName) {
+  const oppName = displayName(opp);
+  const subject = `You're scheduled to play ${oppName} — TSH ${leagueName}`;
+  const html =
+    `<p>Hi ${esc(displayName(to))},</p>` +
+    `<p>You have a new match in <b>${esc(leagueName)}</b> (Week ${esc(f.week)}) against <b>${esc(oppName)}</b>.</p>` +
+    `<p>Open <b>My Matches</b> to agree a date and time — you'll each see it in your own local time.</p>` +
+    `<p>— TSH Darts League</p>`;
+  return { to: to.email, subject, html, userId: to.id, type: "new_match", fixtureId: f.id };
+}
 function weeklyEmail(to, opp, f, leagueName) {
   const oppName = displayName(opp);
   const subject = `Your TSH match this week vs ${oppName}`;
@@ -88,12 +98,24 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
   for (const f of db.fixtures || []) {
     if (f.status === "played") continue;
     if (!f.notify || typeof f.notify !== "object") {
-      f.notify = { weekHomeAt: null, weekAwayAt: null, remind30At: null };
+      f.notify = { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
       changed = true;
     }
     const home = users.get(f.homeId);
     const away = users.get(f.awayId);
     const leagueName = leagues.get(f.leagueId)?.name || "your league";
+
+    // 0) "You've been scheduled" — fires once, right after a fixture is created.
+    if (home && !f.notify.newHomeAt) {
+      if (wantsEmail(home)) outbox.push(newMatchEmail(home, away, f, leagueName));
+      f.notify.newHomeAt = now.toISOString();
+      changed = true;
+    }
+    if (away && !f.notify.newAwayAt) {
+      if (wantsEmail(away)) outbox.push(newMatchEmail(away, home, f, leagueName));
+      f.notify.newAwayAt = now.toISOString();
+      changed = true;
+    }
 
     // 1) "Your match this week" — fixture's target date falls within the next 7 days.
     const dd = parseYmd(f.date);
@@ -129,6 +151,16 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
   }
 
   return { outbox, changed };
+}
+
+// Whether real email sending is configured, plus the effective settings.
+export function emailConfigStatus() {
+  return {
+    configured: Boolean(process.env.EMAIL_API_KEY),
+    from: process.env.EMAIL_FROM || DEFAULT_FROM,
+    timezone: LEAGUE_TZ,
+    reminderMinutes: REMINDER_MINUTES,
+  };
 }
 
 // Deliver one message. With no EMAIL_API_KEY set it logs instead of sending,

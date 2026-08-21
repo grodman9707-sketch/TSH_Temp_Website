@@ -56,7 +56,7 @@ const db = {
       date: "2026-08-20",
       time: "13:00",
       startAt: new Date(now.getTime() + 25 * 60000).toISOString(), // 25 min from now
-      notify: { weekHomeAt: "seen", weekAwayAt: "seen", remind30At: null },
+      notify: { newHomeAt: "seen", newAwayAt: "seen", weekHomeAt: "seen", weekAwayAt: "seen", remind30At: null },
     },
   ],
 };
