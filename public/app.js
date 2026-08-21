@@ -214,19 +214,36 @@ function fileToAvatarDataUrl(file) {
 }
 
 let tesseractLoader = null;
+const TESSERACT_SRCS = [
+  "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js",
+  "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js",
+];
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
+}
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   if (tesseractLoader) return tesseractLoader;
-  tesseractLoader = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    s.onload = () => resolve(window.Tesseract);
-    s.onerror = () => {
-      tesseractLoader = null;
-      reject(new Error("Could not load screenshot reader"));
-    };
-    document.head.appendChild(s);
-  });
+  tesseractLoader = (async () => {
+    let lastErr;
+    for (const src of TESSERACT_SRCS) {
+      try {
+        await loadScript(src);
+        if (window.Tesseract) return window.Tesseract;
+      } catch (err) {
+        lastErr = err;
+        console.warn("[ocr] tesseract.js failed to load from", src, err.message);
+      }
+    }
+    tesseractLoader = null;
+    throw new Error(`Could not load the screenshot reader${lastErr ? ` (${lastErr.message})` : ""}. Check network/ad-blockers, or enter stats manually.`);
+  })();
   return tesseractLoader;
 }
 
@@ -330,13 +347,20 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
   for (const src of unique) {
     try {
       texts.push(await ocrImage(src));
-    } catch {
-      /* keep going */
+    } catch (err) {
+      console.warn("[ocr] could not read", src, err.message);
     }
+  }
+  if (!texts.join("").trim()) {
+    console.warn("[ocr] no text was recognized from the screenshot(s) — the reader may be blocked, or the image is too low quality.");
+    return null;
   }
   const merged = parseDartCounterText(texts.join("\n\n"), fixture.homeName, fixture.awayName);
   const keys = Object.keys(merged).filter((k) => k !== "rawText");
-  if (!keys.length) return null;
+  if (!keys.length) {
+    console.warn("[ocr] read text but found no recognizable stats. Raw text:", texts.join("\n\n").slice(0, 500));
+    return null;
+  }
   return merged;
 }
 function fixtureStatus(f) {
@@ -1722,9 +1746,9 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "TESTEMAIL") {
       const res = await api("/api/admin/notifications/test", { method: "POST", body: "{}" });
-      if (res.sent) state.notice = `Test email sent to ${res.to} via ${res.from}. Check your inbox (and spam).`;
+      if (res.sent) state.notice = `Test email sent to ${res.to} via ${res.from}. Check your inbox (and spam).${res.warning ? ` Note: ${res.warning}` : ""}`;
       else if (res.dev) state.notice = "Email is NOT configured on the server (no EMAIL_API_KEY) — the message was only logged, not sent.";
-      else state.notice = `Test email failed: ${res.error || "unknown error"} (from ${res.from}).`;
+      else state.notice = `Test email failed: ${res.error || "unknown error"} (from ${res.from}).${res.warning ? ` ${res.warning}` : ""}`;
       render();
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });

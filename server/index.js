@@ -1185,9 +1185,9 @@ async function handleApi(req, res, url) {
           html: "<p>This is a test email from TSH Darts League. If you received it, match notifications are configured correctly.</p>",
           type: "test",
         });
-        return json(res, 200, { ok: true, sent: !r.dev, dev: Boolean(r.dev), configured: cfg.configured, from: cfg.from, to });
+        return json(res, 200, { ok: true, sent: !r.dev, dev: Boolean(r.dev), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
       } catch (err) {
-        return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, to });
+        return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
       }
     }
     if (method === "GET" && p === "/api/admin/overview") {
@@ -1668,6 +1668,7 @@ server.listen(port, host, () => {
   } else {
     console.log("Email notifications: OFF — EMAIL_API_KEY not set; notifications are logged only, not emailed.");
   }
+  if (emailCfg.warning) console.warn(`Email notifications WARNING: ${emailCfg.warning}`);
   startNotificationLoop();
 });
 

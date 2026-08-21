@@ -153,11 +153,31 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
   return { outbox, changed };
 }
 
+function senderAddress(from) {
+  const m = /<([^>]+)>/.exec(from);
+  return String((m ? m[1] : from) || "").trim().toLowerCase();
+}
+// Flags sender addresses that can't actually deliver to players.
+function senderConcern(from) {
+  const addr = senderAddress(from);
+  const domain = addr.split("@")[1] || "";
+  if (addr === "onboarding@resend.dev") {
+    return "EMAIL_FROM is the Resend sandbox sender (onboarding@resend.dev), which can ONLY deliver to your own Resend account address — players will not receive emails. Verify a domain in Resend and set EMAIL_FROM to an address on it.";
+  }
+  const free = ["gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com", "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com"];
+  if (free.includes(domain)) {
+    return `EMAIL_FROM uses a free mailbox domain (${domain}) — providers can't send as these. Verify your own domain in Resend and use an address on it.`;
+  }
+  return "";
+}
+
 // Whether real email sending is configured, plus the effective settings.
 export function emailConfigStatus() {
+  const from = process.env.EMAIL_FROM || DEFAULT_FROM;
   return {
     configured: Boolean(process.env.EMAIL_API_KEY),
-    from: process.env.EMAIL_FROM || DEFAULT_FROM,
+    from,
+    warning: senderConcern(from),
     timezone: LEAGUE_TZ,
     reminderMinutes: REMINDER_MINUTES,
   };
