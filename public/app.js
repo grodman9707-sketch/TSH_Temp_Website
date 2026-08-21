@@ -214,19 +214,36 @@ function fileToAvatarDataUrl(file) {
 }
 
 let tesseractLoader = null;
+const TESSERACT_SRCS = [
+  "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js",
+  "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js",
+];
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
+}
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   if (tesseractLoader) return tesseractLoader;
-  tesseractLoader = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    s.onload = () => resolve(window.Tesseract);
-    s.onerror = () => {
-      tesseractLoader = null;
-      reject(new Error("Could not load screenshot reader"));
-    };
-    document.head.appendChild(s);
-  });
+  tesseractLoader = (async () => {
+    let lastErr;
+    for (const src of TESSERACT_SRCS) {
+      try {
+        await loadScript(src);
+        if (window.Tesseract) return window.Tesseract;
+      } catch (err) {
+        lastErr = err;
+        console.warn("[ocr] tesseract.js failed to load from", src, err.message);
+      }
+    }
+    tesseractLoader = null;
+    throw new Error(`Could not load the screenshot reader${lastErr ? ` (${lastErr.message})` : ""}. Check network/ad-blockers, or enter stats manually.`);
+  })();
   return tesseractLoader;
 }
 
@@ -330,13 +347,20 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
   for (const src of unique) {
     try {
       texts.push(await ocrImage(src));
-    } catch {
-      /* keep going */
+    } catch (err) {
+      console.warn("[ocr] could not read", src, err.message);
     }
+  }
+  if (!texts.join("").trim()) {
+    console.warn("[ocr] no text was recognized from the screenshot(s) — the reader may be blocked, or the image is too low quality.");
+    return null;
   }
   const merged = parseDartCounterText(texts.join("\n\n"), fixture.homeName, fixture.awayName);
   const keys = Object.keys(merged).filter((k) => k !== "rawText");
-  if (!keys.length) return null;
+  if (!keys.length) {
+    console.warn("[ocr] read text but found no recognizable stats. Raw text:", texts.join("\n\n").slice(0, 500));
+    return null;
+  }
   return merged;
 }
 function fixtureStatus(f) {
@@ -1289,6 +1313,35 @@ async function pageAdmin() {
           <input name="date" type="date">
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
+      ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
+        <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
+        <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
+      ${
+        d.isOwner
+          ? panel(`<h2 class="text-lg font-bold">Manage fixtures</h2>
+        <p class="mt-1 text-sm text-muted">Delete a single match, or clear a whole league (optionally one season). Only one season of fixtures per league is allowed, so clear the current set before generating a new season.</p>
+        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="CLEARLEAGUE">
+          <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
+          <input name="season" type="number" min="1" placeholder="Season (blank = all)">
+          <button class="btn-ghost">CLEAR FIXTURES</button>
+        </form>
+        <div class="mt-4 space-y-2">${
+          d.fixtures.length
+            ? d.fixtures
+                .slice()
+                .sort((a, b) => Number(a.season || 1) - Number(b.season || 1) || Number(a.week || 0) - Number(b.week || 0))
+                .map(
+                  (f) =>
+                    `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
+                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}</span>
+                      <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                    </div>`
+                )
+                .join("")
+            : `<p class="text-sm text-muted">No fixtures yet.</p>`
+        }</div>`, "mt-4")
+          : ""
+      }
       ${
         d.canOverride
           ? `${
@@ -1685,6 +1738,17 @@ document.addEventListener("submit", async (e) => {
       if (!window.confirm("Delete this match?")) return;
       await api(`/api/admin/fixtures/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
       state.notice = "Match deleted.";
+      render();
+    } else if (kind === "CLEARLEAGUE") {
+      if (!window.confirm(`Delete all fixtures for the selected league${fd.season ? ` (season ${fd.season})` : ""}? This cannot be undone.`)) return;
+      const res = await api("/api/admin/fixtures/clear-league", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = `Removed ${res.removed} fixture${res.removed === 1 ? "" : "s"}.`;
+      render();
+    } else if (kind === "TESTEMAIL") {
+      const res = await api("/api/admin/notifications/test", { method: "POST", body: "{}" });
+      if (res.sent) state.notice = `Test email sent to ${res.to} via ${res.from}. Check your inbox (and spam).${res.warning ? ` Note: ${res.warning}` : ""}`;
+      else if (res.dev) state.notice = "Email is NOT configured on the server (no EMAIL_API_KEY) — the message was only logged, not sent.";
+      else state.notice = `Test email failed: ${res.error || "unknown error"} (from ${res.from}).${res.warning ? ` ${res.warning}` : ""}`;
       render();
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });

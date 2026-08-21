@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
-import { runDueNotifications, sendEmail } from "./notifications.js";
+import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -425,7 +425,12 @@ function migrate(db) {
       changed = true;
     }
     if (!f.notify || typeof f.notify !== "object") {
-      f.notify = { weekHomeAt: null, weekAwayAt: null, remind30At: null };
+      // Existing/legacy fixtures aren't "new" — suppress the scheduled-alert.
+      f.notify = { newHomeAt: "existing", newAwayAt: "existing", weekHomeAt: null, weekAwayAt: null, remind30At: null };
+      changed = true;
+    } else if (!("newHomeAt" in f.notify)) {
+      f.notify.newHomeAt = "existing";
+      f.notify.newAwayAt = "existing";
       changed = true;
     }
     if (!("startAt" in f)) {
@@ -583,7 +588,7 @@ function newFixture(partial) {
     startAt: null,
     proposedTz: "",
     extractedStats: null,
-    notify: { weekHomeAt: null, weekAwayAt: null, remind30At: null },
+    notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
 }
@@ -1166,6 +1171,25 @@ async function handleApi(req, res, url) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Forbidden" });
     if (method === "GET" && p === "/api/admin/me") return json(res, 200, { ok: true, user: publicUser(user, db) });
+    if (method === "GET" && p === "/api/admin/notifications/config") {
+      return json(res, 200, { ok: true, ...emailConfigStatus() });
+    }
+    if (method === "POST" && p === "/api/admin/notifications/test") {
+      const to = String(body.email || user.email || "").trim();
+      if (!to) return json(res, 400, { ok: false, error: "No email address to send to" });
+      const cfg = emailConfigStatus();
+      try {
+        const r = await sendEmail({
+          to,
+          subject: "TSH Darts League — test notification",
+          html: "<p>This is a test email from TSH Darts League. If you received it, match notifications are configured correctly.</p>",
+          type: "test",
+        });
+        return json(res, 200, { ok: true, sent: !r.dev, dev: Boolean(r.dev), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
+      } catch (err) {
+        return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
+      }
+    }
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));
       const fixtures = scopedFixtures(db, user).map((f) => withNames(db, f));
@@ -1397,6 +1421,17 @@ async function handleApi(req, res, url) {
       const players = db.users.filter((u) => inLeague(u, leagueId));
       if (players.length < 2) return json(res, 400, { ok: false, error: "Place at least two players in this league first" });
       const season = Number(body.season) || 1;
+      // One season of fixtures per league. Block generating a different season
+      // while another season's fixtures still exist (clear them first).
+      const otherSeasons = [
+        ...new Set(db.fixtures.filter((f) => f.leagueId === leagueId).map((f) => Number(f.season || 1))),
+      ].filter((s) => s !== season);
+      if (otherSeasons.length) {
+        return json(res, 400, {
+          ok: false,
+          error: `This league already has Season ${otherSeasons.join(", ")} fixtures. Only one season per league is allowed — clear the existing fixtures before generating Season ${season}.`,
+        });
+      }
       const doubleRound = body.doubleRound === true || body.doubleRound === "1" || body.doubleRound === "on";
       const replaceScheduled = body.replaceScheduled === true || body.replaceScheduled === "1" || body.replaceScheduled === "on";
       const startDate = String(body.startDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
@@ -1553,6 +1588,22 @@ async function handleApi(req, res, url) {
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
+    if (method === "POST" && p === "/api/admin/fixtures/clear-league") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can clear fixtures" });
+      const leagueId = Number(body.leagueId);
+      const league = db.leagues.find((l) => l.id === leagueId);
+      if (!league) return json(res, 400, { ok: false, error: "Choose a league" });
+      const season = body.season ? Number(body.season) : null;
+      const toRemove = db.fixtures.filter((f) => f.leagueId === leagueId && (season == null || Number(f.season || 1) === season));
+      for (const f of toRemove) {
+        removeUpload(shotFile(f, 1));
+        removeUpload(shotFile(f, 2));
+      }
+      const ids = new Set(toRemove.map((f) => f.id));
+      db.fixtures = db.fixtures.filter((f) => !ids.has(f.id));
+      writeDb(db);
+      return json(res, 200, { ok: true, removed: toRemove.length });
+    }
     const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
     if (method === "POST" && deleteMatch) {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete fixtures" });
@@ -1611,6 +1662,13 @@ server.listen(port, host, () => {
     console.log("Railway data stays on the /data volume. Attach a volume at /data so signups survive deploys.");
   }
   warmPdcTicker();
+  const emailCfg = emailConfigStatus();
+  if (emailCfg.configured) {
+    console.log(`Email notifications: ON — sending via Resend as ${emailCfg.from} (tz ${emailCfg.timezone}, reminder ${emailCfg.reminderMinutes} min).`);
+  } else {
+    console.log("Email notifications: OFF — EMAIL_API_KEY not set; notifications are logged only, not emailed.");
+  }
+  if (emailCfg.warning) console.warn(`Email notifications WARNING: ${emailCfg.warning}`);
   startNotificationLoop();
 });
 
