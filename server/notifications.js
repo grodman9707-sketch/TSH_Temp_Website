@@ -153,6 +153,15 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
   return { outbox, changed };
 }
 
+// Resend requires "email@example.com" or "Name <email@example.com>". A bare
+// "<email@example.com>" (brackets, no display name) is rejected with a 422, so
+// strip the stray brackets before sending.
+function normalizeFrom(from) {
+  const f = String(from || "").trim();
+  if (!f) return DEFAULT_FROM;
+  const bracketOnly = /^<\s*([^<>\s]+@[^<>\s]+)\s*>$/.exec(f);
+  return bracketOnly ? bracketOnly[1] : f;
+}
 function senderAddress(from) {
   const m = /<([^>]+)>/.exec(from);
   return String((m ? m[1] : from) || "").trim().toLowerCase();
@@ -173,11 +182,16 @@ function senderConcern(from) {
 
 // Whether real email sending is configured, plus the effective settings.
 export function emailConfigStatus() {
-  const from = process.env.EMAIL_FROM || DEFAULT_FROM;
+  const raw = process.env.EMAIL_FROM || DEFAULT_FROM;
+  const from = normalizeFrom(raw);
+  let warning = senderConcern(from);
+  if (!warning && from !== raw.trim()) {
+    warning = `EMAIL_FROM was "${raw.trim()}", which Resend rejects (needs "email@domain" or "Name <email@domain>"). Using "${from}" — update the variable to remove the stray angle brackets.`;
+  }
   return {
     configured: Boolean(process.env.EMAIL_API_KEY),
     from,
-    warning: senderConcern(from),
+    warning,
     timezone: LEAGUE_TZ,
     reminderMinutes: REMINDER_MINUTES,
   };
@@ -187,7 +201,7 @@ export function emailConfigStatus() {
 // so development and tests work without any provider.
 export async function sendEmail(msg) {
   const key = process.env.EMAIL_API_KEY;
-  const from = process.env.EMAIL_FROM || DEFAULT_FROM;
+  const from = normalizeFrom(process.env.EMAIL_FROM || DEFAULT_FROM);
   if (!key) {
     console.log(`[notify:dev] would email ${msg.to} — "${msg.subject}" (${msg.type})`);
     return { ok: true, dev: true };
