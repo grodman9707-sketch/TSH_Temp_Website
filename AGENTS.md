@@ -18,6 +18,17 @@ persisted to a JSON file store (`data/db.json`).
 - Note the cloud test browser runs in **UTC**, so single-browser demos of
   timezone-dependent UI can be misleading; prefer API/unit checks for those.
 
+### Pull requests
+
+- Open a **separate pull request for each fix or update** as soon as that
+  change is ready. Do not batch unrelated fixes into one PR.
+- Mark the PR ready for review so it can be merged. The owner merges each PR
+  to deploy, then checks the change on the **live website** before the next
+  fix is started.
+- After a website-facing change, include brief live-site check steps in the
+  PR body (what to click, and what should happen). Hard-refresh may be needed
+  when `public/app.js` / `public/styles.css` cache-bust query params change.
+
 ### Services and how to run them
 
 - There is only one service. Start it with `node server/index.js` (same as the
