@@ -10,6 +10,12 @@ export function Contact() {
           thesocialhubinformation@gmail.com
         </a>
       </Panel>
+      <div className="mx-auto mt-10 max-w-lg text-center">
+        <h2 className="text-2xl font-extrabold">Admin team</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Owner, Deputy Admin, and Admin contact cards are generated when someone is given a staff role and removed when that role is taken away.
+        </p>
+      </div>
     </ArenaPage>
   );
 }

@@ -1,0 +1,298 @@
+// End-to-end tests for Contact-page admin profiles.
+// Run: `node server/staff-profiles.test.js`
+import { spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+let failures = 0;
+function check(name, cond) {
+  if (cond) console.log(`  ok  - ${name}`);
+  else {
+    failures++;
+    console.error(`  FAIL - ${name}`);
+  }
+}
+
+async function waitHealth(port, child) {
+  const deadline = Date.now() + 15000;
+  let lastErr;
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) throw new Error(`server exited early with ${child.exitCode}`);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      if (res.ok) return;
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw lastErr || new Error("server did not become healthy");
+}
+
+async function api(port, pathname, { method = "GET", token, body } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method,
+    headers,
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, data };
+}
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-staff-profiles-"));
+const port = 18000 + Math.floor(Math.random() * 2000);
+const child = spawn(process.execPath, [path.join(root, "server/index.js")], {
+  cwd: root,
+  env: { ...process.env, DATA_DIR: dir, PORT: String(port), HOST: "127.0.0.1" },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let stderr = "";
+child.stderr.on("data", (buf) => {
+  stderr += buf.toString();
+});
+
+try {
+  await waitHealth(port, child);
+
+  const listed = await api(port, "/api/staff-profiles");
+  check("public staff list ok", listed.status === 200 && listed.data.ok);
+  check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
+  const founderCard = (listed.data.profiles || []).find((p) => p.status === "owner");
+  check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
+  check("owner card uses Owner status", founderCard?.statusLabel === "Owner");
+  check("owner card has no league", !founderCard?.leagueTitle);
+
+  const owner = await api(port, "/api/auth/login", {
+    method: "POST",
+    body: { email: "GRodman9707@gmail.com", password: "Rodm@n85" },
+  });
+  check("owner login", owner.status === 200 && owner.data.token);
+  const ownerTok = owner.data.token;
+
+  const me = await api(port, "/api/auth/me", { token: ownerTok });
+  check("me includes owner contact profile", (me.data.staffProfiles || []).some((p) => p.status === "owner"));
+
+  const fillOwner = await api(port, "/api/account/staff-profile", {
+    method: "POST",
+    token: ownerTok,
+    body: {
+      discordUrl: "https://discord.com/users/111",
+      contactEmail: "owner-fallback@example.com",
+    },
+  });
+  check("owner can fill contact card", fillOwner.status === 200 && fillOwner.data.ok);
+  const afterFill = await api(port, "/api/staff-profiles");
+  const ownerPublic = (afterFill.data.profiles || []).find((p) => p.status === "owner");
+  check("public listing shows Discord", ownerPublic?.discordUrl === "https://discord.com/users/111");
+  check("public listing shows fallback email", ownerPublic?.contactEmail === "owner-fallback@example.com");
+
+  const player = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Alex Admin",
+      email: "alex-admin@test.com",
+      password: "pass1234",
+      regional: "europe",
+      dartcounterName: "AlexDC",
+      avg: 50,
+    },
+  });
+  check("register future admin", player.status === 200);
+  const playerId = player.data.user.id;
+  const playerTok = player.data.token;
+
+  const denied = await api(port, "/api/account/staff-profile", {
+    method: "POST",
+    token: playerTok,
+    body: { discordUrl: "https://discord.com/users/222", contactEmail: "nope@test.com" },
+  });
+  check("players cannot edit staff profiles", denied.status === 403);
+
+  const assignAdmin = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId, leagueId: 1 },
+  });
+  check("assign division admin", assignAdmin.status === 200);
+  const withAdmin = await api(port, "/api/staff-profiles");
+  const adminCard = (withAdmin.data.profiles || []).find((p) => p.userId === playerId && p.status === "admin");
+  check("admin profile generated for league", Boolean(adminCard) && /League 1/.test(adminCard.leagueTitle || ""));
+  check("admin status label", adminCard?.statusLabel === "Admin");
+  check("new admin card prefilled with account email", adminCard?.contactEmail === "alex-admin@test.com");
+
+  const assignHead = await api(port, "/api/admin/assign-head-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId },
+  });
+  check("assign head admin", assignHead.status === 200);
+  const withDeputy = await api(port, "/api/staff-profiles");
+  const deputyCard = (withDeputy.data.profiles || []).find((p) => p.userId === playerId && p.status === "deputy");
+  check("deputy profile generated for head admin", deputyCard?.statusLabel === "Deputy Admin");
+  check("same person can hold admin and deputy cards", Boolean(adminCard) && Boolean(deputyCard));
+
+  const fillAdmin = await api(port, "/api/account/staff-profile", {
+    method: "POST",
+    token: playerTok,
+    body: {
+      profileId: adminCard.id,
+      discordUrl: "https://discord.com/users/333",
+      contactEmail: "alex-league@test.com",
+    },
+  });
+  check("division admin fills their league card", fillAdmin.status === 200);
+  const filledPublic = await api(port, "/api/staff-profiles");
+  const filledAdmin = (filledPublic.data.profiles || []).find((p) => p.id === adminCard.id);
+  check("filled Discord is public", filledAdmin?.discordUrl === "https://discord.com/users/333");
+  check("filled email is public", filledAdmin?.contactEmail === "alex-league@test.com");
+
+  const badDiscord = await api(port, "/api/account/staff-profile", {
+    method: "POST",
+    token: playerTok,
+    body: { discordUrl: "https://example.com/not-discord", contactEmail: "alex-league@test.com" },
+  });
+  check("rejects non-Discord URLs", badDiscord.status === 400);
+
+  const revokeAdmin = await api(port, "/api/admin/revoke-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId, role: "admin", leagueId: 1 },
+  });
+  check("revoke division admin", revokeAdmin.status === 200 && !revokeAdmin.data.pending);
+  const afterRevokeAdmin = await api(port, "/api/staff-profiles");
+  check(
+    "league admin card erased after removal",
+    !(afterRevokeAdmin.data.profiles || []).some((p) => p.userId === playerId && p.status === "admin")
+  );
+  check(
+    "deputy card kept when only league admin is removed",
+    (afterRevokeAdmin.data.profiles || []).some((p) => p.userId === playerId && p.status === "deputy")
+  );
+
+  const replace = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId, leagueId: 2 },
+  });
+  check("reassign as admin of another league", replace.status === 200);
+  const afterReplace = await api(port, "/api/staff-profiles");
+  const replacedCard = (afterReplace.data.profiles || []).find((p) => p.userId === playerId && p.status === "admin");
+  check("replacement generates a new league card", /League 2/.test(replacedCard?.leagueTitle || ""));
+  check("old League 1 card stays gone", !(afterReplace.data.profiles || []).some((p) => p.status === "admin" && /League 1/.test(p.leagueTitle || "")));
+
+  const revokeHead = await api(port, "/api/admin/revoke-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId, role: "head_admin" },
+  });
+  check("revoke head admin", revokeHead.status === 200);
+  const afterHead = await api(port, "/api/staff-profiles");
+  check(
+    "deputy card erased after head admin removal",
+    !(afterHead.data.profiles || []).some((p) => p.userId === playerId && p.status === "deputy")
+  );
+  check(
+    "league admin card still present",
+    (afterHead.data.profiles || []).some((p) => p.userId === playerId && p.status === "admin")
+  );
+
+  const other = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Casey Owner",
+      email: "casey-owner@test.com",
+      password: "pass1234",
+      regional: "europe",
+      dartcounterName: "CaseyDC",
+      avg: 48,
+    },
+  });
+  const otherId = other.data.user.id;
+  const otherTok = other.data.token;
+  const makeOwner = await api(port, "/api/admin/assign-owner", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: otherId },
+  });
+  check("assign second owner", makeOwner.status === 200);
+  const withSecond = await api(port, "/api/staff-profiles");
+  check(
+    "second owner card generated",
+    (withSecond.data.profiles || []).filter((p) => p.status === "owner").length === 2
+  );
+
+  const requestRemove = await api(port, "/api/admin/revoke-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: otherId, role: "owner" },
+  });
+  check("owner removal is pending", requestRemove.status === 200 && requestRemove.data.pending);
+  const stillOwner = await api(port, "/api/staff-profiles");
+  check(
+    "owner card remains until approved",
+    (stillOwner.data.profiles || []).some((p) => p.userId === otherId && p.status === "owner")
+  );
+  const approvalId = requestRemove.data.approval.id;
+  const approve = await api(port, `/api/admin/approvals/${approvalId}/approve`, {
+    method: "POST",
+    token: otherTok,
+    body: {},
+  });
+  check("target owner approves removal", approve.status === 200);
+  const afterOwnerGone = await api(port, "/api/staff-profiles");
+  check(
+    "owner card erased after approved removal",
+    !(afterOwnerGone.data.profiles || []).some((p) => p.userId === otherId && p.status === "owner")
+  );
+
+  const doomed = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Riley Gone",
+      email: "riley-gone@test.com",
+      password: "pass1234",
+      regional: "europe",
+      dartcounterName: "RileyDC",
+      avg: 44,
+    },
+  });
+  const doomedId = doomed.data.user.id;
+  await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: doomedId, leagueId: 3 },
+  });
+  const beforeDelete = await api(port, "/api/staff-profiles");
+  check(
+    "card exists before player delete",
+    (beforeDelete.data.profiles || []).some((p) => p.userId === doomedId)
+  );
+  const del = await api(port, "/api/admin/delete-player", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: doomedId },
+  });
+  check("delete player", del.status === 200);
+  const afterDelete = await api(port, "/api/staff-profiles");
+  check(
+    "cards erased when the admin is deleted",
+    !(afterDelete.data.profiles || []).some((p) => p.userId === doomedId)
+  );
+
+  const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
+  check("contact page renders admin team", appJs.includes("Admin team") && appJs.includes("/api/staff-profiles"));
+} finally {
+  child.kill("SIGTERM");
+}
+
+if (failures) {
+  if (stderr) console.error(stderr);
+  process.exit(1);
+}
+console.log("staff profile tests passed");
