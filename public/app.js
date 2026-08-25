@@ -693,6 +693,37 @@ function staffRoleLine(p) {
   if (p.status === "admin" && p.leagueTitle) return esc(p.leagueTitle);
   return esc(p.statusLabel || "Admin");
 }
+function ruleAnchor(id) {
+  return `rule-${String(id).replaceAll(".", "-")}`;
+}
+function renderRuleBlocks(blocks) {
+  return (blocks || [])
+    .map((block) => {
+      if (block.type === "ul") {
+        return `<ul class="rules-list">${(block.items || []).map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
+      }
+      if (block.type === "note") {
+        return `<p class="rules-note">${esc(block.text)}</p>`;
+      }
+      return `<p>${esc(block.text)}</p>`;
+    })
+    .join("");
+}
+function renderRuleSection(section) {
+  const subs = (section.subsections || [])
+    .map(
+      (sub) => `<section class="rules-sub" id="${ruleAnchor(sub.id)}">
+        <h3>${esc(sub.id)} — ${esc(sub.title)}</h3>
+        ${renderRuleBlocks(sub.blocks)}
+      </section>`
+    )
+    .join("");
+  return `<section class="rules-section" id="${ruleAnchor(section.id)}">
+    <h2>${esc(section.id)}. ${esc(section.title)}</h2>
+    ${renderRuleBlocks(section.blocks)}
+    ${subs}
+  </section>`;
+}
 function panel(html, extra = "") {
   return `<div class="glass rounded-xl p-5 ${extra}">${html}</div>`;
 }
@@ -1212,29 +1243,19 @@ async function pagePlayer(id) {
     { arena: true }
   );
 }
-function pageRules() {
+async function pageRules() {
+  const d = await api("/api/rules");
+  const sections = Array.isArray(d.sections) ? d.sections : [];
+  const toc = sections
+    .map((s) => `<a href="#${ruleAnchor(s.id)}" class="rules-toc-link">${esc(s.id)}. ${esc(s.title)}</a>`)
+    .join("");
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">${panel(`
       <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
-      <h1 class="mt-2 text-4xl font-extrabold">Rules</h1>
-      <div class="mt-6 space-y-4 text-sm leading-relaxed text-white/80">
-        <p>The Social Hub Darts League is a competitive online league played on DartCounter.</p>
-        <h2 class="text-lg font-bold text-white">Format</h2>
-        <ul class="list-disc space-y-1 pl-5">
-          <li>501, double out.</li>
-          <li>Each regional has League 1, League 2, League 3, and League 4.</li>
-          <li>Players who choose Both can be placed in one Europe league and one Americas league.</li>
-          <li>Every match is Best of 9 (first to 5 legs).</li>
-          <li>1 point per leg won, plus 2 extra points for the match win.</li>
-          <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
-        </ul>
-        <h2 class="text-lg font-bold text-white">Scheduling</h2>
-        <p>The home player proposes a date and time on the Fixtures tab or My Matches. The visiting player must accept that time before either player can upload screenshots.</p>
-        <h2 class="text-lg font-bold text-white">Results</h2>
-        <p>After the time is agreed, either player uploads both DartCounter screenshots together (you’ll see a preview of each photo before submitting). The site tries to read the stats into the admin form; a division admin checks or corrects them before they are added to the table.</p>
-        <h2 class="text-lg font-bold text-white">Staff</h2>
-        <p>A person can hold more than one staff role — for example Division Admin and Head Admin together. Each division lists its Division Admin as The Admin for player issues. A Head Admin can override a confirmed result; owners assign those roles.</p>
-      </div>
+      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "Rules")}</h1>
+      <p class="mt-4 text-sm leading-relaxed text-white/80">${esc(d.intro || "")}</p>
+      <nav class="rules-toc mt-6" aria-label="Rules contents">${toc}</nav>
+      <div class="rules-doc mt-2">${sections.map(renderRuleSection).join("")}</div>
     `)}</div>`,
     { arena: true }
   );
@@ -1632,7 +1653,7 @@ async function render() {
       dashboard: pageDashboard,
       matches: pageMyMatches,
       player: () => pagePlayer(route[1]),
-      rules: () => pageRules(),
+      rules: pageRules,
       contact: () => pageContact(),
       news: pageNews,
       admin: pageAdmin,
@@ -1671,6 +1692,15 @@ document.addEventListener("click", async (e) => {
   }
   const a = e.target.closest("a");
   if (a && a.href && a.origin === location.origin && !a.hasAttribute("download")) {
+    const next = new URL(a.href);
+    if (next.pathname === location.pathname && next.hash) {
+      e.preventDefault();
+      state.menu = false;
+      const target = document.getElementById(next.hash.slice(1));
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      history.replaceState({}, "", next.pathname + next.search + next.hash);
+      return;
+    }
     e.preventDefault();
     go(a.pathname + a.search);
     return;

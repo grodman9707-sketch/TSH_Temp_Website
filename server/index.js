@@ -12,6 +12,8 @@ import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const seedDbPath = path.join(root, "data", "db.json");
+const leagueRulesPath = path.join(root, "data", "leagueRules.json");
+const leagueRules = JSON.parse(fs.readFileSync(leagueRulesPath, "utf8"));
 const onRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME);
 function resolveDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
@@ -986,6 +988,7 @@ async function handleApi(req, res, url) {
   const body = method === "GET" || method === "HEAD" ? {} : await readBody(req);
 
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
+  if (method === "GET" && p === "/api/rules") return json(res, 200, { ok: true, ...leagueRules });
   if (method === "GET" && p === "/api/staff-profiles") {
     if (ensureAdminProfiles(db)) writeDb(db);
     return json(res, 200, {
@@ -1116,7 +1119,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
