@@ -118,6 +118,7 @@ const mime = {
 function readDb() {
   const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
   if (!Array.isArray(db.approvals)) db.approvals = [];
+  if (!Array.isArray(db.adminProfiles)) db.adminProfiles = [];
   return db;
 }
 function writeDb(db) {
@@ -247,6 +248,143 @@ function canOverride(u) {
 }
 function isStaff(u) {
   return isOwner(u) || isHeadAdmin(u) || isDivisionAdmin(u);
+}
+function staffStatusLabel(status) {
+  if (status === "owner") return "Owner";
+  if (status === "deputy") return "Deputy Admin";
+  return "Admin";
+}
+function staffProfileKey(p) {
+  return `${Number(p.userId)}:${p.status}:${Number(p.leagueId) || 0}`;
+}
+function desiredStaffSlots(u) {
+  const slots = [];
+  if (isOwner(u)) slots.push({ status: "owner", leagueId: null });
+  if (isHeadAdmin(u)) slots.push({ status: "deputy", leagueId: null });
+  for (const leagueId of adminLeagueIds(u)) {
+    slots.push({ status: "admin", leagueId });
+  }
+  return slots;
+}
+function ensureAdminProfiles(db) {
+  if (!Array.isArray(db.adminProfiles)) db.adminProfiles = [];
+  const wanted = new Set();
+  const byKey = new Map(db.adminProfiles.map((p) => [staffProfileKey(p), p]));
+  let changed = false;
+  for (const u of db.users) {
+    const slots = desiredStaffSlots(u);
+    const existingForUser = db.adminProfiles.filter((p) => Number(p.userId) === Number(u.id));
+    const template = {
+      discordUrl: existingForUser.find((p) => p.discordUrl)?.discordUrl || "",
+      contactEmail: existingForUser.find((p) => p.contactEmail)?.contactEmail || u.email || "",
+    };
+    for (const slot of slots) {
+      const key = `${Number(u.id)}:${slot.status}:${Number(slot.leagueId) || 0}`;
+      wanted.add(key);
+      if (!byKey.has(key)) {
+        const profile = {
+          id: nextId(db.adminProfiles),
+          userId: u.id,
+          status: slot.status,
+          leagueId: slot.leagueId,
+          discordUrl: template.discordUrl,
+          contactEmail: template.contactEmail,
+          createdAt: new Date().toISOString(),
+        };
+        db.adminProfiles.push(profile);
+        byKey.set(key, profile);
+        changed = true;
+      }
+    }
+  }
+  const kept = db.adminProfiles.filter((p) => wanted.has(staffProfileKey(p)));
+  if (kept.length !== db.adminProfiles.length) {
+    db.adminProfiles = kept;
+    changed = true;
+  }
+  return changed;
+}
+function persistDb(db) {
+  ensureAdminProfiles(db);
+  writeDb(db);
+}
+function publicStaffProfile(p, db) {
+  const u = db.users.find((x) => x.id === Number(p.userId));
+  if (!u) return null;
+  const league = p.leagueId ? db.leagues.find((l) => l.id === Number(p.leagueId)) : null;
+  return {
+    id: p.id,
+    userId: u.id,
+    name: u.name,
+    nickname: u.nickname || "",
+    hasAvatar: Boolean(u.avatarFile),
+    avatarUrl: u.avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
+    status: p.status,
+    statusLabel: staffStatusLabel(p.status),
+    leagueId: p.leagueId || null,
+    leagueTitle: league ? leagueTitle(db, league) : "",
+    discordUrl: p.discordUrl || "",
+    contactEmail: p.contactEmail || "",
+  };
+}
+function publicStaffProfiles(db) {
+  const order = { owner: 0, deputy: 1, admin: 2 };
+  return (db.adminProfiles || [])
+    .map((p) => publicStaffProfile(p, db))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const so = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+      if (so) return so;
+      const lt = String(a.leagueTitle || "").localeCompare(String(b.leagueTitle || ""));
+      if (lt) return lt;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+}
+function ownStaffProfiles(db, user) {
+  return publicStaffProfiles(db).filter((p) => p.userId === user.id);
+}
+function normalizeStaffEmail(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  if (s.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) {
+    const err = new Error("Enter a valid contact email");
+    err.status = 400;
+    throw err;
+  }
+  return s;
+}
+function normalizeDiscordUrl(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  if (s.length > 300) {
+    const err = new Error("Discord link is too long");
+    err.status = 400;
+    throw err;
+  }
+  const asUrl = /^https?:\/\//i.test(s) ? s : /^(discord\.gg|discord\.com|discordapp\.com)\//i.test(s) ? `https://${s}` : "";
+  if (asUrl) {
+    let url;
+    try {
+      url = new URL(asUrl);
+    } catch {
+      const err = new Error("Enter a valid Discord profile link");
+      err.status = 400;
+      throw err;
+    }
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    if (!["discord.com", "discordapp.com", "discord.gg"].includes(host)) {
+      const err = new Error("Discord link must be a discord.com or discord.gg URL");
+      err.status = 400;
+      throw err;
+    }
+    return url.toString();
+  }
+  if (!/^@?[a-zA-Z0-9._-]{2,32}$/.test(s) && !/^.{2,32}#\d{4}$/.test(s)) {
+    const err = new Error("Enter a Discord profile URL or username");
+    err.status = 400;
+    throw err;
+  }
+  return s;
 }
 function managesLeague(u, leagueId) {
   if (!u) return false;
@@ -481,6 +619,7 @@ function migrate(db) {
       changed = true;
     }
   }
+  if (ensureAdminProfiles(db)) changed = true;
   if (changed) writeDb(db);
 }
 
@@ -847,6 +986,14 @@ async function handleApi(req, res, url) {
   const body = method === "GET" || method === "HEAD" ? {} : await readBody(req);
 
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
+  if (method === "GET" && p === "/api/staff-profiles") {
+    if (ensureAdminProfiles(db)) writeDb(db);
+    return json(res, 200, {
+      ok: true,
+      leagueEmail: db.league?.email || LEAGUE_CONTACT_EMAIL,
+      profiles: publicStaffProfiles(db),
+    });
+  }
   if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
   if (method === "GET" && p === "/api/regionals") return json(res, 200, { ok: true, regionals: db.regionals });
   if (method === "GET" && p === "/api/announcements") return json(res, 200, { ok: true, announcements: db.announcements });
@@ -969,7 +1116,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
@@ -977,7 +1124,13 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && p === "/api/auth/me") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    return json(res, 200, { ok: true, token: tokenFrom(req, url), user: publicUser(user, db), ownerSlots: { used: ownerCount(db), max: MAX_OWNERS } });
+    return json(res, 200, {
+      ok: true,
+      token: tokenFrom(req, url),
+      user: publicUser(user, db),
+      staffProfiles: ownStaffProfiles(db, user),
+      ownerSlots: { used: ownerCount(db), max: MAX_OWNERS },
+    });
   }
   if (method === "POST" && p === "/api/auth/logout") {
     sessions.delete(tokenFrom(req, url));
@@ -1010,6 +1163,30 @@ async function handleApi(req, res, url) {
     }
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/staff-profile") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    if (!isStaff(user)) return json(res, 403, { ok: false, error: "Only league staff can edit a contact profile" });
+    let discordUrl;
+    let contactEmail;
+    try {
+      discordUrl = normalizeDiscordUrl(body.discordUrl);
+      contactEmail = normalizeStaffEmail(body.contactEmail);
+    } catch (err) {
+      return json(res, err.status || 400, { ok: false, error: err.message });
+    }
+    const mine = (db.adminProfiles || []).filter((p) => Number(p.userId) === Number(user.id));
+    if (!mine.length) return json(res, 400, { ok: false, error: "No staff contact profile to update" });
+    const profileId = body.profileId != null && body.profileId !== "" ? Number(body.profileId) : null;
+    const targets = profileId ? mine.filter((p) => p.id === profileId) : mine;
+    if (profileId && !targets.length) return json(res, 404, { ok: false, error: "Profile not found" });
+    for (const p of targets) {
+      p.discordUrl = discordUrl;
+      p.contactEmail = contactEmail;
+    }
+    persistDb(db);
+    return json(res, 200, { ok: true, user: publicUser(user, db), staffProfiles: ownStaffProfiles(db, user) });
   }
 
   if (method === "POST" && p === "/api/account") {
@@ -1359,7 +1536,7 @@ async function handleApi(req, res, url) {
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       if (isOwner(u)) return json(res, 400, { ok: false, error: "Already an owner" });
       addRole(u, "owner");
-      writeDb(db);
+      persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/assign-admin") {
@@ -1370,7 +1547,7 @@ async function handleApi(req, res, url) {
       if (adminLeagueIds(u).includes(league.id)) return json(res, 400, { ok: false, error: "Already the admin of that division" });
       u.adminLeagueIds = [...adminLeagueIds(u), league.id];
       syncAdminLeagues(u);
-      writeDb(db);
+      persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/assign-head-admin") {
@@ -1379,7 +1556,7 @@ async function handleApi(req, res, url) {
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       if (isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Already a head admin" });
       addRole(u, "head_admin");
-      writeDb(db);
+      persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
     if (method === "POST" && p === "/api/admin/revoke-admin") {
@@ -1390,7 +1567,7 @@ async function handleApi(req, res, url) {
         if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove Head Admins" });
         if (!isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Not a head admin" });
         removeRole(u, "head_admin");
-        writeDb(db);
+        persistDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
       if (which === "owner") {
@@ -1414,7 +1591,7 @@ async function handleApi(req, res, url) {
         u.adminLeagueIds = adminLeagueIds(u).filter((id) => id !== leagueId);
         if (!leagueId) u.adminLeagueIds = [];
         syncAdminLeagues(u);
-        writeDb(db);
+        persistDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
       if (isHeadAdmin(user)) {
@@ -1462,7 +1639,7 @@ async function handleApi(req, res, url) {
         syncAdminLeagues(target);
       }
       db.approvals.splice(idx, 1);
-      writeDb(db);
+      persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(target, db) });
     }
     if (method === "POST" && p === "/api/admin/place-player") {
@@ -1660,8 +1837,9 @@ async function handleApi(req, res, url) {
       if (u.avatarFile) removeUpload(u.avatarFile);
       db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
       db.applications = db.applications.filter((a) => a.userId !== u.id);
+      db.adminProfiles = (db.adminProfiles || []).filter((p) => Number(p.userId) !== Number(u.id));
       db.users = db.users.filter((x) => x.id !== u.id);
-      writeDb(db);
+      persistDb(db);
       return json(res, 200, { ok: true });
     }
     const clearMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/clear$/);

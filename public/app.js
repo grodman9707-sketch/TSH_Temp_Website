@@ -681,6 +681,18 @@ function esc(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
+function discordDisplay(url) {
+  const s = String(url || "").trim();
+  if (!s) return `<span class="text-muted">Not listed yet</span>`;
+  if (/^https?:\/\//i.test(s)) {
+    return `<a class="gold" href="${esc(s)}" target="_blank" rel="noopener noreferrer">Discord profile</a>`;
+  }
+  return `<span>${esc(s)}</span>`;
+}
+function staffRoleLine(p) {
+  if (p.status === "admin" && p.leagueTitle) return esc(p.leagueTitle);
+  return esc(p.statusLabel || "Admin");
+}
 function panel(html, extra = "") {
   return `<div class="glass rounded-xl p-5 ${extra}">${html}</div>`;
 }
@@ -1054,6 +1066,24 @@ async function pageDashboard() {
   const u = state.user;
   const next = d.fixtures.find((f) => f.status === "scheduled");
   const played = d.fixtures.filter((f) => f.status === "played");
+  const staffList = isStaff(u) ? await api("/api/staff-profiles").catch(() => ({ profiles: [] })) : { profiles: [] };
+  const mine = (staffList.profiles || []).filter((p) => p.userId === u.id);
+  const staffContactPanel = mine.length
+    ? `<div class="mt-10">${panel(`<h2 class="text-lg font-bold">Contact profile</h2>
+        <p class="mt-1 text-sm text-muted">These cards appear on the Contact page while you hold a staff role. Fill in Discord and a fallback email. If a role is removed, that card is erased.</p>
+        <div class="mt-4 space-y-6">${mine
+          .map(
+            (p) => `<form class="space-y-3 border-t border-white/10 pt-4" data-form="STAFFPROFILE" data-id="${p.id}">
+              <div class="text-xs font-bold tracking-widest gold">${esc(p.statusLabel)}${p.leagueTitle ? ` · ${esc(p.leagueTitle)}` : ""}</div>
+              <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Discord profile link</label>
+              <input name="discordUrl" value="${esc(p.discordUrl || "")}" placeholder="https://discord.com/users/your-id">
+              <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Fallback email</label>
+              <input name="contactEmail" type="email" value="${esc(p.contactEmail || "")}" placeholder="If Discord fails">
+              <button class="btn-gold">SAVE CONTACT CARD</button>
+            </form>`
+          )
+          .join("")}</div>`)}</div>`
+    : "";
   return layout(
     `<div class="mx-auto max-w-4xl px-4 py-10">
       <div class="flex flex-wrap items-center gap-4">
@@ -1083,6 +1113,8 @@ async function pageDashboard() {
         ${panel(`<div class="text-xs tracking-widest text-muted">AWAITING ADMIN</div><div class="mt-2 text-3xl font-extrabold gold">${d.fixtures.filter((f) => f.status === "submitted").length}</div>`)}
       </div>
       <a href="/my-matches" class="mt-6 inline-block text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>
+
+      ${staffContactPanel}
 
       <div class="mt-10 grid gap-4 md:grid-cols-2">
         ${panel(`<h2 class="text-lg font-bold">Player profile</h2>
@@ -1208,10 +1240,46 @@ function pageRules() {
   );
 }
 async function pageContact() {
-  const d = await api("/api/content").catch(() => ({}));
-  const email = d.league?.email || "thesocialhubinformation@gmail.com";
+  const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
+  const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
+  const profiles = Array.isArray(d.profiles) ? d.profiles : [];
+  const cards = profiles.length
+    ? `<div class="mt-8 grid gap-4 sm:grid-cols-2">${profiles
+        .map(
+          (p) => `<div class="staff-card glass rounded-xl p-5 text-left">
+            <div class="flex items-center gap-3">
+              ${avatarImg(p, 52)}
+              <div>
+                <div class="font-bold text-lg">${esc(p.nickname || p.name)}</div>
+                <div class="text-sm text-white/80">${esc(p.name)}</div>
+              </div>
+            </div>
+            <div class="mt-4 text-[11px] font-bold tracking-widest gold">${p.status === "admin" && p.leagueTitle ? "LEAGUE" : "STATUS"}</div>
+            <div class="mt-1 font-semibold">${staffRoleLine(p)}</div>
+            ${p.status === "admin" && p.leagueTitle ? `<div class="mt-1 text-xs text-muted">${esc(p.statusLabel)}</div>` : ""}
+            <div class="mt-4 text-[11px] font-bold tracking-widest gold">DISCORD</div>
+            <div class="mt-1 text-sm">${discordDisplay(p.discordUrl)}</div>
+            <div class="mt-4 text-[11px] font-bold tracking-widest gold">EMAIL</div>
+            <div class="mt-1 text-sm">${
+              p.contactEmail
+                ? `<a class="gold" href="mailto:${esc(p.contactEmail)}">${esc(p.contactEmail)}</a>`
+                : `<span class="text-muted">Not listed yet</span>`
+            }</div>
+          </div>`
+        )
+        .join("")}</div>`
+    : `<p class="mt-8 text-sm text-muted">Admin contact cards appear here when owners assign league staff.</p>`;
   return layout(
-    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold">Contact</h1><p class="mt-3 text-muted">Questions about TSH Darts League go here.</p><a class="mt-6 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a></div>`)}</div>`,
+    `<div class="mx-auto max-w-4xl px-4 py-10">
+      ${panel(`<div class="text-center">
+        <h1 class="text-3xl font-extrabold">Contact</h1>
+        <p class="mt-3 text-muted">Questions about TSH Darts League go here. For general league mail use the address below; for a specific division, reach the admin listed on their card.</p>
+        <a class="mt-6 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a>
+      </div>`)}
+      <h2 class="mt-10 text-center text-2xl font-extrabold">Admin team</h2>
+      <p class="mt-2 text-center text-sm text-muted">Owners, deputy admins, and division admins. Discord first; email if all else fails.</p>
+      ${cards}
+    </div>`,
     { arena: true }
   );
 }
@@ -1375,6 +1443,9 @@ async function pageAdmin() {
       }</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
+      ${panel(`<h2 class="text-lg font-bold">Contact page profiles</h2>
+        <p class="mt-1 text-sm text-muted">Assigning an Owner, Head Admin (shown as Deputy Admin), or Division Admin creates a public card on Contact. Removing or replacing that role erases the card. Each person fills Discord and a fallback email from the Player Hub.</p>
+        <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
@@ -1821,6 +1892,14 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/account/profile", { method: "POST", body: JSON.stringify(fd) });
       state.user = d.user;
       state.notice = "Profile saved.";
+      render();
+    } else if (kind === "STAFFPROFILE") {
+      const d = await api("/api/account/staff-profile", {
+        method: "POST",
+        body: JSON.stringify({ ...fd, profileId: form.dataset.id }),
+      });
+      state.user = d.user;
+      state.notice = "Contact card saved. It is now on the Contact page.";
       render();
     } else if (kind === "ACCOUNT") {
       const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });
