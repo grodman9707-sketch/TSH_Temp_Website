@@ -1,3 +1,5 @@
+import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats } from "./ocrParse.js";
+
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -10,6 +12,9 @@ const state = {
   error: "",
   notice: "",
   selectedResultId: null,
+  shotDrafts: {},
+  autoScannedId: null,
+  scanningStats: false,
   signup: {
     step: 1,
     name: "",
@@ -109,7 +114,7 @@ function nDisp(v) {
   return v || v === 0 ? v : "";
 }
 function sideStat(f, side, key) {
-  const src = f.status === "played" ? f : f.extractedStats && Object.keys(f.extractedStats).length ? { ...f, ...f.extractedStats } : f;
+  const src = overlayExtractedStats(f) || f;
   if (key === "180") return nDisp(src[`${side}180`] ?? src[`${side}OneEighties`]);
   return nDisp(src[`${side}${key}`]);
 }
@@ -171,11 +176,11 @@ function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, acti
         <div class="text-xs uppercase tracking-widest text-muted">${esc(selected.leagueName)} · Week ${selected.week}</div>
         <h3 class="mt-1 font-semibold">${esc(selected.homeName)} vs ${esc(selected.awayName)}</h3>
         <p class="mt-1 text-sm text-muted">${
-          selected.extractedStats
-            ? "Stats were read from the screenshots. Check every number, correct anything that looks wrong, then save. Nothing hits the table until you verify."
+          hasNumericExtracted(selected.extractedStats)
+            ? "Stats were read from the screenshots and filled in below. Check every number, correct anything that looks wrong, then save. Nothing hits the table until you verify."
             : "Enter stats for each player from this match’s two screenshots. Saving updates the league table (1 point per leg + 2 for the win)."
         }</p>
-        ${selected.extractedStats ? `<p class="mt-2 text-xs font-bold tracking-widest gold">EXTRACTED · AWAITING YOUR VERIFY</p>` : ""}
+        ${hasNumericExtracted(selected.extractedStats) ? `<p class="mt-2 text-xs font-bold tracking-widest gold">EXTRACTED · AWAITING YOUR VERIFY</p>` : ""}
         <form class="mt-3" data-form="SCANSTATS" data-id="${selected.id}"><button type="submit" class="btn-ghost">SCAN SCREENSHOTS</button></form>
         ${matchStatsForm(selected, formKind, buttonLabel)}
         ${actions ? actions(selected) : ""}
@@ -247,85 +252,6 @@ function loadTesseract() {
   return tesseractLoader;
 }
 
-function nameHits(text, name) {
-  if (!name) return 0;
-  const t = String(text).toLowerCase();
-  const n = String(name).toLowerCase().trim();
-  if (!n) return 0;
-  if (t.includes(n)) return 3;
-  return n.split(/\s+/).filter((p) => p.length > 2 && t.includes(p)).length;
-}
-
-function firstNum(text, re) {
-  const m = String(text).match(re);
-  return m ? Number(m[1]) : null;
-}
-
-function parsePlayerBlock(text) {
-  const t = String(text);
-  return {
-    Legs: firstNum(t, /(?:legs?\s*(?:won)?|score)\s*[:.]?\s*(\d{1,2})/i),
-    Avg: firstNum(t, /(?:3[\s-]?d(?:art)?\s*a(?:verage)?|3da|average|avg)\s*[:.]?\s*(\d{1,3}(?:\.\d{1,2})?)/i),
-    Checkout: firstNum(t, /(?:highest\s*)?(?:co|checkout|check\s*out)\s*[:.]?\s*(\d{1,3})/i),
-    BestLeg: firstNum(t, /(?:best\s*leg|fewest\s*darts)\s*[:.]?\s*(\d{1,3})/i),
-    60: firstNum(t, /(?:60\+|60\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    80: firstNum(t, /(?:80\+|80\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    100: firstNum(t, /(?:100\+|100\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    120: firstNum(t, /(?:120\+|120\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    140: firstNum(t, /(?:140\+|140\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    160: firstNum(t, /(?:160\+|160\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    180: firstNum(t, /(?:180s?|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
-  };
-}
-
-function parseDartCounterText(text, homeName, awayName) {
-  const raw = String(text || "").replace(/\u00a0/g, " ");
-  const stats = {};
-  const score = raw.match(/\b([0-5])\s*[-–:]\s*([0-5])\b/);
-  if (score) {
-    const a = Number(score[1]);
-    const b = Number(score[2]);
-    const before = raw.slice(0, score.index).toLowerCase();
-    const homeFirst = nameHits(before, homeName) >= nameHits(before, awayName);
-    stats.homeLegs = homeFirst ? a : b;
-    stats.awayLegs = homeFirst ? b : a;
-  }
-  const mid = Math.floor(raw.length / 2);
-  const homeIdx = raw.toLowerCase().indexOf(String(homeName || "").toLowerCase());
-  const awayIdx = raw.toLowerCase().indexOf(String(awayName || "").toLowerCase());
-  let homeBlock = raw.slice(0, mid);
-  let awayBlock = raw.slice(mid);
-  if (homeIdx >= 0 && awayIdx >= 0 && homeIdx !== awayIdx) {
-    if (homeIdx < awayIdx) {
-      homeBlock = raw.slice(homeIdx, awayIdx);
-      awayBlock = raw.slice(awayIdx);
-    } else {
-      awayBlock = raw.slice(awayIdx, homeIdx);
-      homeBlock = raw.slice(homeIdx);
-    }
-  } else if (nameHits(raw.slice(0, mid), awayName) > nameHits(raw.slice(0, mid), homeName)) {
-    homeBlock = raw.slice(mid);
-    awayBlock = raw.slice(0, mid);
-  }
-  const home = parsePlayerBlock(homeBlock);
-  const away = parsePlayerBlock(awayBlock);
-  const both = parsePlayerBlock(raw);
-  const assign = (side, parsed, fallback) => {
-    for (const [key, val] of Object.entries(parsed)) {
-      const field = `${side}${key}`;
-      const v = val != null ? val : fallback[key];
-      if (v == null || Number.isNaN(v)) continue;
-      if (stats[field] == null) stats[field] = v;
-    }
-  };
-  assign("home", home, both);
-  assign("away", away, both);
-  if (stats.home180 != null) stats.homeOneEighties = stats.home180;
-  if (stats.away180 != null) stats.awayOneEighties = stats.away180;
-  stats.rawText = raw.slice(0, 2500);
-  return stats;
-}
-
 async function ocrImage(src) {
   const Tesseract = await loadTesseract();
   const worker = await Tesseract.createWorker("eng");
@@ -339,8 +265,10 @@ async function ocrImage(src) {
 
 async function ocrFixtureStats(fixture, extraSrcs = []) {
   const srcs = [...extraSrcs];
-  if (fixture.screenshot1) srcs.push(screenshotUrl(fixture.id, 1));
-  if (fixture.screenshot2) srcs.push(screenshotUrl(fixture.id, 2));
+  if (!srcs.length) {
+    if (fixture.screenshot1) srcs.push(screenshotUrl(fixture.id, 1));
+    if (fixture.screenshot2) srcs.push(screenshotUrl(fixture.id, 2));
+  }
   const unique = [...new Set(srcs.filter(Boolean))];
   if (!unique.length) return null;
   const texts = [];
@@ -355,9 +283,14 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
     console.warn("[ocr] no text was recognized from the screenshot(s) — the reader may be blocked, or the image is too low quality.");
     return null;
   }
-  const merged = parseDartCounterText(texts.join("\n\n"), fixture.homeName, fixture.awayName);
+  const merged = mergeOcrStats(texts, fixture.homeName, fixture.awayName, {
+    homeDartcounterName: fixture.homeDartcounterName,
+    awayDartcounterName: fixture.awayDartcounterName,
+    homeNickname: fixture.homeNickname,
+    awayNickname: fixture.awayNickname,
+  });
   const keys = Object.keys(merged).filter((k) => k !== "rawText");
-  if (!keys.length) {
+  if (!keys.length || !hasNumericExtracted(merged)) {
     console.warn("[ocr] read text but found no recognizable stats. Raw text:", texts.join("\n\n").slice(0, 500));
     return null;
   }
@@ -367,7 +300,73 @@ function fixtureStatus(f) {
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
   if (f.status === "submitted" || f.hasBothScreenshots) return `<div class="text-xs font-bold tracking-widest gold">${f.extractedPending ? "STATS TO VERIFY" : "AWAITING ADMIN"}</div>`;
   if (f.screenshotCount) return `<div class="text-xs font-bold tracking-widest gold">${f.screenshotCount}/2 SCREENSHOTS</div>`;
-  return `<div class="text-xs font-bold tracking-widest text-red-500">${f.scheduleStatus === "agreed" ? "AGREED" : f.scheduleStatus === "proposed" ? "TIME PROPOSED" : "SCHEDULED"}</div>`;
+  if (f.scheduleStatus === "agreed") return `<div class="text-xs font-bold tracking-widest gold">TIME AGREED</div>`;
+  if (f.scheduleStatus === "proposed") return `<div class="text-xs font-bold tracking-widest text-red-500">WAITING ON VISITOR</div>`;
+  return `<div class="text-xs font-bold tracking-widest text-red-500">AWAITING HOME TIME</div>`;
+}
+function isHomePlayer(f, u = state.user) {
+  return Boolean(u && f && Number(f.homeId) === Number(u.id));
+}
+function isAwayPlayer(f, u = state.user) {
+  return Boolean(u && f && Number(f.awayId) === Number(u.id));
+}
+function shotDraftFor(id) {
+  return state.shotDrafts?.[id] || {};
+}
+function screenshotUploader(f) {
+  if (f.status === "played") return fixtureStatus(f);
+  if (f.scheduleStatus !== "agreed") {
+    return `<div class="text-right space-y-1">
+      <div class="text-xs font-bold tracking-widest text-muted">${f.scheduleStatus === "proposed" ? "WAITING FOR VISITOR TO ACCEPT" : "WAITING FOR HOME TO PROPOSE"}</div>
+      <div class="text-xs text-muted">Screenshots unlock after the visiting player accepts the time.</div>
+    </div>`;
+  }
+  if (f.hasBothScreenshots) {
+    return `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">${
+      hasNumericExtracted(f.extractedStats) ? "Stats extracted, awaiting admin verify." : "Waiting on admin to verify each player’s stats."
+    }</div></div>`;
+  }
+  const draft = shotDraftFor(f.id);
+  const preview = (slot) =>
+    draft[slot]
+      ? `<img class="result-shot mt-2" src="${draft[slot]}" alt="Preview of screenshot ${slot}">`
+      : `<div class="shot-empty mt-2">No photo chosen yet</div>`;
+  const ready = Boolean(draft[1] && draft[2]);
+  return `<form class="space-y-3" data-form="UPLOADBOTH" data-id="${f.id}">
+    <p class="text-xs text-muted">Choose both DartCounter screenshots, check the previews, then submit them together.</p>
+    <label class="shot-card block">
+      <div class="text-[11px] font-bold tracking-widest text-muted">SCREENSHOT 1 OF 2</div>
+      <input class="mt-2" type="file" name="screenshot1" accept="image/png,image/jpeg,image/webp" data-draft-slot="1" data-draft-id="${f.id}">
+      ${preview(1)}
+    </label>
+    <label class="shot-card block">
+      <div class="text-[11px] font-bold tracking-widest text-muted">SCREENSHOT 2 OF 2</div>
+      <input class="mt-2" type="file" name="screenshot2" accept="image/png,image/jpeg,image/webp" data-draft-slot="2" data-draft-id="${f.id}">
+      ${preview(2)}
+    </label>
+    <button class="btn-gold w-full" ${ready ? "" : "disabled"}>${ready ? "SUBMIT SCREENSHOTS" : "CHOOSE BOTH PHOTOS TO SUBMIT"}</button>
+  </form>`;
+}
+function scheduleActions(f) {
+  if (!inThisMatch(f) || f.status === "played" || f.hasBothScreenshots || f.status === "submitted") return "";
+  const home = isHomePlayer(f);
+  const away = isAwayPlayer(f);
+  const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
+  let bits = "";
+  if (home) {
+    bits += `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
+      <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
+        <input name="datetime" type="datetime-local" required value="${esc(toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
+      </label>
+      <button class="btn-gold">${proposed ? "RE-PROPOSE" : "PROPOSE"}</button>
+    </form>`;
+    if (proposed) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
+  } else if (away && proposed) {
+    bits += `<form class="mt-3" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`;
+  } else if (away && f.scheduleStatus !== "agreed") {
+    bits += `<div class="mt-3 text-xs text-muted">Waiting for ${esc(f.homeName || "the home player")} to propose a date and time.</div>`;
+  }
+  return bits;
 }
 function fixtureWhen(f) {
   const bits = [`Week ${f.week}`];
@@ -468,6 +467,39 @@ function go(path) {
   state.error = "";
   state.notice = "";
   render();
+}
+
+async function queueAdminScan() {
+  const id = state._pendingScanId;
+  if (!id || state.scanningStats || state.autoScannedId === id) return;
+  state._pendingScanId = null;
+  state.autoScannedId = id;
+  state.scanningStats = true;
+  state.selectedResultId = id;
+  state.notice = "Scanning screenshots…";
+  render();
+  try {
+    const overview = await api("/api/admin/overview");
+    const fixture = overview.fixtures.find((f) => f.id === Number(id));
+    if (!fixture) throw new Error("Fixture not found");
+    if (hasNumericExtracted(fixture.extractedStats)) {
+      state.notice = "Stats were read from the screenshots. Check every number, then verify.";
+      return;
+    }
+    const extracted = await ocrFixtureStats(fixture);
+    if (!extracted) {
+      state.notice = "Could not auto-read numbers from those screenshots. Enter the stats by hand, or tap Scan Screenshots.";
+      return;
+    }
+    await api(`/api/my-fixtures/${id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+    state.notice = "Stats extracted from the screenshots and filled in below. Check every number, then verify to add them to the table.";
+  } catch (err) {
+    state.notice = "";
+    state.error = err.message || "Could not scan screenshots";
+  } finally {
+    state.scanningStats = false;
+    render();
+  }
 }
 window.addEventListener("popstate", () => {
   state.path = location.pathname;
@@ -736,8 +768,8 @@ async function pageLeague(slug, id) {
                       const mine = inThisMatch(f);
                       const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
                       const proposalLine = proposed
-                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(scheduleWhen(f))}${
-                            mine && Number(f.proposedBy) !== Number(state.user?.id) ? " · waiting on you" : mine ? " · waiting on opponent" : ""
+                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
+                            isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
                           }</div>`
                         : f.scheduleStatus === "agreed"
                           ? `<div class="mt-1 text-xs gold">Agreed: ${esc(scheduleWhen(f))}</div>`
@@ -745,20 +777,12 @@ async function pageLeague(slug, id) {
                       const actions =
                         mine && f.status !== "played"
                           ? `<div class="mt-3 flex flex-wrap items-end gap-2">
-                              <form class="flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
-                                <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
-                                  <input name="datetime" type="datetime-local" required value="${esc(
-                                    toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time)
-                                  )}">
-                                </label>
-                                <button class="btn-gold">PROPOSE</button>
-                              </form>
+                              ${scheduleActions(f)}
                               ${
-                                proposed && Number(f.proposedBy) !== Number(state.user?.id)
-                                  ? `<form data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`
+                                f.scheduleStatus === "agreed" && !f.hasBothScreenshots && f.status !== "submitted"
+                                  ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>`
                                   : ""
                               }
-                              <a href="/my-matches?fixture=${f.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>
                             </div>`
                           : !state.user && f.status !== "played"
                             ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT SCREENSHOTS</a></div>`
@@ -940,7 +964,11 @@ async function pageDashboard() {
           next
             ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
                <div class="mt-3 flex flex-wrap gap-2">
-                 <a href="/my-matches?fixture=${next.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>
+                 ${
+                   next.scheduleStatus === "agreed" && !next.hasBothScreenshots
+                     ? `<a href="/my-matches?fixture=${next.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>`
+                     : `<a href="/my-matches?fixture=${next.id}" class="btn-gold">OPEN MATCH</a>`
+                 }
                </div>`
             : ""
         }`)}
@@ -1000,55 +1028,25 @@ async function pageMyMatches() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="text-3xl font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">Play on DartCounter. Upload both match screenshots (2). The site will try to read the stats; a division admin verifies them before they count.</p>
+      <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, upload both DartCounter screenshots together. The site will try to read the stats; a division admin verifies them before they count.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       <div class="mt-6 space-y-3">
         ${d.fixtures
           .map((f) => {
-            let action = fixtureStatus(f);
-            if (f.status !== "played") {
-              const slots = [1, 2].filter((slot) => !(slot === 1 ? f.screenshot1 : f.screenshot2));
-              if (slots.length) {
-                action = `<div class="space-y-2">${slots
-                  .map(
-                    (slot) => `<form class="space-y-2" data-form="UPLOAD" data-id="${f.id}" data-slot="${slot}">
-                      <div class="text-[11px] font-bold tracking-widest text-muted">SCREENSHOT ${slot} OF 2</div>
-                      <input type="file" name="screenshot" accept="image/png,image/jpeg,image/webp" required>
-                      <button class="btn-gold w-full">UPLOAD SCREENSHOT ${slot}</button>
-                    </form>`
-                  )
-                  .join("")}</div>`;
-              } else {
-                action = `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">Waiting on admin to enter each player’s stats.</div></div>`;
-              }
-            }
-            return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_220px] md:items-center ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
+            const action = screenshotUploader(f);
+            return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_260px] md:items-start ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · ${esc(fixtureWhen(f))}</div>
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
-                <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded${f.extractedStats ? " · stats extracted, awaiting admin verify" : ""}</div>
+                <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded${hasNumericExtracted(f.extractedStats) ? " · stats extracted, awaiting admin verify" : ""}</div>
                 ${
                   f.scheduleStatus === "proposed"
-                    ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Opponent")} proposed ${esc(scheduleWhen(f))}</div>`
+                    ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${isAwayPlayer(f) ? " · waiting on you" : isHomePlayer(f) ? " · waiting on the visitor" : ""}</div>`
                     : f.scheduleStatus === "agreed"
                       ? `<div class="mt-1 text-xs gold">Agreed kickoff ${esc(scheduleWhen(f))}</div>`
-                      : ""
+                      : `<div class="mt-1 text-xs text-muted">Home player still needs to propose a date and time.</div>`
                 }
-                ${
-                  f.status !== "played"
-                    ? `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
-                        <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
-                          <input name="datetime" type="datetime-local" required value="${esc(toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
-                        </label>
-                        <button class="btn-gold">PROPOSE</button>
-                      </form>`
-                    : ""
-                }
-                ${
-                  f.scheduleStatus === "proposed" && Number(f.proposedBy) !== Number(state.user?.id) && f.status !== "played"
-                    ? `<form class="mt-2" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`
-                    : ""
-                }
+                ${scheduleActions(f)}
                 </div>
                 ${action}
               </div>`);
@@ -1089,10 +1087,12 @@ function pageRules() {
           <li>1 point per leg won, plus 2 extra points for the match win.</li>
           <li>Example: win 5–3 and you score 7 points; your opponent scores 3.</li>
         </ul>
-        <h2 class="text-lg font-bold text-white">Results</h2>
-        <p>Either player from the fixture uploads both DartCounter screenshots (2). The site tries to read the stats; a division admin verifies them before they are added to the table.</p>
         <h2 class="text-lg font-bold text-white">Scheduling</h2>
-        <p>Propose a date and time on the Fixtures tab, then play on DartCounter. Use Submit Screenshots on that same fixture. A person can hold more than one staff role — for example Division Admin and Head Admin together. Each division lists its Division Admin as The Admin for player issues. A Head Admin can override a confirmed result; owners assign those roles.</p>
+        <p>The home player proposes a date and time on the Fixtures tab or My Matches. The visiting player must accept that time before either player can upload screenshots.</p>
+        <h2 class="text-lg font-bold text-white">Results</h2>
+        <p>After the time is agreed, either player uploads both DartCounter screenshots together (you’ll see a preview of each photo before submitting). The site tries to read the stats into the admin form; a division admin checks or corrects them before they are added to the table.</p>
+        <h2 class="text-lg font-bold text-white">Staff</h2>
+        <p>A person can hold more than one staff role — for example Division Admin and Head Admin together. Each division lists its Division Admin as The Admin for player issues. A Head Admin can override a confirmed result; owners assign those roles.</p>
       </div>
     `)}</div>`,
     { arena: true }
@@ -1134,6 +1134,10 @@ async function pageAdmin() {
   };
   const pending = d.applications;
   const review = d.fixtures.filter((f) => f.status === "submitted" || f.hasBothScreenshots);
+  const selectedReview = review.find((f) => f.id === Number(state.selectedResultId)) || review[0];
+  if (selectedReview && selectedReview.hasBothScreenshots && !hasNumericExtracted(selectedReview.extractedStats)) {
+    state._pendingScanId = selectedReview.id;
+  }
   const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const ownerSection = d.isOwner
@@ -1457,6 +1461,7 @@ async function render() {
       const el = document.getElementById(`fixture-${fixtureId}`);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
+    if (route[0] === "admin") queueAdminScan();
   } catch (err) {
     app.innerHTML = layout(`<div class="px-6 py-20 text-center"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
   }
@@ -1530,6 +1535,30 @@ document.addEventListener("input", (e) => {
   }
 });
 
+document.addEventListener("change", async (e) => {
+  const input = e.target.closest("input[data-draft-slot]");
+  if (!input || input.type !== "file") return;
+  const file = input.files?.[0];
+  const id = Number(input.dataset.draftId);
+  const slot = Number(input.dataset.draftSlot);
+  if (!id || !(slot === 1 || slot === 2)) return;
+  if (!state.shotDrafts) state.shotDrafts = {};
+  if (!file) {
+    state.shotDrafts[id] = { ...(state.shotDrafts[id] || {}), [slot]: null };
+    render();
+    return;
+  }
+  try {
+    const image = await fileToDataUrl(file);
+    state.shotDrafts[id] = { ...(state.shotDrafts[id] || {}), [slot]: image };
+    state.error = "";
+    render();
+  } catch (err) {
+    state.error = err.message || "Could not read that photo";
+    render();
+  }
+});
+
 document.addEventListener("submit", async (e) => {
   const form = e.target.closest("form[data-form]");
   if (!form) return;
@@ -1583,27 +1612,26 @@ document.addEventListener("submit", async (e) => {
       await api("/api/apply", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Application received. An admin will place you in a division.";
       render();
-    } else if (kind === "UPLOAD") {
-      const file = form.querySelector('input[type="file"]')?.files?.[0];
-      if (!file) throw new Error("Choose a screenshot");
-      const image = await fileToDataUrl(file);
-      const d = await api(`/api/my-fixtures/${form.dataset.id}/screenshot`, { method: "POST", body: JSON.stringify({ image, slot: Number(form.dataset.slot) || undefined }) });
-      if (d.fixture?.hasBothScreenshots) {
-        state.notice = "Both screenshots uploaded. Reading stats for admin review…";
-        render();
-        try {
-          const extracted = await ocrFixtureStats(d.fixture, [image]);
-          if (extracted) {
-            await api(`/api/my-fixtures/${form.dataset.id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
-            state.notice = "Stats extracted from the screenshots. A division admin will verify them before they count.";
-          } else {
-            state.notice = "Both screenshots uploaded. Could not auto-read the stats — a division admin will enter them.";
-          }
-        } catch {
-          state.notice = "Both screenshots uploaded. A division admin will verify the stats.";
+    } else if (kind === "UPLOADBOTH" || kind === "UPLOAD") {
+      const id = form.dataset.id;
+      const draft = state.shotDrafts?.[id] || {};
+      const image1 = draft[1];
+      const image2 = draft[2];
+      if (!image1 || !image2) throw new Error("Choose both screenshots and check the previews before submitting");
+      const d = await api(`/api/my-fixtures/${id}/screenshots`, { method: "POST", body: JSON.stringify({ image1, image2 }) });
+      delete state.shotDrafts[id];
+      state.notice = "Both screenshots uploaded. Reading stats for admin review…";
+      render();
+      try {
+        const extracted = await ocrFixtureStats(d.fixture, [image1, image2]);
+        if (extracted) {
+          await api(`/api/my-fixtures/${id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+          state.notice = "Stats extracted from the screenshots. A division admin will verify them before they count.";
+        } else {
+          state.notice = "Both screenshots uploaded. Could not auto-read the stats — a division admin will enter them.";
         }
-      } else {
-        state.notice = "Screenshot uploaded. Upload the second screenshot for this match.";
+      } catch {
+        state.notice = "Both screenshots uploaded. A division admin will verify the stats.";
       }
       render();
     } else if (kind === "SCANSTATS") {
@@ -1621,11 +1649,11 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "PROPOSE") {
       await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
-      state.notice = "Date and time proposed. Your opponent sees it in their own local time.";
+      state.notice = "Date and time proposed. The visiting player must accept it before screenshots can be uploaded.";
       render();
     } else if (kind === "ACCEPTTIME") {
       await api(`/api/fixtures/${form.dataset.id}/accept-time`, { method: "POST", body: "{}" });
-      state.notice = "Kickoff time agreed.";
+      state.notice = "Kickoff time agreed. Either player can now upload both screenshots.";
       render();
     } else if (kind === "GENERATE") {
       const d = await api("/api/admin/fixtures/generate", { method: "POST", body: JSON.stringify(fd) });

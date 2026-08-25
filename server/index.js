@@ -7,6 +7,7 @@ import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
+import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -548,13 +549,19 @@ function withNames(db, f) {
     screenshot2ByName: shotByName(db, f.screenshot2By),
     screenshotByName: shotByName(db, f.screenshot1By || f.screenshot2By || f.screenshotBy),
     proposedByName: shotByName(db, f.proposedBy),
+    homeDartcounterName: db.users.find((u) => u.id === f.homeId)?.dartcounterName || "",
+    awayDartcounterName: db.users.find((u) => u.id === f.awayId)?.dartcounterName || "",
+    homeNickname: db.users.find((u) => u.id === f.homeId)?.nickname || "",
+    awayNickname: db.users.find((u) => u.id === f.awayId)?.nickname || "",
     when: fixtureScheduleLabel(f),
-    extractedPending: Boolean(f.extractedStats && f.status !== "played"),
+    extractedPending: Boolean(hasNumericExtracted(f.extractedStats) && f.status !== "played"),
+    scheduleAgreed: f.scheduleStatus === "agreed",
+    canUploadScreenshots: f.scheduleStatus === "agreed" && f.status !== "played" && shotCount(f) < 2,
   };
   delete named.screenshotFile;
   delete named.screenshot1File;
   delete named.screenshot2File;
-  return named;
+  return overlayExtractedStats(named);
 }
 
 function newFixture(partial) {
@@ -593,34 +600,6 @@ function newFixture(partial) {
   };
 }
 
-const EXTRACT_STAT_FIELDS = [
-  "homeLegs",
-  "awayLegs",
-  "homeAvg",
-  "awayAvg",
-  "homeCheckout",
-  "awayCheckout",
-  "homeBestLeg",
-  "awayBestLeg",
-  "topCheckout",
-  "home60",
-  "away60",
-  "home80",
-  "away80",
-  "home100",
-  "away100",
-  "home120",
-  "away120",
-  "home140",
-  "away140",
-  "home160",
-  "away160",
-  "home180",
-  "away180",
-  "homeOneEighties",
-  "awayOneEighties",
-];
-
 function pickExtractedStats(body) {
   const out = {};
   for (const key of EXTRACT_STAT_FIELDS) {
@@ -633,7 +612,34 @@ function pickExtractedStats(body) {
   if (out.awayOneEighties != null && out.away180 == null) out.away180 = out.awayOneEighties;
   if (body.notes) out.notes = String(body.notes).slice(0, 400);
   if (body.rawText) out.rawText = String(body.rawText).slice(0, 4000);
+  if (!hasNumericExtracted(out)) return {};
   return out;
+}
+
+function screenshotUploadError(fixture) {
+  if (fixture.status === "played") return "This match is already confirmed";
+  if (fixture.scheduleStatus !== "agreed") {
+    return "The visiting player must accept the home player's proposed date and time before screenshots can be uploaded";
+  }
+  return null;
+}
+
+function applyScreenshotSlot(fixture, user, dataUrl, slot) {
+  const filename = saveDataUrlImage(dataUrl, `fixture-${fixture.id}-${slot}`);
+  const now = new Date().toISOString();
+  if (Number(slot) === 2) {
+    fixture.screenshot2File = filename;
+    fixture.screenshot2By = user.id;
+    fixture.screenshot2At = now;
+  } else {
+    fixture.screenshot1File = filename;
+    fixture.screenshot1By = user.id;
+    fixture.screenshot1At = now;
+    fixture.screenshotFile = filename;
+    fixture.screenshotBy = user.id;
+    fixture.screenshotAt = now;
+  }
+  return filename;
 }
 
 function saveDataUrlImage(dataUrl, destBase, maxBytes = 5 * 1024 * 1024) {
@@ -745,7 +751,7 @@ async function readBody(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 12 * 1024 * 1024) {
+    if (size > 18 * 1024 * 1024) {
       const err = new Error("Upload too large");
       err.status = 413;
       throw err;
@@ -1068,28 +1074,50 @@ async function handleApi(req, res, url) {
     const fixture = db.fixtures.find((f) => f.id === Number(screenshotPost[1]));
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
-    if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
+    const blocked = screenshotUploadError(fixture);
+    if (blocked) return json(res, 400, { ok: false, error: blocked });
     const requested = Number(body.slot);
     const slot = requested === 1 || requested === 2 ? requested : shotFile(fixture, 1) ? 2 : 1;
     if (shotFile(fixture, slot)) return json(res, 400, { ok: false, error: `Screenshot ${slot} is already uploaded` });
     try {
-      const filename = saveDataUrlImage(body.image, `fixture-${fixture.id}-${slot}`);
-      if (slot === 2) {
-        fixture.screenshot2File = filename;
-        fixture.screenshot2By = user.id;
-        fixture.screenshot2At = new Date().toISOString();
-      } else {
-        fixture.screenshot1File = filename;
-        fixture.screenshot1By = user.id;
-        fixture.screenshot1At = new Date().toISOString();
-        fixture.screenshotFile = filename;
-        fixture.screenshotBy = user.id;
-        fixture.screenshotAt = fixture.screenshot1At;
-      }
+      applyScreenshotSlot(fixture, user, body.image, slot);
     } catch (err) {
       return json(res, err.status || 400, { ok: false, error: err.message });
     }
     if (shotCount(fixture) >= 2) fixture.status = "submitted";
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  const screenshotsPost = p.match(/^\/api\/my-fixtures\/(\d+)\/screenshots$/);
+  if (method === "POST" && screenshotsPost) {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const fixture = db.fixtures.find((f) => f.id === Number(screenshotsPost[1]));
+    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    const blocked = screenshotUploadError(fixture);
+    if (blocked) return json(res, 400, { ok: false, error: blocked });
+    if (shotCount(fixture) >= 2) return json(res, 400, { ok: false, error: "Both screenshots are already uploaded" });
+    if (shotCount(fixture) > 0) return json(res, 400, { ok: false, error: "This match already has a screenshot. Submit both together on a fresh match." });
+    if (!body.image1 || !body.image2) return json(res, 400, { ok: false, error: "Upload both match screenshots before submitting" });
+    const saved = [];
+    try {
+      saved.push(applyScreenshotSlot(fixture, user, body.image1, 1));
+      saved.push(applyScreenshotSlot(fixture, user, body.image2, 2));
+    } catch (err) {
+      for (const filename of saved) removeUpload(filename);
+      fixture.screenshot1File = null;
+      fixture.screenshot1By = null;
+      fixture.screenshot1At = null;
+      fixture.screenshot2File = null;
+      fixture.screenshot2By = null;
+      fixture.screenshot2At = null;
+      fixture.screenshotFile = null;
+      fixture.screenshotBy = null;
+      fixture.screenshotAt = null;
+      return json(res, err.status || 400, { ok: false, error: err.message });
+    }
+    fixture.status = "submitted";
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -1120,7 +1148,11 @@ async function handleApi(req, res, url) {
     const fixture = db.fixtures.find((f) => f.id === Number(proposeMatch[1]));
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    if (fixture.homeId !== user.id) return json(res, 403, { ok: false, error: "Only the home player can propose a date and time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
+    if (shotCount(fixture) > 0 || fixture.status === "submitted") {
+      return json(res, 400, { ok: false, error: "Screenshots are already in — the kickoff time cannot be changed" });
+    }
     const raw = String(body.datetime || `${body.date || ""}T${body.time || ""}`);
     const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
     if (!m) return json(res, 400, { ok: false, error: "Choose a date and time" });
@@ -1137,6 +1169,7 @@ async function handleApi(req, res, url) {
     fixture.proposedTz = tz;
     fixture.startAt = startAt ? startAt.toISOString() : null;
     fixture.scheduleStatus = "proposed";
+    fixture.agreedAt = null;
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -1147,12 +1180,13 @@ async function handleApi(req, res, url) {
     const fixture = db.fixtures.find((f) => f.id === Number(acceptTime[1]));
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    if (fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Only the visiting player can accept the proposed time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
     if (!fixture.proposedDate || !fixture.proposedTime || !fixture.proposedBy) {
       return json(res, 400, { ok: false, error: "No time has been proposed yet" });
     }
     if (Number(fixture.proposedBy) === user.id) {
-      return json(res, 400, { ok: false, error: "Your opponent needs to accept this time" });
+      return json(res, 400, { ok: false, error: "The home player proposed this time — you need to accept it" });
     }
     fixture.date = fixture.proposedDate;
     fixture.time = fixture.proposedTime;
