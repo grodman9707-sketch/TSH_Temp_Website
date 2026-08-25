@@ -1,5 +1,5 @@
 const WIKI_UA =
-  "TSHDartsLeague/1.0 (https://github.com/grodman9707-sketch/TSH_Temp_Website; worlddartsleagueinfo@gmail.com)";
+  "TSHDartsLeague/1.0 (https://github.com/grodman9707-sketch/TSH_Temp_Website; thesocialhubinformation@gmail.com)";
 const WIKI_API = "https://en.wikipedia.org/w/api.php";
 const CACHE_MS = 5 * 60 * 1000;
 const MONTHS = {

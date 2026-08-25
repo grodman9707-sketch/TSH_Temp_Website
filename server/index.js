@@ -32,6 +32,8 @@ const uploadsDir = path.join(dataDir, "uploads");
 const publicDir = path.join(root, "public");
 const MAX_OWNERS = 3;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
+const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
+const LEGACY_CONTACT_EMAIL = "worlddartsleagueinfo@gmail.com";
 const MOCK_EMAILS = new Set([
   "admin@tshdarts.com",
   "alex@tshdarts.com",
@@ -390,6 +392,45 @@ function migrate(db) {
   if (Array.isArray(db.content?.premium) && db.content.premium.length) {
     db.content.premium = [];
     changed = true;
+  }
+  if (db.league) {
+    if ("formerly" in db.league) {
+      delete db.league.formerly;
+      changed = true;
+    }
+    if (!db.league.email || String(db.league.email).toLowerCase() === LEGACY_CONTACT_EMAIL) {
+      db.league.email = LEAGUE_CONTACT_EMAIL;
+      changed = true;
+    }
+  }
+  if (Array.isArray(db.content?.faq)) {
+    for (const item of db.content.faq) {
+      const beforeA = item.a;
+      if (typeof item.a === "string") {
+        item.a = item.a
+          .replace(/\s*[—–-]\s*formerly World Darts League \(WDL\)\.?/gi, ".")
+          .replace(/\s*\(formerly World Darts League(?: \(WDL\))?\)/gi, "")
+          .replace(/\bformerly World Darts League(?: \(WDL\))?\b/gi, "")
+          .replace(/\bWorld Darts League(?: \(WDL\))?\b/gi, "The Social Hub Darts League")
+          .replace(/\bWDL\b/g, "TSH Darts League")
+          .replace(/\s{2,}/g, " ")
+          .replace(/\s+\./g, ".")
+          .trim();
+      }
+      if (item.a !== beforeA) changed = true;
+    }
+  }
+  if (Array.isArray(db.announcements)) {
+    for (const item of db.announcements) {
+      const mentionsLegacy =
+        /World Darts League|\bWDL\b|worlddartsleagueinfo/i.test(`${item.title || ""} ${item.body || ""}`);
+      if (item.title === "WDL is now TSH Darts League" || mentionsLegacy) {
+        item.title = "Welcome to TSH Darts League";
+        item.body =
+          "The Social Hub Darts League is open for competitive online play. Same competition, same community.";
+        changed = true;
+      }
+    }
   }
   for (const f of db.fixtures) {
     if (!("screenshot1File" in f)) {

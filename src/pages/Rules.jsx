@@ -7,7 +7,7 @@ export function Rules() {
         <p className="text-xs font-semibold tracking-[0.3em] text-primary">TSH DARTS LEAGUE</p>
         <h1 className="mt-2 text-4xl font-extrabold">Rules</h1>
         <div className="mt-6 space-y-4 text-sm leading-relaxed text-white/80">
-          <p>The Social Hub Darts League (formerly World Darts League) is a competitive online league played on DartCounter.</p>
+          <p>The Social Hub Darts League is a competitive online league played on DartCounter.</p>
           <h2 className="text-lg font-bold text-white">Format</h2>
           <ul className="list-disc space-y-1 pl-5">
             <li>501, double out.</li>
