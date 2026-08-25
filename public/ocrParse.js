@@ -84,6 +84,17 @@ function nextNumbers(str, count = 2) {
   return nums;
 }
 
+function numbersOnNextValueLine(after) {
+  const lines = String(after || "")
+    .split(/\n/)
+    .map((l) => l.trim());
+  // Remainder of the label's own line, otherwise the next non-empty line.
+  const sameLine = lines[0] || "";
+  if (nextNumbers(sameLine, 1).length) return nextNumbers(sameLine, 2);
+  const next = lines.find((l, i) => i > 0 && l);
+  return next ? nextNumbers(next, 2) : [];
+}
+
 export function parsePlayerBlock(text) {
   const t = String(text);
   return {
@@ -106,8 +117,8 @@ function applyLabelPairs(text, stats, homeFirst) {
   for (const spec of LABEL_SPECS) {
     const m = spec.re.exec(raw);
     if (!m) continue;
-    const after = raw.slice(m.index + m[0].length, m.index + m[0].length + 80);
-    const nums = nextNumbers(after, 2);
+    const after = raw.slice(m.index + m[0].length, m.index + m[0].length + 120);
+    const nums = numbersOnNextValueLine(after);
     if (!nums.length) continue;
     if (spec.key === "Avg") {
       // First-9 averages sit near "average" on some screens — skip implausible 3DA values.
@@ -207,10 +218,11 @@ export function parseDartCounterText(text, homeName, awayName, extra = {}) {
   return stats;
 }
 
-function assignSideFromBlock(out, side, block) {
+function assignSideFromBlock(out, side, block, overwrite = false) {
   for (const key of STAT_KEYS) {
     const field = `${side}${key}`;
-    if (out[field] == null && block[key] != null && !Number.isNaN(block[key])) out[field] = block[key];
+    if (block[key] == null || Number.isNaN(block[key])) continue;
+    if (overwrite || out[field] == null) out[field] = block[key];
   }
 }
 
@@ -227,20 +239,20 @@ export function mergeOcrStats(texts, homeName, awayName, extra = {}) {
     const parsed = parseDartCounterText(chunk, homeName, awayName, extra);
     const block = parsePlayerBlock(chunk);
     if (homeScore > awayScore) {
-      assignSideFromBlock(out, "home", block);
-      if (parsed.homeLegs != null && out.homeLegs == null) out.homeLegs = parsed.homeLegs;
+      assignSideFromBlock(out, "home", block, true);
+      if (parsed.homeLegs != null) out.homeLegs = parsed.homeLegs;
       if (parsed.awayLegs != null && out.awayLegs == null) out.awayLegs = parsed.awayLegs;
       for (const key of STAT_KEYS) {
         const field = `home${key}`;
-        if (out[field] == null && parsed[field] != null) out[field] = parsed[field];
+        if (parsed[field] != null) out[field] = parsed[field];
       }
     } else if (awayScore > homeScore) {
-      assignSideFromBlock(out, "away", block);
+      assignSideFromBlock(out, "away", block, true);
+      if (parsed.awayLegs != null) out.awayLegs = parsed.awayLegs;
       if (parsed.homeLegs != null && out.homeLegs == null) out.homeLegs = parsed.homeLegs;
-      if (parsed.awayLegs != null && out.awayLegs == null) out.awayLegs = parsed.awayLegs;
       for (const key of STAT_KEYS) {
         const field = `away${key}`;
-        if (out[field] == null && parsed[field] != null) out[field] = parsed[field];
+        if (parsed[field] != null) out[field] = parsed[field];
       }
     }
   }
