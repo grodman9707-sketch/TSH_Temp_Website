@@ -79,7 +79,7 @@ export function Sidebar({ open, onClose }) {
               Sign out {user.name}
             </button>
           ) : (
-            <p>Formerly World Darts League</p>
+            <p>The Social Hub Darts League</p>
           )}
         </div>
       </aside>

@@ -656,7 +656,7 @@ function layout(inner, { arena = false, home = false } = {}) {
             )
             .join("")}
         </nav>
-        <div class="mt-auto p-4 text-xs text-muted">${state.user ? `<button class="btn-ghost w-full" data-act="logout">Sign out ${esc(state.user.name)}</button>` : "Formerly World Darts League"}</div>
+        <div class="mt-auto p-4 text-xs text-muted">${state.user ? `<button class="btn-ghost w-full" data-act="logout">Sign out ${esc(state.user.name)}</button>` : "The Social Hub Darts League"}</div>
       </aside>
       <nav class="sticky top-0 z-30 border-b border-white/10 ${home ? "bg-black/30 backdrop-blur" : "bg-background"}">
         <div class="flex h-14 items-center justify-between px-4">
@@ -718,7 +718,7 @@ async function pageHome() {
     <section class="bg-background px-6 py-20">
       <div class="mx-auto max-w-5xl text-center">
         <h2 class="text-3xl font-bold">TSH In Numbers</h2>
-        <p class="mt-3 text-muted">Formerly World Darts League. Live numbers from the current season.</p>
+        <p class="mt-3 text-muted">Live numbers from the current season.</p>
         <p class="mt-2 text-xs gold">● Live data</p>
         <div class="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
           ${[
@@ -764,8 +764,7 @@ async function pageHome() {
         <div>
           <img src="${CRESTS.main}" alt="TSH" class="mb-3" style="width:88px;height:88px;object-fit:contain">
           <h3 class="text-lg font-bold">The Social Hub Darts League</h3>
-          <p class="mt-2 text-sm text-muted">Formerly World Darts League (WDL)</p>
-          <a class="mt-3 inline-block text-sm gold" href="mailto:worlddartsleagueinfo@gmail.com">worlddartsleagueinfo@gmail.com</a>
+          <a class="mt-3 inline-block text-sm gold" href="mailto:${esc(content.league?.email || "thesocialhubinformation@gmail.com")}">${esc(content.league?.email || "thesocialhubinformation@gmail.com")}</a>
         </div>
         <div>
           <h3 class="text-lg font-bold">Join the league</h3>
@@ -1187,7 +1186,7 @@ function pageRules() {
       <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
       <h1 class="mt-2 text-4xl font-extrabold">Rules</h1>
       <div class="mt-6 space-y-4 text-sm leading-relaxed text-white/80">
-        <p>The Social Hub Darts League (formerly World Darts League) is a competitive online league played on DartCounter.</p>
+        <p>The Social Hub Darts League is a competitive online league played on DartCounter.</p>
         <h2 class="text-lg font-bold text-white">Format</h2>
         <ul class="list-disc space-y-1 pl-5">
           <li>501, double out.</li>
@@ -1208,9 +1207,11 @@ function pageRules() {
     { arena: true }
   );
 }
-function pageContact() {
+async function pageContact() {
+  const d = await api("/api/content").catch(() => ({}));
+  const email = d.league?.email || "thesocialhubinformation@gmail.com";
   return layout(
-    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold">Contact</h1><p class="mt-3 text-muted">Questions about TSH Darts League, formerly WDL.</p><a class="mt-6 inline-block gold" href="mailto:worlddartsleagueinfo@gmail.com">worlddartsleagueinfo@gmail.com</a></div>`)}</div>`,
+    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold">Contact</h1><p class="mt-3 text-muted">Questions about TSH Darts League go here.</p><a class="mt-6 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a></div>`)}</div>`,
     { arena: true }
   );
 }

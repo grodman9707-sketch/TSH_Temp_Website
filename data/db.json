@@ -2,8 +2,7 @@
   "league": {
     "name": "The Social Hub Darts League",
     "shortName": "TSH Darts League",
-    "formerly": "World Darts League (WDL)",
-    "email": "worlddartsleagueinfo@gmail.com",
+    "email": "thesocialhubinformation@gmail.com",
     "scoringApp": "DartCounter"
   },
   "content": {
@@ -12,7 +11,7 @@
     "faq": [
       {
         "q": "What is TSH Darts League?",
-        "a": "The Social Hub Darts League is a competitive online darts league — formerly World Darts League (WDL). We replicate the professional darts structure virtually. Join a division, compete on your schedule, rank up, and go down in history."
+        "a": "The Social Hub Darts League is a competitive online darts league. We replicate the professional darts structure virtually. Join a division, compete on your schedule, rank up, and go down in history."
       },
       {
         "q": "How to enter?",
@@ -145,8 +144,8 @@
   "announcements": [
     {
       "id": 1,
-      "title": "WDL is now TSH Darts League",
-      "body": "World Darts League has been rebranded as The Social Hub Darts League. Same competition, same community, new name.",
+      "title": "Welcome to TSH Darts League",
+      "body": "The Social Hub Darts League is open for competitive online play. Same competition, same community.",
       "createdAt": "2026-08-01T12:00:00.000Z"
     }
   ],

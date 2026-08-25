@@ -84,7 +84,7 @@ export function Home() {
         <div className="mx-auto max-w-5xl text-center">
           <h2 className="text-3xl font-bold">TSH In Numbers</h2>
           <p className="mt-3 text-muted-foreground">
-            Formerly World Darts League. Here are a few of the numbers that make TSH the home for competitive darts.
+            Here are a few of the numbers that make TSH the home for competitive darts.
           </p>
           <p className="mt-2 text-xs text-primary">● Live data</p>
           <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -148,9 +148,8 @@ export function Home() {
         <div className="mx-auto grid max-w-5xl gap-8 md:grid-cols-2">
           <div>
             <h3 className="text-lg font-bold">The Social Hub Darts League</h3>
-            <p className="mt-2 text-sm text-muted-foreground">Formerly World Darts League (WDL)</p>
-            <a className="mt-3 inline-block text-sm text-primary" href="mailto:worlddartsleagueinfo@gmail.com">
-              worlddartsleagueinfo@gmail.com
+            <a className="mt-3 inline-block text-sm text-primary" href="mailto:thesocialhubinformation@gmail.com">
+              thesocialhubinformation@gmail.com
             </a>
           </div>
           <div>
