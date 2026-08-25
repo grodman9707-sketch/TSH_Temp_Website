@@ -1,0 +1,860 @@
+{
+  "title": "Rules & Regulations",
+  "intro": "All participants must read, understand, and comply with these Rules & Regulations before taking part in The Social Hub Darts League.",
+  "sections": [
+    {
+      "id": "1",
+      "title": "ACCEPTANCE OF TERMS",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "All participants are required to read, understand, and comply with these Rules & Regulations prior to participation in any TSH Darts League competition."
+        },
+        {
+          "type": "p",
+          "text": "By registering and competing within TSH Darts League, each player:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Confirms acceptance of all rules contained within this document",
+            "Agrees to abide by decisions made by TSH Administration",
+            "Acknowledges that all administrative decisions are final and binding"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Failure to comply may result in disciplinary action, including removal from the league."
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "title": "PLAYER REGISTRATION & SEASON COMMITMENT",
+      "blocks": [],
+      "subsections": [
+        {
+          "id": "2.1",
+          "title": "Season Registration Agreement",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All players are considered registered for the full duration of the active season upon entry into TSH Darts League. Players agree to:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Complete the season where reasonably possible",
+                "Participate in scheduled fixtures",
+                "Remain active and responsive throughout"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2.2",
+          "title": "Withdrawal During Season",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "If a player withdraws, becomes inactive, or is removed during a season:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "A 1-season suspension may be applied",
+                "This applies to future TSH competitions"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "This rule exists to protect league integrity and prevent disruption."
+            }
+          ]
+        },
+        {
+          "id": "2.3",
+          "title": "Premium Protection System",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players with active TSH Premium status are exempt from seasonal suspension resulting from withdrawal or inactivity. Premium players:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Will not receive a 1-season suspension for leaving or inactivity",
+                "May re-enter future competitions without restriction",
+                "Retain eligibility for immediate participation"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "However, Premium does NOT exempt players from cheating bans, match fixing penalties, misconduct sanctions, or administrative disciplinary action. These remain fully enforceable regardless of status."
+            }
+          ]
+        },
+        {
+          "id": "2.4",
+          "title": "Administrative Authority",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "TSH Administration reserves full discretion to:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Determine inactivity status",
+                "Apply or waive suspension",
+                "Review exceptional cases",
+                "Prevent abuse of the Premium system"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "All decisions are final."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "title": "PLAYER VERIFICATION (DARTCOUNTER)",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "All players must link a correct DartCounter ID to their TSH profile. Failure to comply will result in:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "A disciplinary strike",
+            "Possible suspension until resolved"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Players are responsible for ensuring all account information is accurate."
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "title": "FIXTURES & SCHEDULING",
+      "blocks": [],
+      "subsections": [
+        {
+          "id": "4.1",
+          "title": "Fixture Publication",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All fixtures are published and managed exclusively via the official TSH website."
+            }
+          ]
+        },
+        {
+          "id": "4.2",
+          "title": "Player Responsibility",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Both players share equal responsibility for arranging a mutually suitable fixture date and time within the designated match window (Sunday to Sunday). Players are required to:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Utilise official league communication channels",
+                "Demonstrate reasonable and genuine efforts to complete fixtures within the allocated timeframe"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "4.3",
+          "title": "Fixture Confirmation (Mandatory Requirement)",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "A fixture shall only be deemed valid once formally confirmed via the TSH website:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "The Home player must submit the fixture proposal",
+                "The Away player must accept the proposal"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "Fixtures not confirmed through the official platform will not be recognised under any circumstances."
+            }
+          ]
+        },
+        {
+          "id": "4.4",
+          "title": "Failure to Engage",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Where a player can demonstrate reasonable and documented attempts to arrange a fixture, and the opposing player fails to respond or cooperate, TSH Administration reserves the right to award the match outcome accordingly."
+            }
+          ]
+        },
+        {
+          "id": "4.5",
+          "title": "Fixture Extensions",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Fixture extensions may be granted solely at the discretion of TSH Administration under exceptional circumstances."
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Maximum extension: 7 days",
+                "Requests must be submitted prior to the original deadline",
+                "Approval is not guaranteed"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "4.6",
+          "title": "Match Scheduling Commitment",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Once a match is scheduled, both players are expected to honour the agreed time and be ready to play. Players should only schedule matches when they are confident they can attend."
+            }
+          ]
+        },
+        {
+          "id": "4.7",
+          "title": "Cancellation Notice Requirement",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players must provide at least 1 hour's notice if they need to cancel or request a reschedule."
+            },
+            {
+              "type": "p",
+              "text": "Failure to do so may result in penalties."
+            }
+          ]
+        },
+        {
+          "id": "4.8",
+          "title": "Late Cancellations (Under 1 Hour)",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "If a player cancels or fails to show up within 1 hour of the scheduled match time:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "The match may be recorded as a forfeit loss",
+                "The opponent may be awarded a default win",
+                "Rescheduling is only allowed at staff discretion"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "Repeated late cancellations will result in stricter punishment."
+            }
+          ]
+        },
+        {
+          "id": "4.9",
+          "title": "Valid Reasons for Cancellation",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "The following may be accepted as valid reasons for cancellation or rescheduling:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Medical issues or illness",
+                "Serious family emergencies",
+                "Internet or power outages",
+                "Other unexpected and unavoidable circumstances"
+              ]
+            },
+            {
+              "type": "note",
+              "text": "All reasons are subject to review by staff. If a pattern of misuse is identified, requests may be rejected regardless of reason."
+            }
+          ]
+        },
+        {
+          "id": "4.10",
+          "title": "Abuse of Cancellation System",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Any attempt to abuse the cancellation system (including false excuses or repeated short-notice cancellations) will result in:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Official warnings",
+                "Match forfeits",
+                "Points deductions",
+                "Possible suspension from the league"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "We expect all players to respect each other's time."
+            }
+          ]
+        },
+        {
+          "id": "4.11",
+          "title": "General Conduct",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players are expected to behave professionally and communicate clearly. Repeated failure to attend matches or respect scheduling rules may affect eligibility in future fixtures or leagues."
+            }
+          ]
+        },
+        {
+          "id": "4.12",
+          "title": "Final Decision",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All decisions made by league staff are final. Exceptions may be made at their discretion depending on circumstances."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5",
+      "title": "MATCH FORMAT",
+      "blocks": [
+        {
+          "type": "ul",
+          "items": [
+            "Competition Structure: Double Round Robin (each player plays every opponent twice — once home, once away)",
+            "Match Format: Best of 9 legs",
+            "Winning Requirement: First player to 5 legs",
+            "1 game per week",
+            "The Home player will throw first in the opening leg"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "6",
+      "title": "POINTS ALLOCATION",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "1 point is awarded per leg won. An additional 2 bonus points are awarded to the match winner."
+        },
+        {
+          "type": "p",
+          "text": "Example — A 5–4 result awards:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Winner: 7 points",
+            "Loser: 4 points"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "7",
+      "title": "MATCH START & ATTENDANCE",
+      "blocks": [],
+      "subsections": [
+        {
+          "id": "7.1",
+          "title": "Punctuality",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players must be ready to commence play at the agreed fixture time. A 10-minute grace period is permitted."
+            }
+          ]
+        },
+        {
+          "id": "7.2",
+          "title": "Failure to Attend",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Where a player fails to attend within the permitted grace period:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "The attending player is entitled to claim a 5–0 default victory",
+                "The attending player will be awarded 5 points (no bonus)",
+                "The absent player will receive 0 points"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "8",
+      "title": "DIVISIONS, PROMOTION & RELEGATION",
+      "blocks": [],
+      "subsections": [
+        {
+          "id": "8.1",
+          "title": "Division Allocation",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players are assigned to divisions by TSH Administration based on:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Submitted 3-dart averages",
+                "Previous performance",
+                "Competitive balance"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "All allocation decisions are final."
+            }
+          ]
+        },
+        {
+          "id": "8.2",
+          "title": "Promotion & Relegation",
+          "blocks": [
+            {
+              "type": "ul",
+              "items": [
+                "Top 2 players in each division will be promoted",
+                "Bottom 2 players will be relegated"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "TSH Administration reserves the right to adjust divisions where necessary."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "9",
+      "title": "CAMERA & MATCH VISIBILITY REQUIREMENTS",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The use of a camera is mandatory for all matches. Players must ensure:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "The entire dartboard is clearly visible at all times",
+            "The camera provides a stable, unobstructed, high-quality view",
+            "All scoring is visible prior to dart removal"
+          ]
+        }
+      ],
+      "subsections": [
+        {
+          "id": "9.1",
+          "title": "Dart Verification Protocol",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "If any dart placement is unclear, the player must clearly indicate or physically touch the dart on camera before removal to confirm its scoring position. Failure to provide clear verification may result in the score being disputed."
+            }
+          ]
+        },
+        {
+          "id": "9.2",
+          "title": "Match Recording (Recommended Best Practice)",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Players are strongly encouraged to record all matches. Recordings:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Provide protection for both players",
+                "May be requested in the event of disputes"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "10",
+      "title": "SCORING REQUIREMENTS",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Approved platforms:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "DartCounter (fully supported)",
+            "Omni (permitted; camera rules still apply)"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Both players are responsible for accurate scoring and complete statistical recording."
+        }
+      ]
+    },
+    {
+      "id": "11",
+      "title": "MATCH EVIDENCE & RESULT SUBMISSION",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Both players must submit:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Final match score",
+            "Full match statistics",
+            "Supporting screenshots or visual evidence"
+          ]
+        }
+      ],
+      "subsections": [
+        {
+          "id": "11.1",
+          "title": "Evidence Requirement",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All disputes, claims, or reports must be supported by verifiable evidence. TSH Administration will not act on unsupported claims. Acceptable evidence includes:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Screenshots",
+                "Video recordings",
+                "Clear photographic proof"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "11.2",
+          "title": "Submission Deadline",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All match results and statistics must be submitted within 48 hours of match completion. Failure to comply may result in:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Match being voided",
+                "Replay being ordered",
+                "Disciplinary action"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "12",
+      "title": "COMMUNICATION & CONDUCT",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Players must:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Use official communication channels appropriately",
+            "Make reasonable efforts to arrange fixtures",
+            "Maintain respectful and professional conduct at all times"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Failure to comply may result in disciplinary action."
+        }
+      ]
+    },
+    {
+      "id": "13",
+      "title": "WEBSITE REQUIREMENT",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Only fixtures confirmed via the official TSH website will be recognised. Any agreement outside the platform is invalid."
+        }
+      ]
+    },
+    {
+      "id": "14",
+      "title": "FAIR PLAY & INTEGRITY",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "All players must compete honestly and fairly. Prohibited conduct includes:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Falsification of statistics",
+            "Manipulation of evidence",
+            "Cheating of any form",
+            "Match fixing"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Breaches may result in suspension or permanent removal."
+        }
+      ]
+    },
+    {
+      "id": "15",
+      "title": "MATCH COMPLETION & ABANDONMENT",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "All matches must be completed in full. If a player leaves a match without valid justification:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "The match will be recorded as a 5–0 default loss",
+            "The player will receive 0 points",
+            "A disciplinary strike will be issued"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "16",
+      "title": "MATCH INTERRUPTIONS",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Match pauses are permitted only for legitimate reasons such as emergencies or unavoidable interruptions. Players must notify their opponent before pausing."
+        }
+      ]
+    },
+    {
+      "id": "17",
+      "title": "TECHNICAL ISSUES",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Technical issues include:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Camera failure",
+            "Platform errors",
+            "Connectivity issues"
+          ]
+        }
+      ],
+      "subsections": [
+        {
+          "id": "17.1",
+          "title": "Immediate Reporting Requirement",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "All technical issues must be reported immediately during the match. Players must:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Notify their opponent instantly",
+                "Raise the issue at the time it occurs"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "17.2",
+          "title": "Late Reporting",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Issues reported after match completion may be rejected unless strong evidence is provided."
+            }
+          ]
+        },
+        {
+          "id": "17.3",
+          "title": "Misuse",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "False or abusive claims of technical issues may result in disciplinary action."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "18",
+      "title": "CHEATING & MATCH CONDUCT",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "TSH Darts League operates a zero-tolerance policy on cheating. This includes:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "False statistics",
+            "Altered evidence",
+            "Multiple accounts",
+            "Match fixing"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Players must strictly follow turn order and must not throw while their opponent is active. Sanctions may include warnings, strikes, forfeits, or removal."
+        }
+      ]
+    },
+    {
+      "id": "19",
+      "title": "DISCIPLINARY SYSTEM",
+      "blocks": [],
+      "subsections": [
+        {
+          "id": "19.1",
+          "title": "Strike System",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Strikes may be issued for:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Rule breaches",
+                "Unsporting behaviour",
+                "Failure to comply with league requirements"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "19.2",
+          "title": "Strike Consequences",
+          "blocks": [
+            {
+              "type": "ul",
+              "items": [
+                "Strike 1 = Formal Warning",
+                "Strike 2 = Final Warning",
+                "Strike 3 = Removal from the league"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "20",
+      "title": "LEAGUE INTEGRITY & PARTICIPATION",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "All players are expected to:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Complete all fixtures",
+            "Maintain active participation",
+            "Uphold the integrity of the competition"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "Failure to do so may affect current and future eligibility."
+        }
+      ]
+    },
+    {
+      "id": "21",
+      "title": "ADMINISTRATIVE AUTHORITY",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "TSH Administration reserves full authority to:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Review disputes",
+            "Award results",
+            "Request replays",
+            "Enforce all rules"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "All decisions are final."
+        }
+      ]
+    },
+    {
+      "id": "22",
+      "title": "RULE AMENDMENTS",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "TSH Darts League reserves the right to amend or update these Rules & Regulations at any time. All changes will be communicated to participants."
+        }
+      ]
+    },
+    {
+      "id": "23",
+      "title": "FINAL PROVISION",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "These Rules & Regulations are established to ensure:"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "Fair competition",
+            "Consistent enforcement",
+            "Professional standards"
+          ]
+        },
+        {
+          "type": "p",
+          "text": "All participants are required to adhere to these principles at all times."
+        }
+      ]
+    }
+  ]
+}
