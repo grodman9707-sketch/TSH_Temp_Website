@@ -110,6 +110,60 @@ function userLeagueIds(u) {
 function screenshotUrl(id, slot = 1) {
   return `/api/fixtures/${id}/screenshot?slot=${slot}&token=${encodeURIComponent(token())}`;
 }
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "use-credentials";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not load screenshot for reading"));
+    img.src = src;
+  });
+}
+async function fetchShotAsDataUrl(id, slot) {
+  const headers = {};
+  if (token()) headers.Authorization = `Bearer ${token()}`;
+  const res = await fetch(screenshotUrl(id, slot), { credentials: "same-origin", headers });
+  if (!res.ok) throw new Error(`Could not load screenshot ${slot}`);
+  return fileToDataUrl(await res.blob());
+}
+async function prepareShotForOcr(src) {
+  try {
+    const img = await loadImageEl(src);
+    const scale = img.width < 900 || img.height < 900 ? 2 : 1;
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const d = imageData.data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+    const invert = sum / (d.length / 4) < 110;
+    const contrast = 1.4;
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i];
+      let g = d[i + 1];
+      let b = d[i + 2];
+      if (invert) {
+        r = 255 - r;
+        g = 255 - g;
+        b = 255 - b;
+      }
+      r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
+      g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
+      b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
+      const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+      d[i] = d[i + 1] = d[i + 2] = y;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return src;
+  }
+}
 function nDisp(v) {
   return v || v === 0 ? v : "";
 }
@@ -181,6 +235,11 @@ function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, acti
             : "Enter stats for each player from this match’s two screenshots. Saving updates the league table (1 point per leg + 2 for the win)."
         }</p>
         ${hasNumericExtracted(selected.extractedStats) ? `<p class="mt-2 text-xs font-bold tracking-widest gold">EXTRACTED · AWAITING YOUR VERIFY</p>` : ""}
+        ${
+          !hasNumericExtracted(selected.extractedStats) && selected.ocrRawText
+            ? `<details class="mt-3"><summary class="text-xs font-bold tracking-widest gold">TEXT READ FROM SCREENSHOTS</summary><pre class="ocr-raw mt-2">${esc(selected.ocrRawText)}</pre></details>`
+            : ""
+        }
         <form class="mt-3" data-form="SCANSTATS" data-id="${selected.id}"><button type="submit" class="btn-ghost">SCAN SCREENSHOTS</button></form>
         ${matchStatsForm(selected, formKind, buttonLabel)}
         ${actions ? actions(selected) : ""}
@@ -254,9 +313,15 @@ function loadTesseract() {
 
 async function ocrImage(src) {
   const Tesseract = await loadTesseract();
-  const worker = await Tesseract.createWorker("eng");
+  const worker = await Tesseract.createWorker("eng", 1, {
+    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js",
+    langPath: "https://tessdata.projectnaptha.com/4.0.0",
+  });
   try {
-    const { data } = await worker.recognize(src);
+    await worker.setParameters({ tessedit_pageseg_mode: "6" });
+    const prepared = await prepareShotForOcr(src);
+    const { data } = await worker.recognize(prepared);
     return data?.text || "";
   } finally {
     await worker.terminate();
@@ -264,10 +329,10 @@ async function ocrImage(src) {
 }
 
 async function ocrFixtureStats(fixture, extraSrcs = []) {
-  const srcs = [...extraSrcs];
+  let srcs = [...extraSrcs].filter(Boolean);
   if (!srcs.length) {
-    if (fixture.screenshot1) srcs.push(screenshotUrl(fixture.id, 1));
-    if (fixture.screenshot2) srcs.push(screenshotUrl(fixture.id, 2));
+    if (fixture.screenshot1) srcs.push(await fetchShotAsDataUrl(fixture.id, 1));
+    if (fixture.screenshot2) srcs.push(await fetchShotAsDataUrl(fixture.id, 2));
   }
   const unique = [...new Set(srcs.filter(Boolean))];
   if (!unique.length) return null;
@@ -276,12 +341,13 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
     try {
       texts.push(await ocrImage(src));
     } catch (err) {
-      console.warn("[ocr] could not read", src, err.message);
+      console.warn("[ocr] could not read", src?.slice?.(0, 48) || src, err.message);
     }
   }
-  if (!texts.join("").trim()) {
+  const joined = texts.join("\n\n").trim();
+  if (!joined) {
     console.warn("[ocr] no text was recognized from the screenshot(s) — the reader may be blocked, or the image is too low quality.");
-    return null;
+    return { rawText: "", _empty: true };
   }
   const merged = mergeOcrStats(texts, fixture.homeName, fixture.awayName, {
     homeDartcounterName: fixture.homeDartcounterName,
@@ -289,20 +355,19 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
     homeNickname: fixture.homeNickname,
     awayNickname: fixture.awayNickname,
   });
-  const keys = Object.keys(merged).filter((k) => k !== "rawText");
-  if (!keys.length || !hasNumericExtracted(merged)) {
-    console.warn("[ocr] read text but found no recognizable stats. Raw text:", texts.join("\n\n").slice(0, 500));
-    return null;
-  }
+  if (!merged.rawText) merged.rawText = joined.slice(0, 2500);
   return merged;
 }
 function fixtureStatus(f) {
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
   if (f.status === "submitted" || f.hasBothScreenshots) return `<div class="text-xs font-bold tracking-widest gold">${f.extractedPending ? "STATS TO VERIFY" : "AWAITING ADMIN"}</div>`;
   if (f.screenshotCount) return `<div class="text-xs font-bold tracking-widest gold">${f.screenshotCount}/2 SCREENSHOTS</div>`;
-  if (f.scheduleStatus === "agreed") return `<div class="text-xs font-bold tracking-widest gold">TIME AGREED</div>`;
+  if (scheduleUnlocked(f)) return `<div class="text-xs font-bold tracking-widest gold">${f.scheduleStatus === "agreed" ? "TIME AGREED" : "READY FOR SCREENSHOTS"}</div>`;
   if (f.scheduleStatus === "proposed") return `<div class="text-xs font-bold tracking-widest text-red-500">WAITING ON VISITOR</div>`;
   return `<div class="text-xs font-bold tracking-widest text-red-500">AWAITING HOME TIME</div>`;
+}
+function scheduleUnlocked(f) {
+  return Boolean(f.canUploadScreenshots || f.scheduleAcceptRequired === false || f.scheduleStatus === "agreed" || f.hasBothScreenshots || f.status === "submitted");
 }
 function isHomePlayer(f, u = state.user) {
   return Boolean(u && f && Number(f.homeId) === Number(u.id));
@@ -315,16 +380,16 @@ function shotDraftFor(id) {
 }
 function screenshotUploader(f) {
   if (f.status === "played") return fixtureStatus(f);
-  if (f.scheduleStatus !== "agreed") {
+  if (f.hasBothScreenshots || f.status === "submitted") {
+    return `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">${
+      hasNumericExtracted(f.extractedStats) ? "Stats extracted, awaiting admin verify." : "Waiting on admin to verify each player’s stats."
+    }</div></div>`;
+  }
+  if (!scheduleUnlocked(f)) {
     return `<div class="text-right space-y-1">
       <div class="text-xs font-bold tracking-widest text-muted">${f.scheduleStatus === "proposed" ? "WAITING FOR VISITOR TO ACCEPT" : "WAITING FOR HOME TO PROPOSE"}</div>
       <div class="text-xs text-muted">Screenshots unlock after the visiting player accepts the time.</div>
     </div>`;
-  }
-  if (f.hasBothScreenshots) {
-    return `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">${
-      hasNumericExtracted(f.extractedStats) ? "Stats extracted, awaiting admin verify." : "Waiting on admin to verify each player’s stats."
-    }</div></div>`;
   }
   const draft = shotDraftFor(f.id);
   const preview = (slot) =>
@@ -349,6 +414,7 @@ function screenshotUploader(f) {
 }
 function scheduleActions(f) {
   if (!inThisMatch(f) || f.status === "played" || f.hasBothScreenshots || f.status === "submitted") return "";
+  if (f.scheduleAcceptRequired === false) return "";
   const home = isHomePlayer(f);
   const away = isAwayPlayer(f);
   const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
@@ -487,12 +553,18 @@ async function queueAdminScan() {
       return;
     }
     const extracted = await ocrFixtureStats(fixture);
-    if (!extracted) {
-      state.notice = "Could not auto-read numbers from those screenshots. Enter the stats by hand, or tap Scan Screenshots.";
+    if (extracted?._empty) {
+      state.notice = "Could not auto-read those screenshots. Enter the stats by hand, or tap Scan Screenshots.";
       return;
     }
-    await api(`/api/my-fixtures/${id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
-    state.notice = "Stats extracted from the screenshots and filled in below. Check every number, then verify to add them to the table.";
+    if (extracted?.rawText) {
+      await api(`/api/my-fixtures/${id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+    }
+    if (hasNumericExtracted(extracted)) {
+      state.notice = "Stats extracted from the screenshots and filled in below. Check every number, then verify to add them to the table.";
+    } else {
+      state.notice = "Read text from the screenshots but could not map every field. Enter the missing numbers from the shots, then verify.";
+    }
   } catch (err) {
     state.notice = "";
     state.error = err.message || "Could not scan screenshots";
@@ -771,15 +843,15 @@ async function pageLeague(slug, id) {
                         ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
                             isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
                           }</div>`
-                        : f.scheduleStatus === "agreed"
-                          ? `<div class="mt-1 text-xs gold">Agreed: ${esc(scheduleWhen(f))}</div>`
+                        : scheduleUnlocked(f)
+                          ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed: ${esc(scheduleWhen(f))}` : "Week 1 — screenshots can be submitted without accepting a time."}</div>`
                           : "";
                       const actions =
                         mine && f.status !== "played"
                           ? `<div class="mt-3 flex flex-wrap items-end gap-2">
                               ${scheduleActions(f)}
                               ${
-                                f.scheduleStatus === "agreed" && !f.hasBothScreenshots && f.status !== "submitted"
+                                scheduleUnlocked(f) && !f.hasBothScreenshots && f.status !== "submitted"
                                   ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>`
                                   : ""
                               }
@@ -965,7 +1037,7 @@ async function pageDashboard() {
             ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
                <div class="mt-3 flex flex-wrap gap-2">
                  ${
-                   next.scheduleStatus === "agreed" && !next.hasBothScreenshots
+                   scheduleUnlocked(next) && !next.hasBothScreenshots
                      ? `<a href="/my-matches?fixture=${next.id}" class="btn-gold">SUBMIT SCREENSHOTS</a>`
                      : `<a href="/my-matches?fixture=${next.id}" class="btn-gold">OPEN MATCH</a>`
                  }
@@ -1040,10 +1112,12 @@ async function pageMyMatches() {
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
                 <div class="mt-1 text-xs text-muted">${f.screenshotCount || 0}/2 screenshots uploaded${hasNumericExtracted(f.extractedStats) ? " · stats extracted, awaiting admin verify" : ""}</div>
                 ${
-                  f.scheduleStatus === "proposed"
+                  f.hasBothScreenshots || f.status === "submitted"
+                    ? `<div class="mt-1 text-xs gold">${hasNumericExtracted(f.extractedStats) ? "Stats extracted, awaiting admin verify." : "Screenshots in — awaiting admin verify."}</div>`
+                    : f.scheduleStatus === "proposed" && f.scheduleAcceptRequired !== false
                     ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${isAwayPlayer(f) ? " · waiting on you" : isHomePlayer(f) ? " · waiting on the visitor" : ""}</div>`
-                    : f.scheduleStatus === "agreed"
-                      ? `<div class="mt-1 text-xs gold">Agreed kickoff ${esc(scheduleWhen(f))}</div>`
+                    : scheduleUnlocked(f)
+                      ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed kickoff ${esc(scheduleWhen(f))}` : "Screenshots can be submitted now."}</div>`
                       : `<div class="mt-1 text-xs text-muted">Home player still needs to propose a date and time.</div>`
                 }
                 ${scheduleActions(f)}
@@ -1624,14 +1698,16 @@ document.addEventListener("submit", async (e) => {
       render();
       try {
         const extracted = await ocrFixtureStats(d.fixture, [image1, image2]);
-        if (extracted) {
+        if (extracted && !extracted._empty) {
           await api(`/api/my-fixtures/${id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+        }
+        if (hasNumericExtracted(extracted)) {
           state.notice = "Stats extracted from the screenshots. A division admin will verify them before they count.";
         } else {
-          state.notice = "Both screenshots uploaded. Could not auto-read the stats — a division admin will enter them.";
+          state.notice = "Both screenshots uploaded. Could not auto-read every stat — a division admin can scan them again or enter them.";
         }
-      } catch {
-        state.notice = "Both screenshots uploaded. A division admin will verify the stats.";
+      } catch (err) {
+        state.notice = `Both screenshots uploaded. Could not auto-read the stats (${err.message}). A division admin can scan them or enter them.`;
       }
       render();
     } else if (kind === "SCANSTATS") {
@@ -1642,8 +1718,9 @@ document.addEventListener("submit", async (e) => {
       const fixture = overview.fixtures.find((f) => f.id === Number(form.dataset.id));
       if (!fixture) throw new Error("Fixture not found");
       const extracted = await ocrFixtureStats(fixture);
-      if (!extracted) throw new Error("Could not read numbers from those screenshots. Enter the stats by hand.");
-      await api(`/api/my-fixtures/${form.dataset.id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted) });
+      if (extracted?._empty) throw new Error("Could not read any text from those screenshots. Enter the stats by hand.");
+      await api(`/api/my-fixtures/${form.dataset.id}/extracted-stats`, { method: "POST", body: JSON.stringify(extracted || {}) });
+      if (!hasNumericExtracted(extracted)) throw new Error("Read text from the screenshots but could not map it to the fields. Enter the stats by hand from the shots.");
       state.selectedResultId = fixture.id;
       state.notice = "Stats extracted. Check every number, then verify to add them to the table.";
       render();
