@@ -32,10 +32,10 @@ export const EXTRACT_STAT_FIELDS = [
 const STAT_KEYS = ["Legs", "Avg", "Checkout", "BestLeg", "60", "80", "100", "120", "140", "160", "180"];
 
 const LABEL_SPECS = [
-  { key: "Avg", re: /3[\s-]?d(?:art)?s?\s*a(?:vg|verage)?|\b3da\b/i },
+  { key: "Avg", re: /3[\s-]?d(?:art)?s?\s*a(?:vg|verage)?|\b3da\b|match\s*avg(?:erage)?|(?<!first\s*9\s*)(?<!first\s*nine\s*)\baverages?\b|\bavg\b/i },
   { key: "Checkout", re: /highest\s*(?:co|c\/o|checkout)|hi(?:gh(?:est)?)?\s*(?:co|c\/o|checkout)|high(?:est)?\s*finish/i },
   { key: "BestLeg", re: /best\s*leg|fewest\s*darts|best\s*leg\s*\(darts\)/i },
-  { key: "180", re: /\b180s?\b|one\s*eight(?:y|ies)/i },
+  { key: "180", re: /180['’]?s?\b|one\s*eight(?:y|ies)/i },
   { key: "160", re: /160\s*\+/i },
   { key: "140", re: /140\s*\+/i },
   { key: "120", re: /120\s*\+/i },
@@ -99,7 +99,7 @@ export function parsePlayerBlock(text) {
   const t = String(text);
   return {
     Legs: firstNum(t, /(?:legs?\s*won|leg\s*score|\bscore)\s*[:.]?\s*(\d{1,2})/i),
-    Avg: firstNum(t, /(?:3[\s-]?d(?:art)?s?\s*a(?:vg|verage)?|3da)\s*[:.]?\s*(\d{1,3}(?:[.,]\d{1,2})?)/i),
+    Avg: firstNum(t, /(?:3[\s-]?d(?:art)?s?\s*a(?:vg|verage)?|3da|match\s*avg(?:erage)?)\s*[:.]?\s*(\d{1,3}(?:[.,]\d{1,2})?)/i),
     Checkout: firstNum(t, /(?:highest\s*)?(?:co|c\/o|checkout|check\s*out|high(?:est)?\s*finish)\s*[:.]?\s*(\d{1,3})/i),
     BestLeg: firstNum(t, /(?:best\s*leg|fewest\s*darts)\s*[:.]?\s*(\d{1,3})/i),
     60: firstNum(t, /(?:60\+|60\s*\+)\s*[:.]?\s*(\d{1,3})/i),
@@ -108,34 +108,46 @@ export function parsePlayerBlock(text) {
     120: firstNum(t, /(?:120\+|120\s*\+)\s*[:.]?\s*(\d{1,3})/i),
     140: firstNum(t, /(?:140\+|140\s*\+)\s*[:.]?\s*(\d{1,3})/i),
     160: firstNum(t, /(?:160\+|160\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    180: firstNum(t, /(?:180s?|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
+    180: firstNum(t, /(?:180['’]?s?|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
   };
+}
+
+function numbersAroundLabel(raw, matchIndex, matchLen) {
+  const after = raw.slice(matchIndex + matchLen, matchIndex + matchLen + 100);
+  const afterNums = numbersOnNextValueLine(after);
+  if (afterNums.length >= 2) return afterNums;
+  const beforeLine = (raw.slice(Math.max(0, matchIndex - 80), matchIndex).split(/\n/).pop() || "").trim();
+  const beforeNums = nextNumbers(beforeLine, 2);
+  if (beforeNums.length && afterNums.length) return [beforeNums[beforeNums.length - 1], afterNums[0]];
+  if (afterNums.length) return afterNums;
+  return beforeNums;
 }
 
 function applyLabelPairs(text, stats, homeFirst) {
   const raw = String(text || "");
   for (const spec of LABEL_SPECS) {
-    const m = spec.re.exec(raw);
-    if (!m) continue;
-    const after = raw.slice(m.index + m[0].length, m.index + m[0].length + 120);
-    const nums = numbersOnNextValueLine(after);
-    if (!nums.length) continue;
-    if (spec.key === "Avg") {
-      // First-9 averages sit near "average" on some screens — skip implausible 3DA values.
-      const usable = nums.filter((n) => n >= 20 && n <= 140);
-      if (!usable.length) continue;
-      const a = usable[0];
-      const b = usable[1];
-      if (stats.homeAvg == null) stats.homeAvg = homeFirst ? a : b ?? a;
-      if (b != null && stats.awayAvg == null) stats.awayAvg = homeFirst ? b : a;
-      continue;
+    const re = new RegExp(spec.re.source, spec.re.flags.includes("g") ? spec.re.flags : `${spec.re.flags}g`);
+    let m;
+    while ((m = re.exec(raw))) {
+      const nums = numbersAroundLabel(raw, m.index, m[0].length);
+      if (!nums.length) continue;
+      if (spec.key === "Avg") {
+        const usable = nums.filter((n) => n >= 20 && n <= 140);
+        if (!usable.length) continue;
+        const a = usable[0];
+        const b = usable[1];
+        if (stats.homeAvg == null) stats.homeAvg = homeFirst ? a : b ?? a;
+        if (b != null && stats.awayAvg == null) stats.awayAvg = homeFirst ? b : a;
+        continue;
+      }
+      if (spec.key === "40") continue;
+      const a = nums[0];
+      const b = nums[1];
+      const homeKey = `home${spec.key}`;
+      const awayKey = `away${spec.key}`;
+      if (stats[homeKey] == null) stats[homeKey] = homeFirst || b == null ? a : b;
+      if (b != null && stats[awayKey] == null) stats[awayKey] = homeFirst ? b : a;
     }
-    const a = nums[0];
-    const b = nums[1];
-    const homeKey = `home${spec.key}`;
-    const awayKey = `away${spec.key}`;
-    if (stats[homeKey] == null) stats[homeKey] = homeFirst || b == null ? a : b;
-    if (b != null && stats[awayKey] == null) stats[awayKey] = homeFirst ? b : a;
   }
 }
 

@@ -530,6 +530,12 @@ function fixtureScheduleLabel(f) {
   if (date && time) return `${date} ${time}`;
   return date || time || "";
 }
+function skipsVisitorAccept(db, f) {
+  const league = db.leagues.find((l) => l.id === Number(f.leagueId));
+  if (!league) return false;
+  const regional = db.regionals.find((r) => r.id === league.regionalId);
+  return Boolean(regional && regional.slug === "europe" && /^league\s*1$/i.test(String(league.name || "")) && Number(f.week) === 1);
+}
 function withNames(db, f) {
   const shot1 = shotFile(f, 1);
   const shot2 = shotFile(f, 2);
@@ -555,8 +561,10 @@ function withNames(db, f) {
     awayNickname: db.users.find((u) => u.id === f.awayId)?.nickname || "",
     when: fixtureScheduleLabel(f),
     extractedPending: Boolean(hasNumericExtracted(f.extractedStats) && f.status !== "played"),
-    scheduleAgreed: f.scheduleStatus === "agreed",
-    canUploadScreenshots: f.scheduleStatus === "agreed" && f.status !== "played" && shotCount(f) < 2,
+    scheduleAcceptRequired: !skipsVisitorAccept(db, f),
+    scheduleAgreed: f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f),
+    canUploadScreenshots: (f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f)) && f.status !== "played" && shotCount(f) < 2,
+    ocrRawText: f.ocrRawText || f.extractedStats?.rawText || "",
   };
   delete named.screenshotFile;
   delete named.screenshot1File;
@@ -595,6 +603,7 @@ function newFixture(partial) {
     startAt: null,
     proposedTz: "",
     extractedStats: null,
+    ocrRawText: "",
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
@@ -616,9 +625,9 @@ function pickExtractedStats(body) {
   return out;
 }
 
-function screenshotUploadError(fixture) {
+function screenshotUploadError(fixture, db) {
   if (fixture.status === "played") return "This match is already confirmed";
-  if (fixture.scheduleStatus !== "agreed") {
+  if (fixture.scheduleStatus !== "agreed" && !skipsVisitorAccept(db, fixture)) {
     return "The visiting player must accept the home player's proposed date and time before screenshots can be uploaded";
   }
   return null;
@@ -1074,7 +1083,7 @@ async function handleApi(req, res, url) {
     const fixture = db.fixtures.find((f) => f.id === Number(screenshotPost[1]));
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
-    const blocked = screenshotUploadError(fixture);
+    const blocked = screenshotUploadError(fixture, db);
     if (blocked) return json(res, 400, { ok: false, error: blocked });
     const requested = Number(body.slot);
     const slot = requested === 1 || requested === 2 ? requested : shotFile(fixture, 1) ? 2 : 1;
@@ -1095,7 +1104,7 @@ async function handleApi(req, res, url) {
     const fixture = db.fixtures.find((f) => f.id === Number(screenshotsPost[1]));
     if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
     if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
-    const blocked = screenshotUploadError(fixture);
+    const blocked = screenshotUploadError(fixture, db);
     if (blocked) return json(res, 400, { ok: false, error: blocked });
     if (shotCount(fixture) >= 2) return json(res, 400, { ok: false, error: "Both screenshots are already uploaded" });
     if (shotCount(fixture) > 0) return json(res, 400, { ok: false, error: "This match already has a screenshot. Submit both together on a fresh match." });
@@ -1130,8 +1139,12 @@ async function handleApi(req, res, url) {
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your match" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
+    if (body.rawText) fixture.ocrRawText = String(body.rawText).slice(0, 8000);
     const extracted = pickExtractedStats(body);
-    if (!Object.keys(extracted).length) return json(res, 400, { ok: false, error: "No stats could be read from the screenshots" });
+    if (!Object.keys(extracted).length) {
+      writeDb(db);
+      return json(res, 200, { ok: true, parsed: false, fixture: withNames(db, fixture) });
+    }
     fixture.extractedStats = {
       ...extracted,
       extractedAt: new Date().toISOString(),
@@ -1139,7 +1152,7 @@ async function handleApi(req, res, url) {
       pending: true,
     };
     writeDb(db);
-    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    return json(res, 200, { ok: true, parsed: true, fixture: withNames(db, fixture) });
   }
 
   const proposeMatch = p.match(/^\/api\/fixtures\/(\d+)\/propose$/);
