@@ -273,8 +273,17 @@ button.btn-gold:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.shot-card input[type="file"] {
-  width: 100%;
+.ocr-raw {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #000;
+  border: 1px solid #1c2433;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  font-size: 0.7rem;
+  color: #ccc;
 }
 @media (max-width: 900px) {
   .stats-desk {

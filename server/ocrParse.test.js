@@ -68,6 +68,22 @@ const dartcounterAlias = parseDartCounterText(
 );
 check("uses DartCounter display names for left/right", dartcounterAlias.homeAvg === 70.1 && dartcounterAlias.awayAvg === 55.5);
 
+const matchAvg = parseDartCounterText(
+  `Alex Player  Morgan Player\n5-3\nMatch average\n62.45 51.20\n180's\n2 0`,
+  "Alex Player",
+  "Morgan Player"
+);
+check("Match average label is 3DA", matchAvg.homeAvg === 62.45 && matchAvg.awayAvg === 51.2);
+check("180's with apostrophe", matchAvg.home180 === 2 && matchAvg.away180 === 0);
+
+const splitLayout = parseDartCounterText(
+  `Alex Player                    Morgan Player\n62.45  Match average  51.20\n140  Highest Checkout  85`,
+  "Alex Player",
+  "Morgan Player"
+);
+check("values on both sides of Match average", splitLayout.homeAvg === 62.45 && splitLayout.awayAvg === 51.2);
+check("values on both sides of Highest Checkout", splitLayout.homeCheckout === 140 && splitLayout.awayCheckout === 85);
+
 const overlay = overlayExtractedStats({
   status: "submitted",
   homeLegs: null,

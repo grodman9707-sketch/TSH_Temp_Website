@@ -90,7 +90,7 @@ try {
   const created = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, week: 1, homeId, awayId, date: "2026-08-26" },
+    body: { leagueId: 1, week: 2, homeId, awayId, date: "2026-08-26" },
   });
   check("create fixture", created.status === 200 && created.data.fixture?.id);
   const fixtureId = created.data.fixture.id;
@@ -156,6 +156,21 @@ try {
   check("admin fields pre-filled from extracted stats", row?.homeLegs === 5 && row?.awayLegs === 3 && row?.homeAvg === 62.4 && row?.awayAvg === 51.2);
   check("admin 180s and checkouts filled", row?.home180 === 2 && row?.awayCheckout === 85);
   check("extractedStats still present for the form", Boolean(row?.extractedStats?.homeLegs === 5));
+
+  const week1 = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 1, week: 1, homeId, awayId, date: "2026-08-20" },
+  });
+  check("create Europe League 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
+  const week1Id = week1.data.fixture.id;
+  const week1Shot = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG },
+  });
+  check("Europe L1 week 1 can upload without visitor accept", week1Shot.status === 200 && week1Shot.data.fixture?.hasBothScreenshots === true);
+  check("Europe L1 week 1 skips accept", week1Shot.data.fixture?.scheduleAcceptRequired === false);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
