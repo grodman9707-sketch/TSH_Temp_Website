@@ -156,6 +156,20 @@ try {
   check("admin fields pre-filled from extracted stats", row?.homeLegs === 5 && row?.awayLegs === 3 && row?.homeAvg === 62.4 && row?.awayAvg === 51.2);
   check("admin 180s and checkouts filled", row?.home180 === 2 && row?.awayCheckout === 85);
   check("extractedStats still present for the form", Boolean(row?.extractedStats?.homeLegs === 5));
+  check("submitted match needs admin confirm", row?.needsConfirm === true);
+
+  const confirm = await api(port, `/api/admin/fixtures/${fixtureId}/result`, {
+    method: "POST",
+    token: ownerTok,
+    body: { homeLegs: 5, awayLegs: 3, homeAvg: 62.4, awayAvg: 51.2, home180: 2, away180: 0, homeCheckout: 140, awayCheckout: 85 },
+  });
+  check("admin verify saves played result", confirm.status === 200 && confirm.data.fixture?.status === "played");
+  check("verified match leaves TO CONFIRM", confirm.data.fixture?.needsConfirm === false);
+
+  const after = await api(port, "/api/admin/overview", { token: ownerTok });
+  const playedRow = (after.data.fixtures || []).find((f) => f.id === fixtureId);
+  check("overview still has screenshots after verify", playedRow?.hasBothScreenshots === true && playedRow?.status === "played");
+  check("overview needsConfirm is false after verify", playedRow?.needsConfirm === false);
 
   const week1 = await api(port, "/api/admin/fixtures", {
     method: "POST",

@@ -31,11 +31,15 @@ export const EXTRACT_STAT_FIELDS = [
 
 const STAT_KEYS = ["Legs", "Avg", "Checkout", "BestLeg", "60", "80", "100", "120", "140", "160", "180"];
 
+// DartCounter MATCH DETAILS: grey pill label in the centre, home value on the
+// left, away value on the right. Page 1 is averages/finish; page 2 is scoring bands.
+const PAGE2_BANDS = ["180", "160", "140", "120", "100", "80", "60"];
+
 const LABEL_SPECS = [
-  { key: "Avg", re: /3[\s-]?d(?:art)?s?\s*a(?:vg|verage)?|\b3da\b|match\s*avg(?:erage)?|(?<!first\s*9\s*)(?<!first\s*nine\s*)\baverages?\b|\bavg\b/i },
-  { key: "Checkout", re: /highest\s*(?:co|c\/o|checkout)|hi(?:gh(?:est)?)?\s*(?:co|c\/o|checkout)|high(?:est)?\s*finish/i },
-  { key: "BestLeg", re: /best\s*leg|fewest\s*darts|best\s*leg\s*\(darts\)/i },
-  { key: "180", re: /180['’]?s?\b|one\s*eight(?:y|ies)/i },
+  { key: "Avg", re: /3[\s-]?darts?\s*avg(?:erage|\.)?|\b3da\b|match\s*avg(?:erage)?/i },
+  { key: "Checkout", re: /highest\s*finish|highest\s*(?:co|c\/o|checkout)|hi(?:gh(?:est)?)?\s*(?:co|c\/o|checkout)/i },
+  { key: "BestLeg", re: /best\s*leg|fewest\s*darts/i },
+  { key: "180", re: /180['’]?s\b|one\s*eight(?:y|ies)/i },
   { key: "160", re: /160\s*\+/i },
   { key: "140", re: /140\s*\+/i },
   { key: "120", re: /120\s*\+/i },
@@ -108,18 +112,23 @@ export function parsePlayerBlock(text) {
     120: firstNum(t, /(?:120\+|120\s*\+)\s*[:.]?\s*(\d{1,3})/i),
     140: firstNum(t, /(?:140\+|140\s*\+)\s*[:.]?\s*(\d{1,3})/i),
     160: firstNum(t, /(?:160\+|160\s*\+)\s*[:.]?\s*(\d{1,3})/i),
-    180: firstNum(t, /(?:180['’]?s?|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
+    180: firstNum(t, /(?:180['’]?s|one\s*eight(?:y|ies))\s*[:.]?\s*(\d{1,3})/i),
   };
 }
 
 function numbersAroundLabel(raw, matchIndex, matchLen) {
-  const after = raw.slice(matchIndex + matchLen, matchIndex + matchLen + 100);
-  const afterNums = numbersOnNextValueLine(after);
-  if (afterNums.length >= 2) return afterNums;
-  const beforeLine = (raw.slice(Math.max(0, matchIndex - 80), matchIndex).split(/\n/).pop() || "").trim();
-  const beforeNums = nextNumbers(beforeLine, 2);
+  const lineStart = raw.lastIndexOf("\n", matchIndex - 1) + 1;
+  const lineEndIdx = raw.indexOf("\n", matchIndex);
+  const line = raw.slice(lineStart, lineEndIdx === -1 ? raw.length : lineEndIdx);
+  const rel = matchIndex - lineStart;
+  const beforeNums = nextNumbers(line.slice(0, rel), 8);
+  const afterNums = nextNumbers(line.slice(rel + matchLen), 8);
+  // MATCH DETAILS rows are `leftValue  LABEL  rightValue` on one line.
   if (beforeNums.length && afterNums.length) return [beforeNums[beforeNums.length - 1], afterNums[0]];
-  if (afterNums.length) return afterNums;
+  const afterBlock = raw.slice(matchIndex + matchLen, matchIndex + matchLen + 100);
+  const afterLine = numbersOnNextValueLine(afterBlock);
+  if (afterLine.length >= 2) return afterLine;
+  if (afterLine.length) return afterLine;
   return beforeNums;
 }
 
@@ -140,7 +149,15 @@ function applyLabelPairs(text, stats, homeFirst) {
         if (b != null && stats.awayAvg == null) stats.awayAvg = homeFirst ? b : a;
         continue;
       }
-      if (spec.key === "40") continue;
+      if (spec.key === "180") {
+        const usable = nums.filter((n) => n >= 0 && n <= 30 && n === Math.floor(n));
+        if (!usable.length) continue;
+        const a = usable[0];
+        const b = usable[1];
+        if (stats.home180 == null) stats.home180 = homeFirst || b == null ? a : b;
+        if (b != null && stats.away180 == null) stats.away180 = homeFirst ? b : a;
+        continue;
+      }
       const a = nums[0];
       const b = nums[1];
       const homeKey = `home${spec.key}`;
@@ -152,19 +169,177 @@ function applyLabelPairs(text, stats, homeFirst) {
 }
 
 function parseScore(raw, homeNames, awayNames) {
-  const score = String(raw).match(/\b([0-5])\s*[-–:]\s*([0-5])\b/);
-  if (!score) return null;
-  const a = Number(score[1]);
-  const b = Number(score[2]);
-  if (!((a === 5) !== (b === 5)) && !(a === 5 || b === 5)) {
-    // Best of 9 must have a winner to 5, but still capture a plausible score.
+  const text = String(raw);
+  const score = text.match(/\b([0-5])\s*[-–:]\s*([0-5])\b/);
+  let a;
+  let b;
+  let index = 0;
+  if (score) {
+    a = Number(score[1]);
+    b = Number(score[2]);
+    index = score.index;
+  } else {
+    // Header score box often OCRs as `1] 5` without a dash. Stay in the header
+    // so checkout fractions like 1/2 5/44 cannot be read as the match score.
+    const cut = text.search(/3[\s-]?dart|\d{2}\.\d{2}|first\s*9|checkout rate|highest\s*finish|%/i);
+    const header = text.slice(0, cut === -1 ? Math.min(450, text.length) : cut);
+    const loose = header.match(/\b([0-5])[\s\]|:._-]{1,6}([0-5])\b/);
+    if (loose && (Number(loose[1]) === 5 || Number(loose[2]) === 5) && loose[1] !== loose[2]) {
+      a = Number(loose[1]);
+      b = Number(loose[2]);
+      index = loose.index;
+    }
   }
-  const before = raw.slice(0, score.index).toLowerCase();
-  const homeFirst = nameHitsAny(before, homeNames) >= nameHitsAny(before, awayNames);
+  if (a == null || b == null) return null;
+  if (a > 5 || b > 5) return null;
+  const before = text.slice(0, index).toLowerCase();
+  const homeHits = nameHitsAny(before, homeNames);
+  const awayHits = nameHitsAny(before, awayNames);
+  const homeFirst = homeHits === awayHits ? true : homeHits > awayHits;
   return {
     homeLegs: homeFirst ? a : b,
     awayLegs: homeFirst ? b : a,
   };
+}
+
+function isInt(n) {
+  return n != null && Number.isFinite(n) && Math.abs(n - Math.round(n)) < 1e-9;
+}
+
+function looksLikeAvg(n) {
+  if (n == null || !Number.isFinite(n)) return false;
+  if (n >= 20 && n <= 140 && !isInt(n)) return true;
+  if (n >= 1000 && n <= 9999 && isInt(n)) return true;
+  return false;
+}
+
+function restoreCompactAvg(n) {
+  if (n >= 1000 && n <= 9999 && isInt(n)) return n / 100;
+  return n;
+}
+
+function normalizePairLine(line) {
+  return String(line || "")
+    .replace(/]/g, "7")
+    .replace(/\bG0\b/g, "60")
+    .replace(/\bO\b/g, "0")
+    .replace(/\bJ\b/g, "3")
+    .replace(/\bB\b/g, "8")
+    .replace(/\bI\b/g, "1")
+    .replace(/\bl\b/g, "1")
+    .replace(/\|/g, "1");
+}
+
+function extractLayoutPairs(text) {
+  const pairs = [];
+  for (const rawLine of String(text || "").split(/\n/)) {
+    const line = normalizePairLine(rawLine).trim();
+    if (!line) continue;
+    if (/match\s*details|straight\s*in|double\s*out|welcome|best\s*of/i.test(line) && nextNumbers(line, 1).length < 2) continue;
+    const fracs = [...line.matchAll(/(\d{1,3})\s*\/\s*(\d{1,3})/g)].map((m) => ({ made: toNum(m[1]), att: toNum(m[2]) }));
+    if (fracs.length >= 2) {
+      pairs.push({ kind: "frac", a: fracs[0].made, b: fracs[1].made, raw: line });
+      continue;
+    }
+    const pct = /%/.test(line);
+    const darts = /darts/i.test(line);
+    const nums = nextNumbers(line, 4);
+    if (nums.length < 2) continue;
+    if (nums.length >= 3 && PAGE2_BANDS.map(Number).includes(nums[1]) && isInt(nums[0]) && isInt(nums[2])) {
+      pairs.push({ kind: "int", a: nums[0], b: nums[2], raw: line });
+      continue;
+    }
+    if (looksLikeAvg(nums[0]) && looksLikeAvg(nums[nums.length - 1])) {
+      pairs.push({
+        kind: "avg",
+        a: restoreCompactAvg(nums[0]),
+        b: restoreCompactAvg(nums[nums.length - 1]),
+        raw: line,
+      });
+      continue;
+    }
+    if (pct) {
+      pairs.push({ kind: "pct", a: nums[0], b: nums[1], raw: line });
+      continue;
+    }
+    if (darts) {
+      pairs.push({ kind: "darts", a: nums[0], b: nums[1], raw: line });
+      continue;
+    }
+    const a = nums[0];
+    const b = nums[1];
+    if (!isInt(a) || !isInt(b)) continue;
+    pairs.push({ kind: "int", a, b, raw: line });
+  }
+  return pairs;
+}
+
+function assignPair(stats, key, pair, homeFirst) {
+  if (!pair) return;
+  const homeKey = `home${key}`;
+  const awayKey = `away${key}`;
+  const left = homeFirst ? pair.a : pair.b;
+  const right = homeFirst ? pair.b : pair.a;
+  if (stats[homeKey] == null && left != null) stats[homeKey] = left;
+  if (stats[awayKey] == null && right != null) stats[awayKey] = right;
+}
+
+function longestSmallIntRun(pairs) {
+  let best = [];
+  let cur = [];
+  for (const p of pairs) {
+    const small = p.kind === "int" && p.a >= 0 && p.a <= 40 && p.b >= 0 && p.b <= 40;
+    if (small) {
+      cur.push(p);
+      if (cur.length > best.length) best = cur.slice();
+    } else {
+      cur = [];
+    }
+  }
+  return best;
+}
+
+function applyMatchDetailsLayout(raw, stats, homeFirst) {
+  const pairs = extractLayoutPairs(raw);
+  if (!pairs.length) return;
+
+  const avgPairs = pairs.filter((p) => p.kind === "avg");
+  if (avgPairs.length) assignPair(stats, "Avg", avgPairs[0], homeFirst);
+
+  const frac = pairs.find((p) => p.kind === "frac");
+  if (frac && stats.homeLegs == null && stats.awayLegs == null) {
+    // In 501 each won leg is a checkout, so Checkouts made == legs won.
+    if ((frac.a === 5) !== (frac.b === 5) && frac.a <= 5 && frac.b <= 5) {
+      assignPair(stats, "Legs", frac, homeFirst);
+    }
+  }
+
+  const afterMeta = [];
+  let seenAvg = !avgPairs.length;
+  for (const p of pairs) {
+    if (p.kind === "avg") {
+      seenAvg = true;
+      continue;
+    }
+    if (!seenAvg) continue;
+    if (p.kind === "pct" || p.kind === "frac") continue;
+    afterMeta.push(p);
+  }
+  const finishPair = afterMeta.find(
+    (p) => p.kind === "int" && p.a <= 170 && p.b <= 170 && Math.min(p.a, p.b) < 100 && Math.max(p.a, p.b) >= 40
+  );
+  if (finishPair) assignPair(stats, "Checkout", finishPair, homeFirst);
+
+  const dartsPairs = pairs.filter((p) => p.kind === "darts");
+  if (dartsPairs.length) assignPair(stats, "BestLeg", dartsPairs[0], homeFirst);
+
+  const run = longestSmallIntRun(pairs);
+  // Page 2 of MATCH DETAILS starts with 180 counts (small integers), not best-leg darts.
+  if (run.length >= 6 && run[0].a <= 12 && run[0].b <= 12) {
+    PAGE2_BANDS.forEach((key, i) => {
+      if (run[i]) assignPair(stats, key, run[i], homeFirst);
+    });
+  }
 }
 
 export function parseDartCounterText(text, homeName, awayName, extra = {}) {
@@ -206,6 +381,7 @@ export function parseDartCounterText(text, homeName, awayName, extra = {}) {
     awayBlock = raw.slice(0, mid);
   }
 
+  applyMatchDetailsLayout(raw, stats, homeFirst);
   applyLabelPairs(raw, stats, homeFirst);
 
   const home = parsePlayerBlock(homeBlock);
