@@ -94,6 +94,125 @@ check("overlay copies extracted legs onto admin fields", overlay.homeLegs === 5 
 check("overlay skips played fixtures", overlayExtractedStats({ status: "played", homeLegs: 5, extractedStats: { homeLegs: 1 } }).homeLegs === 5);
 check("empty extracted is not numeric", hasNumericExtracted({ pending: true, rawText: "hi", extractedAt: "x" }) === false);
 
+const matchDetails = `
+MATCH DETAILS
+BEST OF 9 LEGS - 501
+Gordon                    Jason
+1                         5
+43.21  3-dart average  46.28
+52.67  First 9 avg.  63.78
+50.00%  Checkout rate  11.36%
+1/2  Checkouts  5/44
+16  Highest finish  60
+121  Highest score  180
+32 DARTS  Best leg  22 DARTS
+32 DARTS  Worst leg  54 DARTS
+0  180  1
+0  160+  0
+0  140+  1
+1  120+  1
+1  100+  3
+7  80+  8
+7  60+  8
+17  40+  18
+`;
+const details = parseDartCounterText(matchDetails, "Gordon Rodman", "Jay Jay", {
+  homeDartcounterName: "Gordon Rodman",
+  awayDartcounterName: "Jason jackson",
+  homeNickname: "Viking",
+  awayNickname: "JJ",
+});
+check("MATCH DETAILS score 1-5", details.homeLegs === 1 && details.awayLegs === 5);
+check("MATCH DETAILS 3-dart average, not First 9", details.homeAvg === 43.21 && details.awayAvg === 46.28);
+check("MATCH DETAILS highest finish is checkout", details.homeCheckout === 16 && details.awayCheckout === 60);
+check("MATCH DETAILS best leg darts", details.homeBestLeg === 32 && details.awayBestLeg === 22);
+check("MATCH DETAILS 180 count not highest score", details.home180 === 0 && details.away180 === 1);
+check("MATCH DETAILS 140+", details.home140 === 0 && details.away140 === 1);
+check("MATCH DETAILS 100+", details.home100 === 1 && details.away100 === 3);
+check("MATCH DETAILS 80+", details.home80 === 7 && details.away80 === 8);
+check("MATCH DETAILS 60+", details.home60 === 7 && details.away60 === 8);
+check("MATCH DETAILS ignores 40+", details.home40 == null && details.away40 == null);
+
+const messyOcr = `
+MATCH DETAILS
+Gordon Jason
+43.21 46.28
+5267 6378
+50.00% 11.36%
+16 60
+121 180
+32 DARTS 22 DARTS
+32 DARTS 54 DARTS
+0 1
+0 0
+0 1
+1 1
+1 3
+] 8
+] 8
+17 18
+`;
+const messy = parseDartCounterText(messyOcr, "Gordon Rodman", "Jay Jay", {
+  homeDartcounterName: "Gordon Rodman",
+  awayDartcounterName: "Jason jackson",
+});
+check("messy OCR 3DA from first decimal pair", messy.homeAvg === 43.21 && messy.awayAvg === 46.28);
+check("messy OCR compact 5267 is First 9 not 3DA", messy.homeAvg === 43.21);
+check("messy OCR highest finish", messy.homeCheckout === 16 && messy.awayCheckout === 60);
+check("messy OCR best leg", messy.homeBestLeg === 32 && messy.awayBestLeg === 22);
+check("messy OCR 180s from page-2 run", messy.home180 === 0 && messy.away180 === 1);
+check("messy OCR ] reads as 7 for 80+", messy.home80 === 7 && messy.away80 === 8);
+check("messy OCR 60+", messy.home60 === 7 && messy.away60 === 8);
+check("messy OCR 100+", messy.home100 === 1 && messy.away100 === 3);
+
+const headerScore = parseDartCounterText(
+  `MATCH DETAILS\nGordon Jason\n1] 5\n43.21 46.28`,
+  "Gordon Rodman",
+  "Jay Jay",
+  { awayDartcounterName: "Jason jackson" }
+);
+check("header score box 1] 5", headerScore.homeLegs === 1 && headerScore.awayLegs === 5);
+
+const checkoutsAsLegs = parseDartCounterText(
+  `Gordon Jason\n43.21 46.28\n1/2  Checkouts  5/44\n16 60`,
+  "Gordon Rodman",
+  "Jay Jay",
+  { awayDartcounterName: "Jason jackson" }
+);
+check("501 checkouts made fill legs when score is missing", checkoutsAsLegs.homeLegs === 1 && checkoutsAsLegs.awayLegs === 5);
+
+const liveOcr = `
+STRAIGHT IN | DOUBLE OUT
+ys ms) 5 S2(9
+43.21 46.28
+52.67 63.78
+50.00% Thd6%
+1/2 5/44
+16 G0
+121 180
+32 DARTS 22 DARTS
+32 DARTS 54 DARTS
+0 I
+0 0
+0 I
+I I
+I 3
+] B
+] B
+1 18
+`;
+const live = parseDartCounterText(liveOcr, "Gordon Rodman", "Jay Jay", {
+  homeDartcounterName: "Gordon Rodman",
+  awayDartcounterName: "Jason jackson",
+});
+check("live OCR does not treat 5 S2 as the score", !(live.homeLegs === 5 && live.awayLegs === 2));
+check("live OCR legs from checkouts 1/2 5/44", live.homeLegs === 1 && live.awayLegs === 5);
+check("live OCR 3DA", live.homeAvg === 43.21 && live.awayAvg === 46.28);
+check("live OCR G0 is 60 checkout", live.homeCheckout === 16 && live.awayCheckout === 60);
+check("live OCR best leg not 180s", live.homeBestLeg === 32 && live.awayBestLeg === 22 && live.home180 === 0 && live.away180 === 1);
+check("live OCR I/] /B page-2 bands", live.home100 === 1 && live.away100 === 3 && live.home80 === 7 && live.away80 === 8 && live.home60 === 7 && live.away60 === 8);
+check("live OCR 140+", live.home140 === 0 && live.away140 === 1);
+
 if (failures) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);

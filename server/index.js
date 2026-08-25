@@ -561,6 +561,7 @@ function withNames(db, f) {
     awayNickname: db.users.find((u) => u.id === f.awayId)?.nickname || "",
     when: fixtureScheduleLabel(f),
     extractedPending: Boolean(hasNumericExtracted(f.extractedStats) && f.status !== "played"),
+    needsConfirm: f.status !== "played" && (Boolean(shot1 && shot2) || f.status === "submitted"),
     scheduleAcceptRequired: !skipsVisitorAccept(db, f),
     scheduleAgreed: f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f),
     canUploadScreenshots: (f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f)) && f.status !== "played" && shotCount(f) < 2,

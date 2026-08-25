@@ -126,43 +126,80 @@ async function fetchShotAsDataUrl(id, slot) {
   if (!res.ok) throw new Error(`Could not load screenshot ${slot}`);
   return fileToDataUrl(await res.blob());
 }
-async function prepareShotForOcr(src) {
-  try {
-    const img = await loadImageEl(src);
-    const scale = img.width < 900 || img.height < 900 ? 2 : 1;
-    const w = Math.max(1, Math.round(img.width * scale));
-    const h = Math.max(1, Math.round(img.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, w, h);
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const d = imageData.data;
-    let sum = 0;
-    for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
-    const invert = sum / (d.length / 4) < 110;
-    const contrast = 1.4;
-    for (let i = 0; i < d.length; i += 4) {
-      let r = d[i];
-      let g = d[i + 1];
-      let b = d[i + 2];
-      if (invert) {
-        r = 255 - r;
-        g = 255 - g;
-        b = 255 - b;
-      }
+function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale = 1 } = {}) {
+  const w = Math.max(1, Math.round(sw * scale));
+  const h = Math.max(1, Math.round(sh * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i];
+    let g = d[i + 1];
+    let b = d[i + 2];
+    if (invert) {
+      r = 255 - r;
+      g = 255 - g;
+      b = 255 - b;
+    }
+    if (contrast !== 1) {
       r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
       g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
       b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
-      const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-      d[i] = d[i + 1] = d[i + 2] = y;
     }
-    ctx.putImageData(imageData, 0, 0);
-    return canvas.toDataURL("image/png");
-  } catch {
-    return src;
+    const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    d[i] = d[i + 1] = d[i + 2] = y;
   }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+function findOrangeBand(img) {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const { data, width, height } = ctx.getImageData(0, 0, img.width, img.height);
+  let start = -1;
+  let end = -1;
+  for (let y = 0; y < height; y++) {
+    let orange = 0;
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (r > 180 && g > 80 && g < 210 && b < 90 && r > g + 20) orange++;
+    }
+    if (orange / width > 0.18) {
+      if (start < 0) start = y;
+      end = y;
+    }
+  }
+  return start >= 0 && end - start > 40 ? { start, end } : null;
+}
+function dartCounterOcrVariants(img) {
+  const w = img.width;
+  const h = img.height;
+  const status = Math.round(h * 0.05);
+  const variants = [];
+  const orange = findOrangeBand(img);
+  if (orange) {
+    variants.push(canvasSlice(img, 0, Math.max(status, orange.start - 8), w, orange.end - Math.max(status, orange.start - 8) + 8, { contrast: 1.2 }));
+    const bodyY = Math.min(h - 8, orange.end + 6);
+    const bodyH = Math.max(40, Math.round(h * 0.96) - bodyY);
+    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { contrast: 1.15 }));
+    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { invert: true, contrast: 1.8 }));
+  } else {
+    const cropY = status;
+    const cropH = Math.max(40, Math.round(h * 0.92) - cropY);
+    variants.push(canvasSlice(img, 0, cropY, w, cropH, { invert: true, contrast: 1.6, scale: w < 900 ? 2 : 1 }));
+    variants.push(canvasSlice(img, 0, cropY, w, cropH, { contrast: 1.3 }));
+  }
+  return variants;
 }
 function nDisp(v) {
   return v || v === 0 ? v : "";
@@ -311,23 +348,6 @@ function loadTesseract() {
   return tesseractLoader;
 }
 
-async function ocrImage(src) {
-  const Tesseract = await loadTesseract();
-  const worker = await Tesseract.createWorker("eng", 1, {
-    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
-    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js",
-    langPath: "https://tessdata.projectnaptha.com/4.0.0",
-  });
-  try {
-    await worker.setParameters({ tessedit_pageseg_mode: "6" });
-    const prepared = await prepareShotForOcr(src);
-    const { data } = await worker.recognize(prepared);
-    return data?.text || "";
-  } finally {
-    await worker.terminate();
-  }
-}
-
 async function ocrFixtureStats(fixture, extraSrcs = []) {
   let srcs = [...extraSrcs].filter(Boolean);
   if (!srcs.length) {
@@ -336,13 +356,29 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
   }
   const unique = [...new Set(srcs.filter(Boolean))];
   if (!unique.length) return null;
+  const Tesseract = await loadTesseract();
+  const worker = await Tesseract.createWorker("eng", 1, {
+    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js",
+    langPath: "https://tessdata.projectnaptha.com/4.0.0",
+  });
   const texts = [];
-  for (const src of unique) {
-    try {
-      texts.push(await ocrImage(src));
-    } catch (err) {
-      console.warn("[ocr] could not read", src?.slice?.(0, 48) || src, err.message);
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: "6" });
+    for (const src of unique) {
+      try {
+        const img = await loadImageEl(src);
+        const variants = dartCounterOcrVariants(img);
+        for (const variant of variants) {
+          const { data } = await worker.recognize(variant);
+          if (data?.text?.trim()) texts.push(data.text);
+        }
+      } catch (err) {
+        console.warn("[ocr] could not read screenshot", err.message);
+      }
     }
+  } finally {
+    await worker.terminate();
   }
   const joined = texts.join("\n\n").trim();
   if (!joined) {
@@ -355,7 +391,7 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
     homeNickname: fixture.homeNickname,
     awayNickname: fixture.awayNickname,
   });
-  if (!merged.rawText) merged.rawText = joined.slice(0, 2500);
+  if (!merged.rawText) merged.rawText = joined.slice(0, 4000);
   return merged;
 }
 function fixtureStatus(f) {
@@ -1207,7 +1243,7 @@ async function pageAdmin() {
     return `<option value="${p.id}">${esc(p.name)}${tag}${both} · ${esc(where)}</option>`;
   };
   const pending = d.applications;
-  const review = d.fixtures.filter((f) => f.status === "submitted" || f.hasBothScreenshots);
+  const review = d.fixtures.filter((f) => f.needsConfirm);
   const selectedReview = review.find((f) => f.id === Number(state.selectedResultId)) || review[0];
   if (selectedReview && selectedReview.hasBothScreenshots && !hasNumericExtracted(selectedReview.extractedStats)) {
     state._pendingScanId = selectedReview.id;
