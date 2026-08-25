@@ -49,7 +49,7 @@ function newMatchEmail(to, opp, f, leagueName) {
   const html =
     `<p>Hi ${esc(displayName(to))},</p>` +
     `<p>You have a new match in <b>${esc(leagueName)}</b> (Week ${esc(f.week)}) against <b>${esc(oppName)}</b>.</p>` +
-    `<p>Open <b>My Matches</b> to agree a date and time — you'll each see it in your own local time.</p>` +
+    `<p>Open <b>My Matches</b> — the home player proposes a date and time, then the visiting player accepts it. You'll each see it in your own local time.</p>` +
     `<p>— TSH Darts League</p>`;
   return { to: to.email, subject, html, userId: to.id, type: "new_match", fixtureId: f.id };
 }
@@ -59,7 +59,7 @@ function weeklyEmail(to, opp, f, leagueName) {
   const html =
     `<p>Hi ${esc(displayName(to))},</p>` +
     `<p>You have an upcoming match in <b>${esc(leagueName)}</b> (Week ${esc(f.week)}) against <b>${esc(oppName)}</b>.</p>` +
-    `<p>Open <b>My Matches</b> to agree a date and time, then play on DartCounter.</p>` +
+    `<p>Open <b>My Matches</b> if you still need to accept the home player's proposed time, then play on DartCounter.</p>` +
     `<p>— TSH Darts League</p>`;
   return { to: to.email, subject, html, userId: to.id, type: "weekly", fixtureId: f.id };
 }

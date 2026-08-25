@@ -268,6 +268,14 @@ input[type="datetime-local"] {
   color: #fff;
   padding: 0.55rem 0.7rem;
 }
+.btn-gold:disabled,
+button.btn-gold:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.shot-card input[type="file"] {
+  width: 100%;
+}
 @media (max-width: 900px) {
   .stats-desk {
     grid-template-columns: 1fr;
