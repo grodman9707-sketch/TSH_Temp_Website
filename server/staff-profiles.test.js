@@ -63,10 +63,10 @@ try {
   const listed = await api(port, "/api/staff-profiles");
   check("public staff list ok", listed.status === 200 && listed.data.ok);
   check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
-  const founderCard = (listed.data.profiles || []).find((p) => p.status === "owner");
+  const founderCard = (listed.data.profiles || []).find((p) => p.userId === 1);
   check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
-  check("owner card uses Owner status", founderCard?.statusLabel === "Owner");
-  check("owner card has no league", !founderCard?.leagueTitle);
+  check("one card per person", (listed.data.profiles || []).filter((p) => p.userId === 1).length === 1);
+  check("owner card lists Owner role", founderCard?.roles?.includes("Owner") && founderCard?.roleLabel === "Owner");
 
   const owner = await api(port, "/api/auth/login", {
     method: "POST",
@@ -76,7 +76,7 @@ try {
   const ownerTok = owner.data.token;
 
   const me = await api(port, "/api/auth/me", { token: ownerTok });
-  check("me includes owner contact profile", (me.data.staffProfiles || []).some((p) => p.status === "owner"));
+  check("me includes owner contact profile", (me.data.staffProfiles || []).some((p) => p.roles?.includes("Owner")));
 
   const fillOwner = await api(port, "/api/account/staff-profile", {
     method: "POST",
@@ -88,7 +88,7 @@ try {
   });
   check("owner can fill contact card", fillOwner.status === 200 && fillOwner.data.ok);
   const afterFill = await api(port, "/api/staff-profiles");
-  const ownerPublic = (afterFill.data.profiles || []).find((p) => p.status === "owner");
+  const ownerPublic = (afterFill.data.profiles || []).find((p) => p.userId === 1);
   check("public listing shows Discord", ownerPublic?.discordUrl === "https://discord.com/users/111");
   check("public listing shows fallback email", ownerPublic?.contactEmail === "owner-fallback@example.com");
 
@@ -121,10 +121,24 @@ try {
   });
   check("assign division admin", assignAdmin.status === 200);
   const withAdmin = await api(port, "/api/staff-profiles");
-  const adminCard = (withAdmin.data.profiles || []).find((p) => p.userId === playerId && p.status === "admin");
-  check("admin profile generated for league", Boolean(adminCard) && /League 1/.test(adminCard.leagueTitle || ""));
-  check("admin status label", adminCard?.statusLabel === "Admin");
+  const adminCard = (withAdmin.data.profiles || []).find((p) => p.userId === playerId);
+  check("admin profile generated for league", Boolean(adminCard) && (adminCard.leagueTitles || []).some((t) => /League 1/.test(t)));
+  check("admin role label", adminCard?.roles?.includes("Admin") && adminCard?.roleLabel === "Admin");
   check("new admin card prefilled with account email", adminCard?.contactEmail === "alex-admin@test.com");
+
+  const assignOwnerAlsoAdmin = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: 1, leagueId: 4 },
+  });
+  check("owner can also be a division admin", assignOwnerAlsoAdmin.status === 200);
+  const ownerPlusAdmin = (await api(port, "/api/staff-profiles")).data.profiles.find((p) => p.userId === 1);
+  check("owner keeps a single card", (await api(port, "/api/staff-profiles")).data.profiles.filter((p) => p.userId === 1).length === 1);
+  check(
+    "owner card lists Owner and Admin together",
+    ownerPlusAdmin?.roles?.includes("Owner") && ownerPlusAdmin?.roles?.includes("Admin") && ownerPlusAdmin?.roleLabel === "Owner · Admin"
+  );
+  check("owner card still shows Discord once", ownerPlusAdmin?.discordUrl === "https://discord.com/users/111");
 
   const assignHead = await api(port, "/api/admin/assign-head-admin", {
     method: "POST",
@@ -133,22 +147,21 @@ try {
   });
   check("assign head admin", assignHead.status === 200);
   const withDeputy = await api(port, "/api/staff-profiles");
-  const deputyCard = (withDeputy.data.profiles || []).find((p) => p.userId === playerId && p.status === "deputy");
-  check("deputy profile generated for head admin", deputyCard?.statusLabel === "Deputy Admin");
-  check("same person can hold admin and deputy cards", Boolean(adminCard) && Boolean(deputyCard));
+  const deputyCard = (withDeputy.data.profiles || []).find((p) => p.userId === playerId);
+  check("one card lists Deputy Admin and Admin", deputyCard?.roleLabel === "Deputy Admin · Admin");
+  check("still a single card for that person", (withDeputy.data.profiles || []).filter((p) => p.userId === playerId).length === 1);
 
   const fillAdmin = await api(port, "/api/account/staff-profile", {
     method: "POST",
     token: playerTok,
     body: {
-      profileId: adminCard.id,
       discordUrl: "https://discord.com/users/333",
       contactEmail: "alex-league@test.com",
     },
   });
-  check("division admin fills their league card", fillAdmin.status === 200);
+  check("division admin fills their card", fillAdmin.status === 200);
   const filledPublic = await api(port, "/api/staff-profiles");
-  const filledAdmin = (filledPublic.data.profiles || []).find((p) => p.id === adminCard.id);
+  const filledAdmin = (filledPublic.data.profiles || []).find((p) => p.userId === playerId);
   check("filled Discord is public", filledAdmin?.discordUrl === "https://discord.com/users/333");
   check("filled email is public", filledAdmin?.contactEmail === "alex-league@test.com");
 
@@ -166,14 +179,9 @@ try {
   });
   check("revoke division admin", revokeAdmin.status === 200 && !revokeAdmin.data.pending);
   const afterRevokeAdmin = await api(port, "/api/staff-profiles");
-  check(
-    "league admin card erased after removal",
-    !(afterRevokeAdmin.data.profiles || []).some((p) => p.userId === playerId && p.status === "admin")
-  );
-  check(
-    "deputy card kept when only league admin is removed",
-    (afterRevokeAdmin.data.profiles || []).some((p) => p.userId === playerId && p.status === "deputy")
-  );
+  const afterRevokeCard = (afterRevokeAdmin.data.profiles || []).find((p) => p.userId === playerId);
+  check("Admin role dropped after league removal", afterRevokeCard && !afterRevokeCard.roles.includes("Admin"));
+  check("Deputy Admin kept on the same card", afterRevokeCard?.roles?.includes("Deputy Admin"));
 
   const replace = await api(port, "/api/admin/assign-admin", {
     method: "POST",
@@ -182,9 +190,9 @@ try {
   });
   check("reassign as admin of another league", replace.status === 200);
   const afterReplace = await api(port, "/api/staff-profiles");
-  const replacedCard = (afterReplace.data.profiles || []).find((p) => p.userId === playerId && p.status === "admin");
-  check("replacement generates a new league card", /League 2/.test(replacedCard?.leagueTitle || ""));
-  check("old League 1 card stays gone", !(afterReplace.data.profiles || []).some((p) => p.status === "admin" && /League 1/.test(p.leagueTitle || "")));
+  const replacedCard = (afterReplace.data.profiles || []).find((p) => p.userId === playerId);
+  check("card lists the new league", (replacedCard?.leagueTitles || []).some((t) => /League 2/.test(t)));
+  check("old League 1 is gone", !(replacedCard?.leagueTitles || []).some((t) => /League 1/.test(t)));
 
   const revokeHead = await api(port, "/api/admin/revoke-admin", {
     method: "POST",
@@ -193,14 +201,9 @@ try {
   });
   check("revoke head admin", revokeHead.status === 200);
   const afterHead = await api(port, "/api/staff-profiles");
-  check(
-    "deputy card erased after head admin removal",
-    !(afterHead.data.profiles || []).some((p) => p.userId === playerId && p.status === "deputy")
-  );
-  check(
-    "league admin card still present",
-    (afterHead.data.profiles || []).some((p) => p.userId === playerId && p.status === "admin")
-  );
+  const afterHeadCard = (afterHead.data.profiles || []).find((p) => p.userId === playerId);
+  check("Deputy Admin dropped after head admin removal", afterHeadCard && !afterHeadCard.roles.includes("Deputy Admin"));
+  check("Admin role still present", afterHeadCard?.roles?.includes("Admin"));
 
   const other = await api(port, "/api/auth/register", {
     method: "POST",
@@ -224,7 +227,7 @@ try {
   const withSecond = await api(port, "/api/staff-profiles");
   check(
     "second owner card generated",
-    (withSecond.data.profiles || []).filter((p) => p.status === "owner").length === 2
+    (withSecond.data.profiles || []).filter((p) => p.roles?.includes("Owner")).length === 2
   );
 
   const requestRemove = await api(port, "/api/admin/revoke-admin", {
@@ -236,7 +239,7 @@ try {
   const stillOwner = await api(port, "/api/staff-profiles");
   check(
     "owner card remains until approved",
-    (stillOwner.data.profiles || []).some((p) => p.userId === otherId && p.status === "owner")
+    (stillOwner.data.profiles || []).some((p) => p.userId === otherId && p.roles?.includes("Owner"))
   );
   const approvalId = requestRemove.data.approval.id;
   const approve = await api(port, `/api/admin/approvals/${approvalId}/approve`, {
@@ -248,7 +251,7 @@ try {
   const afterOwnerGone = await api(port, "/api/staff-profiles");
   check(
     "owner card erased after approved removal",
-    !(afterOwnerGone.data.profiles || []).some((p) => p.userId === otherId && p.status === "owner")
+    !(afterOwnerGone.data.profiles || []).some((p) => p.userId === otherId)
   );
 
   const doomed = await api(port, "/api/auth/register", {
@@ -286,7 +289,7 @@ try {
   );
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
-  check("contact page renders admin team", appJs.includes("Admin team") && appJs.includes("/api/staff-profiles"));
+  check("contact page uses Role, not Status", appJs.includes(">ROLE<") && !appJs.includes(">STATUS<"));
 } finally {
   child.kill("SIGTERM");
 }

@@ -330,15 +330,53 @@ function publicStaffProfile(p, db) {
   };
 }
 function publicStaffProfiles(db) {
-  const order = { owner: 0, deputy: 1, admin: 2 };
-  return (db.adminProfiles || [])
-    .map((p) => publicStaffProfile(p, db))
-    .filter(Boolean)
+  const roleOrder = ["owner", "deputy", "admin"];
+  const roleName = { owner: "Owner", deputy: "Deputy Admin", admin: "Admin" };
+  const grouped = new Map();
+  for (const row of (db.adminProfiles || []).map((p) => publicStaffProfile(p, db)).filter(Boolean)) {
+    let card = grouped.get(row.userId);
+    if (!card) {
+      card = {
+        id: row.id,
+        userId: row.userId,
+        name: row.name,
+        nickname: row.nickname,
+        hasAvatar: row.hasAvatar,
+        avatarUrl: row.avatarUrl,
+        roleKeys: [],
+        leagues: [],
+        discordUrl: row.discordUrl || "",
+        contactEmail: row.contactEmail || "",
+      };
+      grouped.set(row.userId, card);
+    }
+    if (row.status && !card.roleKeys.includes(row.status)) card.roleKeys.push(row.status);
+    if (row.leagueId && !card.leagues.some((l) => l.id === row.leagueId)) {
+      card.leagues.push({ id: row.leagueId, title: row.leagueTitle });
+    }
+    if (row.discordUrl) card.discordUrl = row.discordUrl;
+    if (row.contactEmail) card.contactEmail = row.contactEmail;
+  }
+  return [...grouped.values()]
+    .map((card) => {
+      const roleKeys = roleOrder.filter((key) => card.roleKeys.includes(key));
+      const roles = roleKeys.map((key) => roleName[key]);
+      const leagueTitles = card.leagues.map((l) => l.title).filter(Boolean);
+      return {
+        ...card,
+        roleKeys,
+        roles,
+        roleLabel: roles.join(" · "),
+        status: roleKeys[0] || "admin",
+        statusLabel: roles.join(" · "),
+        leagueId: card.leagues[0]?.id || null,
+        leagueTitle: leagueTitles.join(" · "),
+        leagueTitles,
+      };
+    })
     .sort((a, b) => {
-      const so = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+      const so = roleOrder.indexOf(a.roleKeys[0] || "admin") - roleOrder.indexOf(b.roleKeys[0] || "admin");
       if (so) return so;
-      const lt = String(a.leagueTitle || "").localeCompare(String(b.leagueTitle || ""));
-      if (lt) return lt;
       return String(a.name || "").localeCompare(String(b.name || ""));
     });
 }
