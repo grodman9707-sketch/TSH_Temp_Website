@@ -1,4 +1,4 @@
-import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats } from "./ocrParse.js";
+import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -126,7 +126,7 @@ async function fetchShotAsDataUrl(id, slot) {
   if (!res.ok) throw new Error(`Could not load screenshot ${slot}`);
   return fileToDataUrl(await res.blob());
 }
-function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale = 1 } = {}) {
+function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale = 1, threshold = 0 } = {}) {
   const w = Math.max(1, Math.round(sw * scale));
   const h = Math.max(1, Math.round(sh * scale));
   const canvas = document.createElement("canvas");
@@ -150,11 +150,28 @@ function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale 
       g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
       b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
     }
-    const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    let y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    if (threshold) y = y >= threshold ? 255 : 0;
     d[i] = d[i + 1] = d[i + 2] = y;
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas.toDataURL("image/png");
+}
+function sampleLuma(img) {
+  const w = 48;
+  const h = Math.max(1, Math.round((img.height / Math.max(img.width, 1)) * w));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let sum = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  return n ? sum / n : 255;
 }
 function findOrangeBand(img) {
   const canvas = document.createElement("canvas");
@@ -184,20 +201,21 @@ function findOrangeBand(img) {
 function dartCounterOcrVariants(img) {
   const w = img.width;
   const h = img.height;
-  const status = Math.round(h * 0.05);
-  const variants = [];
+  const invert = shouldInvertLuma(sampleLuma(img));
+  const scale = w < 900 ? 2 : 1;
+  const contrast = invert ? 1.85 : 1.35;
+  const threshold = invert ? 148 : 162;
+  const prep = (sx, sy, sw, sh) => canvasSlice(img, sx, sy, sw, sh, { invert, contrast, scale, threshold });
+  const variants = [prep(0, 0, w, h)];
   const orange = findOrangeBand(img);
   if (orange) {
-    variants.push(canvasSlice(img, 0, Math.max(status, orange.start - 8), w, orange.end - Math.max(status, orange.start - 8) + 8, { contrast: 1.2 }));
-    const bodyY = Math.min(h - 8, orange.end + 6);
-    const bodyH = Math.max(40, Math.round(h * 0.96) - bodyY);
-    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { contrast: 1.15 }));
-    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { invert: true, contrast: 1.8 }));
+    const top = Math.max(0, orange.start - 8);
+    variants.push(prep(0, top, w, Math.min(h, orange.end + 8) - top));
+    const bodyY = Math.min(h - 8, orange.end + 4);
+    if (h - bodyY > 40) variants.push(prep(0, bodyY, w, h - bodyY));
   } else {
-    const cropY = status;
-    const cropH = Math.max(40, Math.round(h * 0.92) - cropY);
-    variants.push(canvasSlice(img, 0, cropY, w, cropH, { invert: true, contrast: 1.6, scale: w < 900 ? 2 : 1 }));
-    variants.push(canvasSlice(img, 0, cropY, w, cropH, { contrast: 1.3 }));
+    const cropY = Math.round(h * 0.04);
+    variants.push(prep(0, cropY, w, Math.max(40, Math.round(h * 0.92) - cropY)));
   }
   return variants;
 }
@@ -369,10 +387,13 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
       try {
         const img = await loadImageEl(src);
         const variants = dartCounterOcrVariants(img);
+        const results = [];
         for (const variant of variants) {
           const { data } = await worker.recognize(variant);
-          if (data?.text?.trim()) texts.push(data.text);
+          if (data?.text?.trim()) results.push({ text: data.text, confidence: data.confidence });
         }
+        const best = pickBestOcrText(results);
+        if (best) texts.push(best);
       } catch (err) {
         console.warn("[ocr] could not read screenshot", err.message);
       }
@@ -463,6 +484,7 @@ function scheduleActions(f) {
       <button class="btn-gold">${proposed ? "RE-PROPOSE" : "PROPOSE"}</button>
     </form>`;
     if (proposed && !skipAccept) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
+    else if (skipAccept) bits += `<div class="mt-1 text-xs text-muted">Visitor accept is skipped for this match only. Screenshots can be uploaded without it.</div>`;
   } else if (away && proposed && !skipAccept) {
     bits += `<form class="mt-3" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`;
   } else if (away && f.scheduleStatus !== "agreed" && !skipAccept) {
@@ -564,7 +586,7 @@ async function api(path, options = {}) {
 }
 function go(path) {
   history.pushState({}, "", path);
-  state.path = path;
+  state.path = String(path).split("#")[0] || "/";
   state.menu = false;
   state.error = "";
   state.notice = "";
@@ -627,6 +649,11 @@ function regionalCrest(slug) {
   if (slug === "americas" || slug === "america") return "americas";
   return "main";
 }
+function navActive(href) {
+  const path = String(state.path || "/").split("#")[0];
+  if (href === "/about") return path === "/about" || path === "/contact";
+  return path === href;
+}
 function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
@@ -634,7 +661,7 @@ function layout(inner, { arena = false, home = false } = {}) {
     ["/apply", "Apply"],
     ["/announcements", "News"],
     ["/rules", "Rules"],
-    ["/contact", "Contact"],
+    ["/about", "About Us"],
   ];
   if (state.user) {
     links.push(["/dashboard", "Dashboard"], ["/my-matches", "My Matches"]);
@@ -652,7 +679,7 @@ function layout(inner, { arena = false, home = false } = {}) {
           ${links
             .map(
               ([href, label]) =>
-                `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${state.path === href ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
+                `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
             )
             .join("")}
         </nav>
@@ -900,7 +927,7 @@ async function pageLeague(slug, id) {
                   </a>`
               )
               .join("")}</div>`
-          : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from Contact.</p>`,
+          : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from About Us.</p>`,
         "mt-4"
       )}
       <div class="mt-4 flex gap-2">
@@ -1104,7 +1131,7 @@ async function pageDashboard() {
   const mineCard = mine[0];
   const staffContactPanel = mineCard
     ? `<div class="mt-10">${panel(`<h2 class="text-lg font-bold">Contact card</h2>
-        <p class="mt-1 text-sm text-muted">This is your card on the Contact page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
+        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
         <form class="mt-4 space-y-3" data-form="STAFFPROFILE">
           <div class="text-xs font-bold tracking-widest gold">ROLE</div>
           <div class="font-semibold">${esc(mineCard.roleLabel || mineCard.statusLabel || "")}${
@@ -1263,7 +1290,7 @@ async function pageRules() {
     { arena: true }
   );
 }
-async function pageContact() {
+async function contactBlock() {
   const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
   const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
   const supportEmail = d.supportEmail || "Support@tshdartsleague.com";
@@ -1302,10 +1329,9 @@ async function pageContact() {
         })
         .join("")}</div>`
     : `<p class="mt-6 text-sm text-muted">Staff cards appear here when someone is given a league role.</p>`;
-  return layout(
-    `<div class="mx-auto max-w-3xl px-4 py-10">
+  return `<section id="contact" class="about-section mt-10">
       ${panel(`<div class="text-center">
-        <h1 class="text-3xl font-extrabold">Contact</h1>
+        <h2 class="text-3xl font-extrabold">Contact</h2>
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
         <div class="mt-6 space-y-4">
           <div>
@@ -1321,6 +1347,34 @@ async function pageContact() {
       <h2 class="admin-team-title">Admin Team</h2>
       <p class="discord-first">Discord First! E-mail if that Fails!</p>
       ${cards}
+    </section>`;
+}
+function renderAboutSection(section) {
+  const paras = (section.paragraphs || []).map((p) => `<p>${esc(p)}</p>`).join("");
+  const kicker = section.kicker ? `<p class="about-kicker">${esc(section.kicker)}</p>` : "";
+  return `<section id="${esc(section.id)}" class="about-section">
+    <h2>${esc(section.title)}</h2>
+    ${kicker}
+    ${paras}
+  </section>`;
+}
+async function pageAbout() {
+  const d = await api("/api/about").catch(() => ({ title: "About Us", intro: "", sections: [] }));
+  const sections = Array.isArray(d.sections) ? d.sections : [];
+  const toc = [
+    ...sections.map((s) => `<a href="/about#${esc(s.id)}" class="rules-toc-link">${esc(s.title)}</a>`),
+    `<a href="/about#contact" class="rules-toc-link">Contact</a>`,
+  ].join("");
+  const contact = await contactBlock();
+  return layout(
+    `<div class="mx-auto max-w-3xl px-4 py-10">${panel(`
+      <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
+      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "About Us")}</h1>
+      <p class="mt-4 text-sm leading-relaxed text-white/80">${esc(d.intro || "")}</p>
+      <nav class="rules-toc mt-6" aria-label="About contents">${toc}</nav>
+      <div class="about-doc mt-2">${sections.map(renderAboutSection).join("")}</div>
+    `)}
+    ${contact}
     </div>`,
     { arena: true }
   );
@@ -1486,7 +1540,7 @@ async function pageAdmin() {
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
-        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub.</p>
+        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub. The cards appear on About Us.</p>
         <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
@@ -1539,6 +1593,7 @@ async function pageAdmin() {
           <select name="homeId" required><option value="">Home</option>${everyone.map(playerOption).join("")}</select>
           <select name="awayId" required><option value="">Away</option>${everyone.map(playerOption).join("")}</select>
           <input name="date" type="date">
+          <label class="check-row md:col-span-5"><input type="checkbox" name="skipVisitorAccept" value="1"> Skip visitor accept for this match only (screenshots can go in without ACCEPT TIME)</label>
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
@@ -1561,8 +1616,15 @@ async function pageAdmin() {
                 .map(
                   (f) =>
                     `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
-                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}</span>
-                      <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}</span>
+                      <div class="flex flex-wrap gap-2">
+                        ${
+                          f.status !== "played"
+                            ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
+                            : ""
+                        }
+                        <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                      </div>
                     </div>`
                 )
                 .join("")
@@ -1630,7 +1692,7 @@ async function pageAdmin() {
 }
 
 function matchRoute(path) {
-  const q = path.split("?")[0];
+  const q = path.split("?")[0].split("#")[0];
   if (q === "/") return ["home"];
   if (q === "/regionals") return ["regionals"];
   let m = q.match(/^\/regionals\/([^/]+)$/);
@@ -1643,7 +1705,7 @@ function matchRoute(path) {
   if (q === "/dashboard") return ["dashboard"];
   if (q === "/my-matches") return ["matches"];
   if (q === "/rules") return ["rules"];
-  if (q === "/contact") return ["contact"];
+  if (q === "/about" || q === "/contact") return ["about"];
   if (q === "/announcements") return ["news"];
   if (q === "/admin") return ["admin"];
   m = q.match(/^\/player\/(\d+)$/);
@@ -1675,7 +1737,7 @@ async function render() {
       matches: pageMyMatches,
       player: () => pagePlayer(route[1]),
       rules: pageRules,
-      contact: () => pageContact(),
+      about: () => pageAbout(),
       news: pageNews,
       admin: pageAdmin,
     };
@@ -1684,6 +1746,11 @@ async function render() {
     if (fixtureId) {
       const el = document.getElementById(`fixture-${fixtureId}`);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const hash = location.hash.slice(1) || (location.pathname === "/contact" ? "contact" : "");
+    if (hash) {
+      const el = document.getElementById(hash);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     if (route[0] === "admin") queueAdminScan();
   } catch (err) {
@@ -1723,7 +1790,7 @@ document.addEventListener("click", async (e) => {
       return;
     }
     e.preventDefault();
-    go(a.pathname + a.search);
+    go(a.pathname + a.search + a.hash);
     return;
   }
   if (e.target.closest("[data-act=open-menu]")) {
@@ -1950,7 +2017,7 @@ document.addEventListener("submit", async (e) => {
         body: JSON.stringify(fd),
       });
       state.user = d.user;
-      state.notice = "Contact card saved. It is now on the Contact page.";
+      state.notice = "Contact card saved. It is now on the About Us page.";
       render();
     } else if (kind === "ACCOUNT") {
       const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });
@@ -1983,7 +2050,11 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE") {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Fixture created.";
+      state.notice = fd.skipVisitorAccept ? "Fixture created. Visitor accept is skipped for this match only." : "Fixture created.";
+      render();
+    } else if (kind === "SKIPACCEPT") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/skip-accept`, { method: "POST", body: JSON.stringify(fd) });
+      state.notice = fd.skipVisitorAccept === "1" ? "Visitor accept skipped for this match only." : "Visitor accept is required again for this match.";
       render();
     } else if (kind === "ADDPLAYER") {
       await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });

@@ -14,6 +14,8 @@ const root = path.join(__dirname, "..");
 const seedDbPath = path.join(root, "data", "db.json");
 const leagueRulesPath = path.join(root, "data", "leagueRules.json");
 const leagueRules = JSON.parse(fs.readFileSync(leagueRulesPath, "utf8"));
+const aboutPath = path.join(root, "data", "about.json");
+const aboutContent = JSON.parse(fs.readFileSync(aboutPath, "utf8"));
 const onRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME);
 function resolveDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
@@ -663,6 +665,10 @@ function migrate(db) {
       f.proposedTz = "";
       changed = true;
     }
+    if (!("skipVisitorAccept" in f)) {
+      f.skipVisitorAccept = false;
+      changed = true;
+    }
   }
   if (ensureAdminProfiles(db)) changed = true;
   if (changed) writeDb(db);
@@ -755,11 +761,11 @@ function fixtureScheduleLabel(f) {
   if (date && time) return `${date} ${time}`;
   return date || time || "";
 }
+function flagOn(v) {
+  return v === true || v === "1" || v === "on" || v === "true";
+}
 function skipsVisitorAccept(db, f) {
-  const league = db.leagues.find((l) => l.id === Number(f.leagueId));
-  if (!league) return false;
-  const regional = db.regionals.find((r) => r.id === league.regionalId);
-  return Boolean(regional && regional.slug === "europe" && /^league\s*1$/i.test(String(league.name || "")) && Number(f.week) === 1);
+  return Boolean(f && flagOn(f.skipVisitorAccept));
 }
 function withNames(db, f) {
   const shot1 = shotFile(f, 1);
@@ -830,6 +836,7 @@ function newFixture(partial) {
     proposedTz: "",
     extractedStats: null,
     ocrRawText: "",
+    skipVisitorAccept: false,
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
@@ -1032,6 +1039,7 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
   if (method === "GET" && p === "/api/rules") return json(res, 200, { ok: true, ...leagueRules });
+  if (method === "GET" && p === "/api/about") return json(res, 200, { ok: true, ...aboutContent });
   if (method === "GET" && p === "/api/staff-profiles") {
     if (ensureAdminProfiles(db)) writeDb(db);
     return json(res, 200, {
@@ -1163,7 +1171,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
@@ -1721,10 +1729,11 @@ async function handleApi(req, res, url) {
         awayId: away.id,
         date: body.date || new Date().toISOString().slice(0, 10),
         time: String(body.time || "").slice(0, 5),
+        skipVisitorAccept: flagOn(body.skipVisitorAccept),
       });
       db.fixtures.push(fixture);
       writeDb(db);
-      return json(res, 200, { ok: true, fixture });
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     if (method === "POST" && p === "/api/admin/fixtures/generate") {
       const leagueId = Number(body.leagueId);
@@ -1917,6 +1926,15 @@ async function handleApi(req, res, url) {
       db.fixtures = db.fixtures.filter((f) => !ids.has(f.id));
       writeDb(db);
       return json(res, 200, { ok: true, removed: toRemove.length });
+    }
+    const skipAcceptMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/skip-accept$/);
+    if (method === "POST" && skipAcceptMatch) {
+      const fixture = db.fixtures.find((f) => f.id === Number(skipAcceptMatch[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      fixture.skipVisitorAccept = flagOn(body.skipVisitorAccept);
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
     if (method === "POST" && deleteMatch) {

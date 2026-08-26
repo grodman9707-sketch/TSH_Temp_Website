@@ -1,0 +1,63 @@
+{
+  "title": "About Us",
+  "intro": "The Social Hub Darts League is built on competition, but it is held together by the people who show up.",
+  "sections": [
+    {
+      "id": "belief",
+      "title": "Our Belief",
+      "kicker": "DARTS IS MORE THAN JUST A GAME.",
+      "paragraphs": [
+        "As we get older, we realize that darts isn’t always about winning, hitting 180s, or having the highest average.",
+        "Sometimes, it’s simply about being there.",
+        "Being there with friends after a long and tiring day.",
+        "Standing at the oche, throwing a few darts, talking about life, laughing at our mistakes, and enjoying the little moments that we sometimes take for granted.",
+        "There will always be wins and losses.",
+        "There will be nights when everything goes right, and there will be nights when even the easiest shots seem impossible. But at the end of the day, the score is not what matters most.",
+        "The people you share the game with are.",
+        "Because someday, we may forget who won that match.",
+        "We may forget the score, the averages, or how many 180s were thrown.",
+        "But we will remember the friends who were there.",
+        "The laughter between games.",
+        "The friendly arguments.",
+        "The celebrations.",
+        "The struggles.",
+        "The late nights.",
+        "And all the memories.",
+        "Darts brings us to the oche, but friendship keeps us coming back.",
+        "So enjoy every throw, appreciate every game, and cherish the people beside you.",
+        "Because in the end, the greatest victory isn’t always winning the match—it’s having good friends to share the journey with."
+      ]
+    },
+    {
+      "id": "mission",
+      "title": "The League Mission Statement",
+      "paragraphs": [
+        "Our mission is to create a darts community where competition is valued, but connection is essential.",
+        "We believe the game is a vehicle for friendship, shared moments, and personal growth. Wins and losses come and go, but the people beside us define the experience.",
+        "We commit to fostering an environment where every throw is appreciated, every player is respected, and every night at the oche strengthens the bonds that keep us coming back.",
+        "Our goal is simple: play hard, support each other, and build memories that outlast the scores."
+      ]
+    },
+    {
+      "id": "creed",
+      "title": "League Creed",
+      "paragraphs": [
+        "We gather at the oche to compete, to grow, and to honor the friendships that define our league.",
+        "We celebrate the wins, learn from the losses, and value the people beside us above every score.",
+        "We play with integrity, support each other, and build memories that outlast the match.",
+        "This is our creed: show up, throw true, and strengthen the bonds that keep us coming back."
+      ]
+    },
+    {
+      "id": "oath",
+      "title": "Player’s Oath",
+      "paragraphs": [
+        "I step to the oche with respect for the game and the people who share it with me.",
+        "I give my best effort, win or lose, and I honor every throw.",
+        "I support my fellow players, celebrate their victories, and stand with them through their struggles.",
+        "I play for growth, for camaraderie, and for the memories we create together.",
+        "This is my oath — to compete with heart, to show up with integrity, and to cherish the community that makes the game worth playing."
+      ]
+    }
+  ]
+}
