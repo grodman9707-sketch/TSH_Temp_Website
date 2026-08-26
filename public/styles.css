@@ -22,6 +22,39 @@ html, body, #app { min-height: 100%; margin: 0; background: #090b11; color: #fff
 .staff-card {
   text-align: left;
 }
+.admin-team-title {
+  margin-top: 3rem;
+  text-align: center;
+  font-size: clamp(2.25rem, 6vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #fff;
+  line-height: 1.1;
+}
+.admin-team-title::after {
+  content: "";
+  display: block;
+  width: 4.5rem;
+  height: 3px;
+  margin: 0.85rem auto 0;
+  background: #e8b425;
+}
+.discord-first {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 1.25rem auto 0;
+  padding: 0.7rem 1.15rem;
+  text-align: center;
+  font-size: clamp(1.05rem, 2.6vw, 1.35rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #0b1018;
+  background: #e8b425;
+  border-radius: 0.4rem;
+  box-shadow: 0 0 0 3px rgba(232, 180, 37, 0.22);
+}
 .ticker { animation: ticker 28s linear infinite; }
 @keyframes ticker {
   from { transform: translateX(0); }

@@ -1265,6 +1265,7 @@ async function pageRules() {
 async function pageContact() {
   const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
   const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
+  const supportEmail = d.supportEmail || "Support@tshdartsleague.com";
   const profiles = Array.isArray(d.profiles) ? d.profiles : [];
   const cards = profiles.length
     ? `<div class="mt-6 grid gap-4 sm:grid-cols-2">${profiles
@@ -1305,10 +1306,19 @@ async function pageContact() {
       ${panel(`<div class="text-center">
         <h1 class="text-3xl font-extrabold">Contact</h1>
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
-        <a class="mt-6 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a>
+        <div class="mt-6 space-y-4">
+          <div>
+            <div class="text-[11px] font-bold tracking-widest gold">SUPPORT</div>
+            <a class="mt-1 inline-block text-lg font-bold gold" href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>
+          </div>
+          <div>
+            <div class="text-[11px] font-bold tracking-widest gold">LEAGUE INBOX</div>
+            <a class="mt-1 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a>
+          </div>
+        </div>
       </div>`)}
-      <h2 class="mt-10 text-center text-2xl font-extrabold">Admin team</h2>
-      <p class="mt-2 text-center text-sm text-muted">Discord first. Email if that fails.</p>
+      <h2 class="admin-team-title">Admin Team</h2>
+      <p class="discord-first">Discord First! E-mail if that Fails!</p>
       ${cards}
     </div>`,
     { arena: true }

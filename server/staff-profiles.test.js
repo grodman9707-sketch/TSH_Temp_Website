@@ -63,6 +63,7 @@ try {
   const listed = await api(port, "/api/staff-profiles");
   check("public staff list ok", listed.status === 200 && listed.data.ok);
   check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
+  check("support email on staff list", listed.data.supportEmail === "Support@tshdartsleague.com");
   const founderCard = (listed.data.profiles || []).find((p) => p.userId === 1);
   check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
   check("one card per person", (listed.data.profiles || []).filter((p) => p.userId === 1).length === 1);
@@ -290,6 +291,9 @@ try {
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("contact page uses Role, not Status", appJs.includes(">ROLE<") && !appJs.includes(">STATUS<"));
+  check("contact page lists support email", appJs.includes("Support@tshdartsleague.com"));
+  check("contact page uses official Admin Team heading", appJs.includes("admin-team-title") && appJs.includes("Admin Team"));
+  check("contact page highlights Discord First callout", appJs.includes("discord-first") && appJs.includes("Discord First! E-mail if that Fails!"));
 } finally {
   child.kill("SIGTERM");
 }
