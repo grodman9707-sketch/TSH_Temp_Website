@@ -226,7 +226,7 @@ try {
     token: ownerTok,
     body: { leagueId: 1, week: 2, homeId, awayId, date: "2026-09-03", skipVisitorAccept: true },
   });
-  check("create flagged skip-accept fixture", flagged.status === 200 && flagged.data.fixture?.scheduleAcceptRequired === false);
+  check("create flagged skip-accept fixture", flagged.status === 200 && flagged.data.fixture?.skipVisitorAccept === true);
   const flaggedShot = await api(port, `/api/my-fixtures/${flagged.data.fixture.id}/screenshots`, {
     method: "POST",
     token: homeTok,

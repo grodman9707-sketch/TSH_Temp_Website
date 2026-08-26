@@ -1730,7 +1730,7 @@ async function handleApi(req, res, url) {
       });
       db.fixtures.push(fixture);
       writeDb(db);
-      return json(res, 200, { ok: true, fixture });
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     if (method === "POST" && p === "/api/admin/fixtures/generate") {
       const leagueId = Number(body.leagueId);
