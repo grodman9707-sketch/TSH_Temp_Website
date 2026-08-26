@@ -178,13 +178,65 @@ try {
   });
   check("create Europe League 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
   const week1Id = week1.data.fixture.id;
+  const week1Mine = await api(port, "/api/my-fixtures", { token: homeTok });
+  const week1Row = (week1Mine.data.fixtures || []).find((f) => f.id === week1Id);
+  check("Europe L1 week 1 still requires visitor accept by default", week1Row?.scheduleAcceptRequired !== false);
+  const week1Blocked = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG },
+  });
+  check("Europe L1 week 1 cannot upload without accept", week1Blocked.status === 400 && /accept/i.test(week1Blocked.data.error || ""));
+
+  const skipToggle = await api(port, `/api/admin/fixtures/${week1Id}/skip-accept`, {
+    method: "POST",
+    token: ownerTok,
+    body: { skipVisitorAccept: true },
+  });
+  check("owner can skip accept on one match", skipToggle.status === 200 && skipToggle.data.fixture?.scheduleAcceptRequired === false);
+  const week1Propose = await api(port, `/api/fixtures/${week1Id}/propose`, {
+    method: "POST",
+    token: homeTok,
+    body: { datetime: "2026-08-21T19:00", tz: "Europe/London" },
+  });
+  check("skipped-accept match can still propose a time", week1Propose.status === 200 && week1Propose.data.fixture?.scheduleStatus === "proposed");
   const week1Shot = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
     method: "POST",
     token: homeTok,
     body: { image1: PNG, image2: PNG },
   });
-  check("Europe L1 week 1 can upload without visitor accept", week1Shot.status === 200 && week1Shot.data.fixture?.hasBothScreenshots === true);
-  check("Europe L1 week 1 skips accept", week1Shot.data.fixture?.scheduleAcceptRequired === false);
+  check("skipped-accept match can upload without visitor accept", week1Shot.status === 200 && week1Shot.data.fixture?.hasBothScreenshots === true);
+  check("skipped-accept match reports skip", week1Shot.data.fixture?.scheduleAcceptRequired === false);
+
+  const otherWeek1 = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 1, week: 1, homeId, awayId, date: "2026-08-27", skipVisitorAccept: false },
+  });
+  check("second Europe L1 week 1 fixture created", otherWeek1.status === 200 && otherWeek1.data.fixture?.id);
+  const otherBlocked = await api(port, `/api/my-fixtures/${otherWeek1.data.fixture.id}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG },
+  });
+  check("other week 1 match still requires accept", otherBlocked.status === 400);
+
+  const flagged = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 1, week: 2, homeId, awayId, date: "2026-09-03", skipVisitorAccept: true },
+  });
+  check("create flagged skip-accept fixture", flagged.status === 200 && flagged.data.fixture?.scheduleAcceptRequired === false);
+  const flaggedShot = await api(port, `/api/my-fixtures/${flagged.data.fixture.id}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG },
+  });
+  check("flagged match can upload without accept", flaggedShot.status === 200);
+
+  const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
+  check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
+  check("admin can mark skip accept on one existing match", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("/skip-accept"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

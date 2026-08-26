@@ -663,6 +663,10 @@ function migrate(db) {
       f.proposedTz = "";
       changed = true;
     }
+    if (!("skipVisitorAccept" in f)) {
+      f.skipVisitorAccept = false;
+      changed = true;
+    }
   }
   if (ensureAdminProfiles(db)) changed = true;
   if (changed) writeDb(db);
@@ -755,11 +759,11 @@ function fixtureScheduleLabel(f) {
   if (date && time) return `${date} ${time}`;
   return date || time || "";
 }
+function flagOn(v) {
+  return v === true || v === "1" || v === "on" || v === "true";
+}
 function skipsVisitorAccept(db, f) {
-  const league = db.leagues.find((l) => l.id === Number(f.leagueId));
-  if (!league) return false;
-  const regional = db.regionals.find((r) => r.id === league.regionalId);
-  return Boolean(regional && regional.slug === "europe" && /^league\s*1$/i.test(String(league.name || "")) && Number(f.week) === 1);
+  return Boolean(f && flagOn(f.skipVisitorAccept));
 }
 function withNames(db, f) {
   const shot1 = shotFile(f, 1);
@@ -830,6 +834,7 @@ function newFixture(partial) {
     proposedTz: "",
     extractedStats: null,
     ocrRawText: "",
+    skipVisitorAccept: false,
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
@@ -1721,6 +1726,7 @@ async function handleApi(req, res, url) {
         awayId: away.id,
         date: body.date || new Date().toISOString().slice(0, 10),
         time: String(body.time || "").slice(0, 5),
+        skipVisitorAccept: flagOn(body.skipVisitorAccept),
       });
       db.fixtures.push(fixture);
       writeDb(db);
@@ -1917,6 +1923,15 @@ async function handleApi(req, res, url) {
       db.fixtures = db.fixtures.filter((f) => !ids.has(f.id));
       writeDb(db);
       return json(res, 200, { ok: true, removed: toRemove.length });
+    }
+    const skipAcceptMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/skip-accept$/);
+    if (method === "POST" && skipAcceptMatch) {
+      const fixture = db.fixtures.find((f) => f.id === Number(skipAcceptMatch[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      fixture.skipVisitorAccept = flagOn(body.skipVisitorAccept);
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
     if (method === "POST" && deleteMatch) {
