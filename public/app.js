@@ -586,7 +586,7 @@ async function api(path, options = {}) {
 }
 function go(path) {
   history.pushState({}, "", path);
-  state.path = path;
+  state.path = String(path).split("#")[0] || "/";
   state.menu = false;
   state.error = "";
   state.notice = "";
@@ -649,6 +649,11 @@ function regionalCrest(slug) {
   if (slug === "americas" || slug === "america") return "americas";
   return "main";
 }
+function navActive(href) {
+  const path = String(state.path || "/").split("#")[0];
+  if (href === "/about") return path === "/about" || path === "/contact";
+  return path === href;
+}
 function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
@@ -656,7 +661,7 @@ function layout(inner, { arena = false, home = false } = {}) {
     ["/apply", "Apply"],
     ["/announcements", "News"],
     ["/rules", "Rules"],
-    ["/contact", "Contact"],
+    ["/about", "About Us"],
   ];
   if (state.user) {
     links.push(["/dashboard", "Dashboard"], ["/my-matches", "My Matches"]);
@@ -674,7 +679,7 @@ function layout(inner, { arena = false, home = false } = {}) {
           ${links
             .map(
               ([href, label]) =>
-                `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${state.path === href ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
+                `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
             )
             .join("")}
         </nav>
@@ -922,7 +927,7 @@ async function pageLeague(slug, id) {
                   </a>`
               )
               .join("")}</div>`
-          : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from Contact.</p>`,
+          : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from About Us.</p>`,
         "mt-4"
       )}
       <div class="mt-4 flex gap-2">
@@ -1126,7 +1131,7 @@ async function pageDashboard() {
   const mineCard = mine[0];
   const staffContactPanel = mineCard
     ? `<div class="mt-10">${panel(`<h2 class="text-lg font-bold">Contact card</h2>
-        <p class="mt-1 text-sm text-muted">This is your card on the Contact page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
+        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
         <form class="mt-4 space-y-3" data-form="STAFFPROFILE">
           <div class="text-xs font-bold tracking-widest gold">ROLE</div>
           <div class="font-semibold">${esc(mineCard.roleLabel || mineCard.statusLabel || "")}${
@@ -1285,7 +1290,7 @@ async function pageRules() {
     { arena: true }
   );
 }
-async function pageContact() {
+async function contactBlock() {
   const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
   const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
   const supportEmail = d.supportEmail || "Support@tshdartsleague.com";
@@ -1324,10 +1329,9 @@ async function pageContact() {
         })
         .join("")}</div>`
     : `<p class="mt-6 text-sm text-muted">Staff cards appear here when someone is given a league role.</p>`;
-  return layout(
-    `<div class="mx-auto max-w-3xl px-4 py-10">
+  return `<section id="contact" class="about-section mt-10">
       ${panel(`<div class="text-center">
-        <h1 class="text-3xl font-extrabold">Contact</h1>
+        <h2 class="text-3xl font-extrabold">Contact</h2>
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
         <div class="mt-6 space-y-4">
           <div>
@@ -1343,6 +1347,34 @@ async function pageContact() {
       <h2 class="admin-team-title">Admin Team</h2>
       <p class="discord-first">Discord First! E-mail if that Fails!</p>
       ${cards}
+    </section>`;
+}
+function renderAboutSection(section) {
+  const paras = (section.paragraphs || []).map((p) => `<p>${esc(p)}</p>`).join("");
+  const kicker = section.kicker ? `<p class="about-kicker">${esc(section.kicker)}</p>` : "";
+  return `<section id="${esc(section.id)}" class="about-section">
+    <h2>${esc(section.title)}</h2>
+    ${kicker}
+    ${paras}
+  </section>`;
+}
+async function pageAbout() {
+  const d = await api("/api/about").catch(() => ({ title: "About Us", intro: "", sections: [] }));
+  const sections = Array.isArray(d.sections) ? d.sections : [];
+  const toc = [
+    ...sections.map((s) => `<a href="/about#${esc(s.id)}" class="rules-toc-link">${esc(s.title)}</a>`),
+    `<a href="/about#contact" class="rules-toc-link">Contact</a>`,
+  ].join("");
+  const contact = await contactBlock();
+  return layout(
+    `<div class="mx-auto max-w-3xl px-4 py-10">${panel(`
+      <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
+      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "About Us")}</h1>
+      <p class="mt-4 text-sm leading-relaxed text-white/80">${esc(d.intro || "")}</p>
+      <nav class="rules-toc mt-6" aria-label="About contents">${toc}</nav>
+      <div class="about-doc mt-2">${sections.map(renderAboutSection).join("")}</div>
+    `)}
+    ${contact}
     </div>`,
     { arena: true }
   );
@@ -1508,7 +1540,7 @@ async function pageAdmin() {
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
-        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub.</p>
+        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub. The cards appear on About Us.</p>
         <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
@@ -1660,7 +1692,7 @@ async function pageAdmin() {
 }
 
 function matchRoute(path) {
-  const q = path.split("?")[0];
+  const q = path.split("?")[0].split("#")[0];
   if (q === "/") return ["home"];
   if (q === "/regionals") return ["regionals"];
   let m = q.match(/^\/regionals\/([^/]+)$/);
@@ -1673,7 +1705,7 @@ function matchRoute(path) {
   if (q === "/dashboard") return ["dashboard"];
   if (q === "/my-matches") return ["matches"];
   if (q === "/rules") return ["rules"];
-  if (q === "/contact") return ["contact"];
+  if (q === "/about" || q === "/contact") return ["about"];
   if (q === "/announcements") return ["news"];
   if (q === "/admin") return ["admin"];
   m = q.match(/^\/player\/(\d+)$/);
@@ -1705,7 +1737,7 @@ async function render() {
       matches: pageMyMatches,
       player: () => pagePlayer(route[1]),
       rules: pageRules,
-      contact: () => pageContact(),
+      about: () => pageAbout(),
       news: pageNews,
       admin: pageAdmin,
     };
@@ -1714,6 +1746,11 @@ async function render() {
     if (fixtureId) {
       const el = document.getElementById(`fixture-${fixtureId}`);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const hash = location.hash.slice(1) || (location.pathname === "/contact" ? "contact" : "");
+    if (hash) {
+      const el = document.getElementById(hash);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     if (route[0] === "admin") queueAdminScan();
   } catch (err) {
@@ -1753,7 +1790,7 @@ document.addEventListener("click", async (e) => {
       return;
     }
     e.preventDefault();
-    go(a.pathname + a.search);
+    go(a.pathname + a.search + a.hash);
     return;
   }
   if (e.target.closest("[data-act=open-menu]")) {
@@ -1980,7 +2017,7 @@ document.addEventListener("submit", async (e) => {
         body: JSON.stringify(fd),
       });
       state.user = d.user;
-      state.notice = "Contact card saved. It is now on the Contact page.";
+      state.notice = "Contact card saved. It is now on the About Us page.";
       render();
     } else if (kind === "ACCOUNT") {
       const d = await api("/api/account", { method: "POST", body: JSON.stringify(fd) });

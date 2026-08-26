@@ -386,6 +386,34 @@ button.btn-gold:disabled {
 .rules-list li + li {
   margin-top: 0.25rem;
 }
+.about-doc {
+  color: rgba(255,255,255,.82);
+  font-size: 0.95rem;
+  line-height: 1.75;
+}
+.about-section {
+  padding-top: 1.85rem;
+  scroll-margin-top: 4.5rem;
+}
+.about-section h2 {
+  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.about-kicker {
+  margin-top: 0.85rem;
+  color: #e8b425;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.about-doc p,
+.about-section p {
+  margin-top: 0.7rem;
+}
 .rules-note {
   margin-top: 0.75rem;
   border-left: 3px solid #e8b425;
