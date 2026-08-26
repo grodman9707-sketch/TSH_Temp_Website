@@ -35,6 +35,7 @@ const publicDir = path.join(root, "public");
 const MAX_OWNERS = 3;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
 const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
+const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
 const LEGACY_CONTACT_EMAIL = "worlddartsleagueinfo@gmail.com";
 const MOCK_EMAILS = new Set([
   "admin@tshdarts.com",
@@ -580,6 +581,10 @@ function migrate(db) {
       db.league.email = LEAGUE_CONTACT_EMAIL;
       changed = true;
     }
+    if (!db.league.supportEmail) {
+      db.league.supportEmail = LEAGUE_SUPPORT_EMAIL;
+      changed = true;
+    }
   }
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
@@ -1032,6 +1037,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, {
       ok: true,
       leagueEmail: db.league?.email || LEAGUE_CONTACT_EMAIL,
+      supportEmail: db.league?.supportEmail || LEAGUE_SUPPORT_EMAIL,
       profiles: publicStaffProfiles(db),
     });
   }

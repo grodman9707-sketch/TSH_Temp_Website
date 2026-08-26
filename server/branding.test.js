@@ -58,6 +58,7 @@ try {
   const content = await contentRes.json();
   check("content ok", contentRes.ok && content.ok);
   check("league email is TSH Gmail", content.league?.email === CONTACT);
+  check("league support email is listed", content.league?.supportEmail === "Support@tshdartsleague.com");
   check("league has no formerly field", !("formerly" in (content.league || {})));
   const blob = JSON.stringify(content);
   check("content JSON has no WDL / World Darts League", !BANNED.test(blob));
