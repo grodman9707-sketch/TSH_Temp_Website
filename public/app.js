@@ -450,10 +450,10 @@ function screenshotUploader(f) {
 }
 function scheduleActions(f) {
   if (!inThisMatch(f) || f.status === "played" || f.hasBothScreenshots || f.status === "submitted") return "";
-  if (f.scheduleAcceptRequired === false) return "";
   const home = isHomePlayer(f);
   const away = isAwayPlayer(f);
   const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
+  const skipAccept = f.scheduleAcceptRequired === false;
   let bits = "";
   if (home) {
     bits += `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
@@ -462,10 +462,11 @@ function scheduleActions(f) {
       </label>
       <button class="btn-gold">${proposed ? "RE-PROPOSE" : "PROPOSE"}</button>
     </form>`;
-    if (proposed) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
-  } else if (away && proposed) {
+    if (proposed && !skipAccept) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
+    else if (skipAccept) bits += `<div class="mt-1 text-xs text-muted">Visitor accept is skipped for this match only. Screenshots can be uploaded without it.</div>`;
+  } else if (away && proposed && !skipAccept) {
     bits += `<form class="mt-3" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`;
-  } else if (away && f.scheduleStatus !== "agreed") {
+  } else if (away && f.scheduleStatus !== "agreed" && !skipAccept) {
     bits += `<div class="mt-3 text-xs text-muted">Waiting for ${esc(f.homeName || "the home player")} to propose a date and time.</div>`;
   }
   return bits;
@@ -1133,6 +1134,7 @@ async function pageDashboard() {
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>${
           next
             ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
+               ${scheduleActions(next)}
                <div class="mt-3 flex flex-wrap gap-2">
                  ${
                    scheduleUnlocked(next) && !next.hasBothScreenshots
@@ -1538,6 +1540,7 @@ async function pageAdmin() {
           <select name="homeId" required><option value="">Home</option>${everyone.map(playerOption).join("")}</select>
           <select name="awayId" required><option value="">Away</option>${everyone.map(playerOption).join("")}</select>
           <input name="date" type="date">
+          <label class="check-row md:col-span-5"><input type="checkbox" name="skipVisitorAccept" value="1"> Skip visitor accept for this match only (screenshots can go in without ACCEPT TIME)</label>
           <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
         </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
@@ -1560,8 +1563,15 @@ async function pageAdmin() {
                 .map(
                   (f) =>
                     `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
-                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}</span>
-                      <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}</span>
+                      <div class="flex flex-wrap gap-2">
+                        ${
+                          f.status !== "played"
+                            ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
+                            : ""
+                        }
+                        <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                      </div>
                     </div>`
                 )
                 .join("")
@@ -1982,7 +1992,11 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE") {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Fixture created.";
+      state.notice = fd.skipVisitorAccept ? "Fixture created. Visitor accept is skipped for this match only." : "Fixture created.";
+      render();
+    } else if (kind === "SKIPACCEPT") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/skip-accept`, { method: "POST", body: JSON.stringify(fd) });
+      state.notice = fd.skipVisitorAccept === "1" ? "Visitor accept skipped for this match only." : "Visitor accept is required again for this match.";
       render();
     } else if (kind === "ADDPLAYER") {
       await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });
