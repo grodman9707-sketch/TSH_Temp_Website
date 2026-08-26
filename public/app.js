@@ -450,10 +450,10 @@ function screenshotUploader(f) {
 }
 function scheduleActions(f) {
   if (!inThisMatch(f) || f.status === "played" || f.hasBothScreenshots || f.status === "submitted") return "";
-  if (f.scheduleAcceptRequired === false) return "";
   const home = isHomePlayer(f);
   const away = isAwayPlayer(f);
   const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
+  const skipAccept = f.scheduleAcceptRequired === false;
   let bits = "";
   if (home) {
     bits += `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
@@ -462,10 +462,10 @@ function scheduleActions(f) {
       </label>
       <button class="btn-gold">${proposed ? "RE-PROPOSE" : "PROPOSE"}</button>
     </form>`;
-    if (proposed) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
-  } else if (away && proposed) {
+    if (proposed && !skipAccept) bits += `<div class="mt-1 text-xs text-muted">Waiting for ${esc(f.awayName || "the visiting player")} to accept.</div>`;
+  } else if (away && proposed && !skipAccept) {
     bits += `<form class="mt-3" data-form="ACCEPTTIME" data-id="${f.id}"><button class="btn-gold">ACCEPT TIME</button></form>`;
-  } else if (away && f.scheduleStatus !== "agreed") {
+  } else if (away && f.scheduleStatus !== "agreed" && !skipAccept) {
     bits += `<div class="mt-3 text-xs text-muted">Waiting for ${esc(f.homeName || "the home player")} to propose a date and time.</div>`;
   }
   return bits;
@@ -1133,6 +1133,7 @@ async function pageDashboard() {
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>${
           next
             ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
+               ${scheduleActions(next)}
                <div class="mt-3 flex flex-wrap gap-2">
                  ${
                    scheduleUnlocked(next) && !next.hasBothScreenshots

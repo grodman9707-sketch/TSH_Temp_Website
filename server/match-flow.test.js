@@ -178,6 +178,15 @@ try {
   });
   check("create Europe League 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
   const week1Id = week1.data.fixture.id;
+  const week1Propose = await api(port, `/api/fixtures/${week1Id}/propose`, {
+    method: "POST",
+    token: homeTok,
+    body: { datetime: "2026-08-21T19:00", tz: "Europe/London" },
+  });
+  check("Europe L1 week 1 can still propose a time", week1Propose.status === 200 && week1Propose.data.fixture?.scheduleStatus === "proposed");
+  const week1Mine = await api(port, "/api/my-fixtures", { token: homeTok });
+  const week1Row = (week1Mine.data.fixtures || []).find((f) => f.id === week1Id);
+  check("Europe L1 week 1 still skips visitor accept", week1Row?.scheduleAcceptRequired === false);
   const week1Shot = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
     method: "POST",
     token: homeTok,
@@ -185,6 +194,10 @@ try {
   });
   check("Europe L1 week 1 can upload without visitor accept", week1Shot.status === 200 && week1Shot.data.fixture?.hasBothScreenshots === true);
   check("Europe L1 week 1 skips accept", week1Shot.data.fixture?.scheduleAcceptRequired === false);
+
+  const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
+  check("My Matches still has a propose form", appJs.includes('data-form="PROPOSE"') && appJs.includes("Propose date & time"));
+  check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
