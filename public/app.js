@@ -1,4 +1,4 @@
-import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats } from "./ocrParse.js";
+import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -126,7 +126,7 @@ async function fetchShotAsDataUrl(id, slot) {
   if (!res.ok) throw new Error(`Could not load screenshot ${slot}`);
   return fileToDataUrl(await res.blob());
 }
-function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale = 1 } = {}) {
+function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale = 1, threshold = 0 } = {}) {
   const w = Math.max(1, Math.round(sw * scale));
   const h = Math.max(1, Math.round(sh * scale));
   const canvas = document.createElement("canvas");
@@ -150,11 +150,28 @@ function canvasSlice(img, sx, sy, sw, sh, { invert = false, contrast = 1, scale 
       g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
       b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
     }
-    const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    let y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    if (threshold) y = y >= threshold ? 255 : 0;
     d[i] = d[i + 1] = d[i + 2] = y;
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas.toDataURL("image/png");
+}
+function sampleLuma(img) {
+  const w = 48;
+  const h = Math.max(1, Math.round((img.height / Math.max(img.width, 1)) * w));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let sum = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  return n ? sum / n : 255;
 }
 function findOrangeBand(img) {
   const canvas = document.createElement("canvas");
@@ -184,20 +201,21 @@ function findOrangeBand(img) {
 function dartCounterOcrVariants(img) {
   const w = img.width;
   const h = img.height;
-  const status = Math.round(h * 0.05);
-  const variants = [];
+  const invert = shouldInvertLuma(sampleLuma(img));
+  const scale = w < 900 ? 2 : 1;
+  const contrast = invert ? 1.85 : 1.35;
+  const threshold = invert ? 148 : 162;
+  const prep = (sx, sy, sw, sh) => canvasSlice(img, sx, sy, sw, sh, { invert, contrast, scale, threshold });
+  const variants = [prep(0, 0, w, h)];
   const orange = findOrangeBand(img);
   if (orange) {
-    variants.push(canvasSlice(img, 0, Math.max(status, orange.start - 8), w, orange.end - Math.max(status, orange.start - 8) + 8, { contrast: 1.2 }));
-    const bodyY = Math.min(h - 8, orange.end + 6);
-    const bodyH = Math.max(40, Math.round(h * 0.96) - bodyY);
-    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { contrast: 1.15 }));
-    variants.push(canvasSlice(img, 0, bodyY, w, bodyH, { invert: true, contrast: 1.8 }));
+    const top = Math.max(0, orange.start - 8);
+    variants.push(prep(0, top, w, Math.min(h, orange.end + 8) - top));
+    const bodyY = Math.min(h - 8, orange.end + 4);
+    if (h - bodyY > 40) variants.push(prep(0, bodyY, w, h - bodyY));
   } else {
-    const cropY = status;
-    const cropH = Math.max(40, Math.round(h * 0.92) - cropY);
-    variants.push(canvasSlice(img, 0, cropY, w, cropH, { invert: true, contrast: 1.6, scale: w < 900 ? 2 : 1 }));
-    variants.push(canvasSlice(img, 0, cropY, w, cropH, { contrast: 1.3 }));
+    const cropY = Math.round(h * 0.04);
+    variants.push(prep(0, cropY, w, Math.max(40, Math.round(h * 0.92) - cropY)));
   }
   return variants;
 }
@@ -369,10 +387,13 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
       try {
         const img = await loadImageEl(src);
         const variants = dartCounterOcrVariants(img);
+        const results = [];
         for (const variant of variants) {
           const { data } = await worker.recognize(variant);
-          if (data?.text?.trim()) texts.push(data.text);
+          if (data?.text?.trim()) results.push({ text: data.text, confidence: data.confidence });
         }
+        const best = pickBestOcrText(results);
+        if (best) texts.push(best);
       } catch (err) {
         console.warn("[ocr] could not read screenshot", err.message);
       }
