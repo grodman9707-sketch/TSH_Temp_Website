@@ -178,9 +178,9 @@ try {
   });
   check("create Europe League 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
   const week1Id = week1.data.fixture.id;
-  const week1Mine = await api(port, "/api/my-fixtures", { token: homeTok });
-  const week1Row = (week1Mine.data.fixtures || []).find((f) => f.id === week1Id);
-  check("Europe L1 week 1 still requires visitor accept by default", week1Row?.scheduleAcceptRequired !== false);
+  const week1MineBefore = await api(port, "/api/my-fixtures", { token: homeTok });
+  const week1RowBefore = (week1MineBefore.data.fixtures || []).find((f) => f.id === week1Id);
+  check("Europe L1 week 1 still requires visitor accept by default", week1RowBefore?.scheduleAcceptRequired !== false);
   const week1Blocked = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
     method: "POST",
     token: homeTok,
@@ -235,6 +235,7 @@ try {
   check("flagged match can upload without accept", flaggedShot.status === 200);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
+  check("My Matches still has a propose form", appJs.includes('data-form="PROPOSE"') && appJs.includes("Propose date & time"));
   check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
   check("admin can mark skip accept on one existing match", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("/skip-accept"));
 } catch (err) {
