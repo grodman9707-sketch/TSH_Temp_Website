@@ -149,7 +149,9 @@ function applyLabelPairs(text, stats, homeFirst) {
         if (b != null && stats.awayAvg == null) stats.awayAvg = homeFirst ? b : a;
         continue;
       }
-      if (spec.key === "180") {
+  if (spec.key === "180") {
+        const around = raw.slice(Math.max(0, m.index - 24), m.index + m[0].length + 8);
+        if (/highest\s*score|hi(?:gh(?:est)?)?\s*score/i.test(around)) continue;
         const usable = nums.filter((n) => n >= 0 && n <= 30 && n === Math.floor(n));
         if (!usable.length) continue;
         const a = usable[0];
@@ -245,6 +247,13 @@ function extractLayoutPairs(text) {
     const darts = /darts/i.test(line);
     const nums = nextNumbers(line, 4);
     if (nums.length < 2) continue;
+    if (/highest\s*score/i.test(line)) {
+      pairs.push({ kind: "hiscore", a: nums[0], b: nums[1], raw: line });
+      continue;
+    }
+    if (/first\s*9|worst\s*leg|checkout\s*rate/i.test(line) && !looksLikeAvg(nums[0])) {
+      continue;
+    }
     if (nums.length >= 3 && PAGE2_BANDS.map(Number).includes(nums[1]) && isInt(nums[0]) && isInt(nums[2])) {
       pairs.push({ kind: "int", a: nums[0], b: nums[2], raw: line });
       continue;
@@ -363,10 +372,12 @@ export function parseDartCounterText(text, homeName, awayName, extra = {}) {
     ...awayNames.map((n) => raw.toLowerCase().indexOf(n.toLowerCase())).filter((i) => i >= 0),
     Infinity
   );
-  let homeBlock = raw.slice(0, mid);
-  let awayBlock = raw.slice(mid);
+  const foundHome = Number.isFinite(homeIdx);
+  const foundAway = Number.isFinite(awayIdx);
+  let homeBlock = "";
+  let awayBlock = "";
   let homeFirst = true;
-  if (Number.isFinite(homeIdx) && Number.isFinite(awayIdx) && homeIdx !== awayIdx) {
+  if (foundHome && foundAway && homeIdx !== awayIdx) {
     homeFirst = homeIdx < awayIdx;
     if (homeFirst) {
       homeBlock = raw.slice(homeIdx, awayIdx);
@@ -375,10 +386,13 @@ export function parseDartCounterText(text, homeName, awayName, extra = {}) {
       awayBlock = raw.slice(awayIdx, homeIdx);
       homeBlock = raw.slice(homeIdx);
     }
+  } else if (foundHome && !foundAway) {
+    homeBlock = raw;
+  } else if (foundAway && !foundHome) {
+    homeFirst = false;
+    awayBlock = raw;
   } else if (nameHitsAny(raw.slice(0, mid), awayNames) > nameHitsAny(raw.slice(0, mid), homeNames)) {
     homeFirst = false;
-    homeBlock = raw.slice(mid);
-    awayBlock = raw.slice(0, mid);
   }
 
   applyMatchDetailsLayout(raw, stats, homeFirst);
@@ -386,17 +400,15 @@ export function parseDartCounterText(text, homeName, awayName, extra = {}) {
 
   const home = parsePlayerBlock(homeBlock);
   const away = parsePlayerBlock(awayBlock);
-  const both = parsePlayerBlock(raw);
-  const assign = (side, parsed, fallback) => {
+  const assign = (side, parsed) => {
     for (const [key, val] of Object.entries(parsed)) {
       const field = `${side}${key}`;
-      const v = val != null ? val : fallback[key];
-      if (v == null || Number.isNaN(v)) continue;
-      if (stats[field] == null) stats[field] = v;
+      if (val == null || Number.isNaN(val)) continue;
+      if (stats[field] == null) stats[field] = val;
     }
   };
-  assign("home", home, both);
-  assign("away", away, both);
+  assign("home", home);
+  assign("away", away);
   if (stats.home180 != null) stats.homeOneEighties = stats.home180;
   if (stats.away180 != null) stats.awayOneEighties = stats.away180;
   if (stats.homeCheckout != null || stats.awayCheckout != null) {
@@ -472,4 +484,44 @@ export function overlayExtractedStats(fixture) {
     }
   }
   return out;
+}
+
+export function shouldInvertLuma(avgLuma) {
+  return Number.isFinite(Number(avgLuma)) && Number(avgLuma) < 128;
+}
+
+export function scoreOcrCandidate(text, confidence = 0) {
+  const t = String(text || "");
+  if (!t.trim()) return -1;
+  let score = Number(confidence) || 0;
+  const labels = [
+    /match\s*details/i,
+    /3[\s-]?dart/i,
+    /match\s*avg/i,
+    /highest\s*finish/i,
+    /best\s*leg/i,
+    /checkouts?/i,
+    /140\s*\+/,
+    /100\s*\+/,
+    /first\s*9/i,
+  ];
+  for (const re of labels) {
+    if (re.test(t)) score += 14;
+  }
+  const nums = t.match(/\d+(?:[.,]\d+)?/g) || [];
+  score += Math.min(nums.length, 36);
+  const letters = (t.match(/[a-z]/gi) || []).length;
+  if (letters < 10) score -= 25;
+  return score;
+}
+
+export function pickBestOcrText(results) {
+  let best = null;
+  for (const row of Array.isArray(results) ? results : []) {
+    const text = String(row?.text || "");
+    if (!text.trim()) continue;
+    const score = scoreOcrCandidate(text, row.confidence);
+    if (!best || score > best.score) best = { text, score };
+  }
+  return best?.text || "";
 }

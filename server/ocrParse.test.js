@@ -1,6 +1,6 @@
 // Tests for DartCounter screenshot text parsing.
 // Run: `node server/ocrParse.test.js`
-import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, parseDartCounterText } from "../public/ocrParse.js";
+import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, parseDartCounterText, pickBestOcrText, scoreOcrCandidate, shouldInvertLuma } from "../public/ocrParse.js";
 
 let failures = 0;
 function check(name, cond) {
@@ -212,6 +212,43 @@ check("live OCR G0 is 60 checkout", live.homeCheckout === 16 && live.awayCheckou
 check("live OCR best leg not 180s", live.homeBestLeg === 32 && live.awayBestLeg === 22 && live.home180 === 0 && live.away180 === 1);
 check("live OCR I/] /B page-2 bands", live.home100 === 1 && live.away100 === 3 && live.home80 === 7 && live.away80 === 8 && live.home60 === 7 && live.away60 === 8);
 check("live OCR 140+", live.home140 === 0 && live.away140 === 1);
+
+const page1Only = `
+MATCH DETAILS
+Gordon                    Jason
+1                         5
+43.21  3-dart average  46.28
+52.67  First 9 avg.  63.78
+16  Highest finish  60
+121  Highest score  180
+32 DARTS  Best leg  22 DARTS
+`;
+const page1 = parseDartCounterText(page1Only, "Gordon Rodman", "Jay Jay", {
+  homeDartcounterName: "Gordon Rodman",
+  awayDartcounterName: "Jason jackson",
+});
+check("page 1 3DA is not First 9", page1.homeAvg === 43.21 && page1.awayAvg === 46.28);
+check("page 1 highest finish not highest score", page1.homeCheckout === 16 && page1.awayCheckout === 60);
+check("page 1 does not treat 180 high score as 180s", page1.home180 == null && page1.away180 == null);
+
+const homeShotOnly = parseDartCounterText(
+  `Gordon Rodman\n3 Dart Average 58.1\nHighest Checkout 121\n180s 1`,
+  "Gordon Rodman",
+  "Morgan Player"
+);
+check("one-player shot does not copy home numbers onto away", homeShotOnly.awayAvg == null && homeShotOnly.awayCheckout == null && homeShotOnly.away180 == null);
+check("one-player shot still fills home", homeShotOnly.homeAvg === 58.1 && homeShotOnly.homeCheckout === 121 && homeShotOnly.home180 === 1);
+
+check("dark screenshots should invert", shouldInvertLuma(42) === true);
+check("light screenshots should not invert", shouldInvertLuma(210) === false);
+
+const goodRead = "MATCH DETAILS\nGordon Jason\n43.21  3-dart average  46.28\n16 Highest finish 60";
+const invertedGarbage = "8 $ # 91 180 52 7 3 14 221";
+check("labeled DartCounter text outranks inverted garbage", pickBestOcrText([
+  { text: invertedGarbage, confidence: 70 },
+  { text: goodRead, confidence: 55 },
+]).includes("3-dart average"));
+check("empty OCR candidate scores below usable text", scoreOcrCandidate("") < scoreOcrCandidate(goodRead));
 
 if (failures) {
   console.error(`\n${failures} check(s) FAILED`);
