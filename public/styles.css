@@ -197,6 +197,67 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   display: flex; flex-direction: column;
 }
 .sidebar.open { transform: translateX(0); }
+.sidebar nav {
+  overflow-y: auto;
+  flex: 1;
+}
+.nav-tree,
+.nav-sub {
+  border: 0;
+  background: transparent;
+}
+.nav-tree > summary,
+.nav-sub > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  touch-action: manipulation;
+}
+.nav-tree > summary::-webkit-details-marker,
+.nav-sub > summary::-webkit-details-marker,
+.nav-tree > summary::marker,
+.nav-sub > summary::marker {
+  display: none;
+  content: "";
+}
+.nav-tree > summary::after,
+.nav-sub > summary::after {
+  content: "▾";
+  color: #e8b425;
+  font-size: 0.75rem;
+}
+.nav-tree[open] > summary::after,
+.nav-sub[open] > summary::after {
+  transform: rotate(180deg);
+}
+.nav-sub > summary {
+  padding-left: 1.75rem;
+  font-size: 0.8rem;
+}
+.nav-sublink,
+.nav-subsub {
+  display: flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0.45rem 1.25rem 0.45rem 1.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  touch-action: manipulation;
+}
+.nav-subsub {
+  padding-left: 2.5rem;
+}
 .crest-img {
   object-fit: contain;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));

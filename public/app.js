@@ -9,6 +9,7 @@ const state = {
   path: location.pathname,
   user: null,
   menu: false,
+  navTree: null,
   data: {},
   error: "",
   notice: "",
@@ -595,6 +596,15 @@ function go(path) {
   state.notice = "";
   render();
 }
+async function loadNavTree() {
+  if (state.navTree) return;
+  try {
+    const d = await api("/api/regionals");
+    state.navTree = Array.isArray(d.regionals) ? d.regionals : [];
+  } catch {
+    state.navTree = [];
+  }
+}
 function isInternalNav(a) {
   if (!a || !a.href || a.hasAttribute("download") || a.hasAttribute("data-external")) return false;
   if (a.target && a.target !== "_self") return false;
@@ -666,7 +676,41 @@ function regionalCrest(slug) {
 function navActive(href) {
   const path = String(state.path || "/").split("#")[0];
   if (href === "/about") return path === "/about" || path === "/contact";
+  if (href === "/regionals") return path === "/regionals" || path.startsWith("/regionals/");
   return path === href;
+}
+function divisionLabel(league) {
+  const raw = String(league?.displayName || league?.name || "").trim();
+  const m = raw.match(/^League\s+(\d+)$/i);
+  return m ? `Division ${m[1]}` : raw || "Division";
+}
+function navRegionalsBlock() {
+  const path = String(state.path || "/").split("#")[0];
+  const tree = Array.isArray(state.navTree) ? state.navTree : [];
+  const onRegionals = path === "/regionals" || path.startsWith("/regionals/");
+  const regions = tree
+    .map((r) => {
+      const slug = r.slug;
+      const onThis = path === `/regionals/${slug}` || path.startsWith(`/regionals/${slug}/`);
+      const divisions = (r.leagues || [])
+        .map((l) => {
+          const href = l.href || `/regionals/${slug}/leagues/${l.id}`;
+          const here = path === href;
+          return `<a href="${esc(href)}" class="nav-subsub ${here ? "gold" : "text-white/80 hover:text-primary"}">${esc(divisionLabel(l))}</a>`;
+        })
+        .join("");
+      return `<details class="nav-sub" ${onThis ? "open" : ""}>
+        <summary class="${onThis ? "gold" : "text-white/80"}">${esc(r.name)}</summary>
+        <a href="/regionals/${esc(slug)}" class="nav-subsub ${path === `/regionals/${slug}` ? "gold" : "text-white/80 hover:text-primary"}">${esc(r.name)} overview</a>
+        ${divisions}
+      </details>`;
+    })
+    .join("");
+  return `<details class="nav-tree" ${onRegionals ? "open" : ""}>
+    <summary class="${onRegionals ? "gold" : "text-white/80"}">Regionals</summary>
+    <a href="/regionals" class="nav-sublink ${path === "/regionals" ? "gold" : "text-white/80 hover:text-primary"}">All regions</a>
+    ${regions}
+  </details>`;
 }
 function layout(inner, { arena = false, home = false } = {}) {
   const links = [
@@ -691,10 +735,10 @@ function layout(inner, { arena = false, home = false } = {}) {
         </div>
         <nav class="py-2">
           ${links
-            .map(
-              ([href, label]) =>
-                `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
-            )
+            .map(([href, label]) => {
+              if (href === "/regionals") return navRegionalsBlock();
+              return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`;
+            })
             .join("")}
           <a href="${esc(LEAGUE_DISCORD_INVITE)}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>
         </nav>
@@ -919,13 +963,28 @@ async function pageRegionals() {
   return layout(
     `<div class="mx-auto max-w-xl px-4 py-10">
       <a href="/" class="gold text-sm font-bold">← TSH</a>
-      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="text-3xl font-extrabold tracking-widest">REGIONALS</h1><p class="mt-2 text-sm text-muted">Find your region and compete</p></div>`)}
+      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="text-3xl font-extrabold tracking-widest">REGIONALS</h1><p class="mt-2 text-sm text-muted">TSH Darts League → pick a region, then a division.</p></div>`)}
       <div class="mt-4 space-y-3">
-        ${d.regionals
-          .map(
-            (r) =>
-              `<a href="/regionals/${r.slug}" class="glass flex items-center justify-between gap-4 rounded-xl px-5 py-4"><div><div class="text-lg font-bold">${esc(r.fullTitle)}</div><div class="text-sm text-muted">${esc(r.region)}</div></div>${crest(72, regionalCrest(r.slug))}</a>`
-          )
+        ${(d.regionals || [])
+          .map((r) => {
+            const divisions = (r.leagues || [])
+              .map(
+                (l) =>
+                  `<a href="${esc(l.href || `/regionals/${r.slug}/leagues/${l.id}`)}" class="btn-ghost w-full">${esc(divisionLabel(l))}</a>`
+              )
+              .join("");
+            return `<div class="glass rounded-xl p-5">
+              <a href="/regionals/${r.slug}" class="flex items-center justify-between gap-4 text-left">
+                <div>
+                  <div class="text-[11px] font-bold tracking-widest gold">REGIONAL LEAGUE</div>
+                  <div class="mt-1 text-lg font-bold">${esc(r.name)}</div>
+                  <div class="text-sm text-muted">${esc(r.fullTitle)}</div>
+                </div>
+                ${crest(72, regionalCrest(r.slug))}
+              </a>
+              <div class="mt-4 grid grid-cols-2 gap-2">${divisions}</div>
+            </div>`;
+          })
           .join("")}
       </div>
     </div>`,
@@ -938,25 +997,26 @@ async function pageRegional(slug) {
   const r = d.regional;
   return layout(
     `<div class="mx-auto max-w-xl px-4 py-10">
-      <a href="/regionals" class="gold">←</a>
-      <div class="mt-2 text-xl font-bold">${esc(r.fullTitle)}</div>
+      <a href="/regionals" class="gold">← TSH · Regionals</a>
+      <div class="mt-2 text-xl font-bold">${esc(r.name)}</div>
+      <p class="text-sm text-muted">${esc(r.fullTitle)} regional league</p>
       ${panel(`<div class="text-center"><img src="${CRESTS[regionalCrest(r.slug)]}" alt="${esc(r.fullTitle)}" class="crest-regional mx-auto"><div class="mt-3 text-sm font-bold tracking-[0.3em] gold">${esc(r.name.toUpperCase())}</div></div>`, "mt-6")}
       <a href="/rules" class="glass mt-3 flex items-center justify-between rounded-xl px-5 py-4"><span>📘 ${esc(r.fullTitle)} Rules</span><span class="text-sm text-muted">Read more ></span></a>
       <div class="mt-4 grid grid-cols-3 gap-3">
         ${[
           [d.counts.players, "PLAYERS"],
           [d.counts.teams, "TEAMS"],
-          [d.counts.leagues, "LEAGUES"],
+          [d.counts.leagues, "DIVISIONS"],
         ]
           .map(([v, l]) => panel(`<div class="text-center"><div class="text-3xl font-extrabold">${v}</div><div class="mt-1 text-[11px] tracking-widest text-muted">${l}</div></div>`))
           .join("")}
       </div>
-      <h2 class="mt-10 text-sm font-bold tracking-widest gold">LEAGUES</h2>
+      <h2 class="mt-10 text-sm font-bold tracking-widest gold">DIVISIONS</h2>
       <div class="mt-3 space-y-3">
         ${d.leagues
           .map(
             (l) =>
-              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass flex items-center justify-between rounded-xl px-5 py-4"><div><div class="font-bold">${esc(l.name)}</div><div class="text-sm text-muted">${esc(l.format)}${
+              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass flex items-center justify-between rounded-xl px-5 py-4"><div><div class="font-bold">${esc(divisionLabel(l))}</div><div class="text-sm text-muted">${esc(l.format)}${
                 (l.divisionAdmins || []).length ? ` · Admin: ${esc(l.divisionAdmins.map((a) => a.nickname || a.name).join(", "))}` : ""
               }</div></div><span class="text-xs font-semibold tracking-widest gold">TABLE</span></a>`
           )
@@ -972,8 +1032,14 @@ async function pageLeague(slug, id) {
   const tab = new URLSearchParams(location.search).get("tab") || "table";
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10">
-      <a href="/regionals/${slug}" class="gold text-sm font-bold inline-flex items-center gap-2">${crest(36, regionalCrest(slug))} ← ${esc(d.regional?.fullTitle || "")}</a>
-      ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc(d.league.name.toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
+      <div class="flex flex-wrap items-center gap-2 text-sm font-bold">
+        <a href="/" class="gold">TSH</a>
+        <span class="text-muted">/</span>
+        <a href="/regionals" class="gold">Regionals</a>
+        <span class="text-muted">/</span>
+        <a href="/regionals/${slug}" class="gold inline-flex items-center gap-2">${crest(28, regionalCrest(slug))} ${esc(d.regional?.name || d.regional?.fullTitle || "")}</a>
+      </div>
+      ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
       ${panel(
         (d.divisionAdmins || []).length
           ? `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div>
@@ -1378,7 +1444,7 @@ async function contactBlock() {
             <div class="mt-1 font-semibold">${esc(role)}</div>
             ${
               leagues.length
-                ? `<div class="mt-4 text-[11px] font-bold tracking-widest gold">${leagues.length === 1 ? "LEAGUE" : "LEAGUES"}</div>
+                ? `<div class="mt-4 text-[11px] font-bold tracking-widest gold">${leagues.length === 1 ? "DIVISION" : "DIVISIONS"}</div>
                    <div class="mt-1 text-sm">${esc(leagues.join(" · "))}</div>`
                 : ""
             }
@@ -1795,6 +1861,7 @@ async function render() {
       go("/dashboard");
       return;
     }
+    await loadNavTree();
     const map = {
       home: pageHome,
       regionals: pageRegionals,
