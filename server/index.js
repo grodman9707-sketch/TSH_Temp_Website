@@ -452,9 +452,11 @@ function userRegionalIds(u) {
   return [1];
 }
 function userLeagueIds(u) {
-  const ids = Array.isArray(u?.leagueIds) ? u.leagueIds.map(Number) : [];
-  if (u?.leagueId) ids.unshift(Number(u.leagueId));
-  return [...new Set(ids.filter(Boolean))];
+  if (Array.isArray(u?.leagueIds)) {
+    return [...new Set(u.leagueIds.map(Number).filter(Boolean))];
+  }
+  if (u?.leagueId) return [Number(u.leagueId)];
+  return [];
 }
 function inLeague(u, leagueId) {
   return userLeagueIds(u).includes(Number(leagueId));
@@ -473,6 +475,12 @@ function syncUserLeagues(u) {
   const ids = userLeagueIds(u);
   u.leagueIds = ids;
   u.leagueId = ids[0] || null;
+}
+function unplaceUserFromLeagues(u, leagueId) {
+  const ids = userLeagueIds(u);
+  const next = leagueId ? ids.filter((id) => id !== leagueId) : [];
+  u.leagueIds = next;
+  u.leagueId = next[0] || null;
 }
 function placeUserInLeague(db, u, league) {
   const allowed = userRegionalIds(u);
@@ -1876,15 +1884,15 @@ async function handleApi(req, res, url) {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove players from a league" });
       const u = db.users.find((x) => x.id === Number(body.userId));
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
-      const leagueId = Number(body.leagueId);
+      const rawLeague = body.leagueId;
+      const leagueId = rawLeague === "" || rawLeague == null ? 0 : Number(rawLeague);
       const ids = userLeagueIds(u);
       if (leagueId) {
         if (!ids.includes(leagueId)) return json(res, 400, { ok: false, error: "Player is not in that league" });
-        u.leagueIds = ids.filter((id) => id !== leagueId);
+        unplaceUserFromLeagues(u, leagueId);
       } else {
-        u.leagueIds = [];
+        unplaceUserFromLeagues(u);
       }
-      syncUserLeagues(u);
       for (const appn of db.applications.filter((a) => a.userId === u.id)) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }

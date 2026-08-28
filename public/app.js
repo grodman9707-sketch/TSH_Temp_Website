@@ -104,9 +104,11 @@ function isStaff(u = state.user) {
   return hasRole(u, "owner") || hasRole(u, "head_admin") || hasRole(u, "admin");
 }
 function userLeagueIds(u) {
-  const ids = Array.isArray(u?.leagueIds) ? u.leagueIds.map(Number) : [];
-  if (u?.leagueId) ids.unshift(Number(u.leagueId));
-  return [...new Set(ids.filter(Boolean))];
+  if (Array.isArray(u?.leagueIds)) {
+    return [...new Set(u.leagueIds.map(Number).filter(Boolean))];
+  }
+  if (u?.leagueId) return [Number(u.leagueId)];
+  return [];
 }
 function screenshotUrl(id, slot = 1) {
   return `/api/fixtures/${id}/screenshot?slot=${slot}&token=${encodeURIComponent(token())}`;
@@ -1698,6 +1700,7 @@ async function pageAdmin() {
           <button class="btn-gold">ADD PLAYER</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">REMOVE FROM LEAGUE</h3>
+        <p class="mt-1 text-xs text-muted">Choose one league, or keep “All of their leagues” to unplace them from every regional they play in.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="UNPLACE">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
