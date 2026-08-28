@@ -733,10 +733,30 @@ function esc(s) {
 function discordHref(value) {
   const s = String(value || "").trim();
   if (!s) return "";
-  if (/^https?:\/\//i.test(s)) return s;
-  if (/^(discord\.gg|discord\.com|discordapp\.com)\//i.test(s)) return `https://${s}`;
-  if (/^\d{17,20}$/.test(s)) return `https://discord.com/users/${s}`;
-  return "";
+  let href = "";
+  if (/^https?:\/\//i.test(s)) href = s;
+  else if (/^(www\.)?(discord\.gg|discord\.com|discordapp\.com)\//i.test(s)) href = `https://${s.replace(/^www\./i, "")}`;
+  else if (/^\d{17,20}$/.test(s)) href = `https://discord.com/users/${s}`;
+  if (!href) return "";
+  try {
+    const u = new URL(href);
+    u.hash = "";
+    u.pathname = (u.pathname || "/").replace(/\/+$/, "") || "/";
+    return u.toString();
+  } catch {
+    return href;
+  }
+}
+function discordLinkLabel(href) {
+  try {
+    const u = new URL(href);
+    const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = (u.pathname || "").replace(/\/+$/, "");
+    if (host === "discord.gg") return `discord.gg${path}`;
+    return `${host}${path}${u.search || ""}`;
+  } catch {
+    return href;
+  }
 }
 function externalLink(href, label, className = "discord-link") {
   const url = discordHref(href) || String(href || "").trim();
@@ -747,9 +767,8 @@ function discordDisplay(url) {
   const href = discordHref(url);
   const raw = String(url || "").trim();
   if (!href && !raw) return `<span class="text-muted">Not listed yet</span>`;
-  if (!href) return `<span>${esc(raw)}</span>`;
-  const isInvite = /discord\.gg\//i.test(href) || /discord\.com\/invite\//i.test(href);
-  return externalLink(href, isInvite ? "Join Discord Server" : "Open Discord");
+  if (!href) return `<span class="break-all">${esc(raw)}</span>`;
+  return `<a class="discord-profile-link" href="${esc(href)}" rel="noopener noreferrer" data-external="1">${esc(discordLinkLabel(href))}</a>`;
 }
 function staffDisplayName(p) {
   const nick = String(p?.nickname || "").trim();
@@ -1182,8 +1201,8 @@ async function pageDashboard() {
             mineCard.leagueTitle ? ` · ${esc(mineCard.leagueTitle)}` : ""
           }</div>
           <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Discord profile link</label>
-          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/your-id" inputmode="url" autocomplete="url">
-          <p class="text-xs text-muted">Paste your Discord profile URL. Players tap Open Discord on any device.</p>
+          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/123456789012345678" inputmode="url" autocomplete="url">
+          <p class="text-xs text-muted">In Discord, copy your profile link (right-click your name → Copy Profile Link) and paste it here. The About Us card will show that URL.</p>
           <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Fallback email</label>
           <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="If Discord fails">
           <button class="btn-gold">SAVE CONTACT CARD</button>

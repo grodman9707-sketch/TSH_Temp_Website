@@ -296,7 +296,7 @@ try {
   check("contact page uses official Admin Team heading", appJs.includes("admin-team-title") && appJs.includes("Admin Team"));
   check("contact page highlights Discord First callout", appJs.includes("discord-first") && appJs.includes("Discord First! E-mail if that Fails!"));
   check("Discord First callout is a server link", appJs.includes("discord-first") && appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes('data-external="1"'));
-  check("admin Discord opens as an external link", appJs.includes("function discordDisplay") && appJs.includes("Open Discord") && appJs.includes("isInternalNav"));
+  check("admin Discord shows the profile URL, not Open Discord", appJs.includes("function discordDisplay") && appJs.includes("discord-profile-link") && appJs.includes("discordLinkLabel") && !appJs.includes("Players tap Open Discord"));
   check("header shows Sign In next to Sign Up on all devices", appJs.includes('class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>') && !appJs.includes("hidden sm:inline-flex"));
   check("sidebar includes the league Discord server", appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes(">Discord</a>"));
 } finally {
