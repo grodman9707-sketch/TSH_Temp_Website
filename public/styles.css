@@ -80,6 +80,23 @@ html, body, #app { min-height: 100%; margin: 0; background: #090b11; color: #fff
   background: rgba(232, 180, 37, 0.12);
   color: #fff;
 }
+.discord-profile-link {
+  display: inline-block;
+  max-width: 100%;
+  min-height: 2.5rem;
+  padding: 0.35rem 0;
+  color: #e8b425;
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  word-break: break-all;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  touch-action: manipulation;
+}
+.discord-profile-link:hover {
+  color: #fff;
+}
 .discord-mark {
   display: flex;
   align-items: center;
