@@ -441,9 +441,26 @@ function ownerCount(db) {
 function divisionAdminsForLeague(db, leagueId) {
   return db.users.filter((u) => adminLeagueIds(u).includes(Number(leagueId))).map((u) => publicUser(u, db));
 }
+function divisionName(league) {
+  const raw = String(league?.name || "").trim();
+  const m = raw.match(/^League\s+(\d+)$/i);
+  return m ? `Division ${m[1]}` : raw;
+}
 function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
-  return `${regional?.fullTitle || "TSH"} ${league.name}`;
+  return `${regional?.fullTitle || "TSH"} ${divisionName(league)}`;
+}
+function leaguesForRegional(db, regional) {
+  return db.leagues
+    .filter((l) => l.regionalId === regional.id)
+    .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) || a.id - b.id)
+    .map((l) => ({
+      id: l.id,
+      name: l.name,
+      displayName: divisionName(l),
+      format: l.format,
+      href: `/regionals/${regional.slug}/leagues/${l.id}`,
+    }));
 }
 function userRegionalIds(u) {
   if (Array.isArray(u?.regionalIds) && u.regionalIds.length) return [...new Set(u.regionalIds.map(Number))];
@@ -591,6 +608,15 @@ function migrate(db) {
     if (!db.league.discordInvite) {
       db.league.discordInvite = LEAGUE_DISCORD_INVITE;
       changed = true;
+    }
+  }
+  if (Array.isArray(db.leagues)) {
+    for (const league of db.leagues) {
+      const renamed = divisionName(league);
+      if (renamed !== league.name) {
+        league.name = renamed;
+        changed = true;
+      }
     }
   }
   if (Array.isArray(db.content?.faq)) {
@@ -1056,7 +1082,10 @@ async function handleApi(req, res, url) {
     });
   }
   if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
-  if (method === "GET" && p === "/api/regionals") return json(res, 200, { ok: true, regionals: db.regionals });
+  if (method === "GET" && p === "/api/regionals") {
+    const regionals = db.regionals.map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
+    return json(res, 200, { ok: true, regionals });
+  }
   if (method === "GET" && p === "/api/announcements") return json(res, 200, { ok: true, announcements: db.announcements });
   if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
 
@@ -1066,6 +1095,7 @@ async function handleApi(req, res, url) {
     if (!regional) return json(res, 404, { ok: false, error: "Not found" });
     const leagues = db.leagues.filter((l) => l.regionalId === regional.id).map((l) => ({
       ...l,
+      displayName: divisionName(l),
       divisionAdmins: divisionAdminsForLeague(db, l.id).map((a) => ({ id: a.id, name: a.name, nickname: a.nickname })),
     }));
     const players = db.users.filter((u) => placedRegionalIds(db, u).includes(regional.id));
@@ -1079,7 +1109,7 @@ async function handleApi(req, res, url) {
     const regional = db.regionals.find((r) => r.id === league.regionalId);
     return json(res, 200, {
       ok: true,
-      league: { ...league, title: leagueTitle(db, league) },
+      league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) },
       regional,
       standings: standingsForLeague(db, league.id),
       divisionAdmins: divisionAdminsForLeague(db, league.id),

@@ -124,7 +124,7 @@ try {
   check("assign division admin", assignAdmin.status === 200);
   const withAdmin = await api(port, "/api/staff-profiles");
   const adminCard = (withAdmin.data.profiles || []).find((p) => p.userId === playerId);
-  check("admin profile generated for league", Boolean(adminCard) && (adminCard.leagueTitles || []).some((t) => /League 1/.test(t)));
+  check("admin profile generated for league", Boolean(adminCard) && (adminCard.leagueTitles || []).some((t) => /Division 1/.test(t)));
   check("admin role label", adminCard?.roles?.includes("Admin") && adminCard?.roleLabel === "Admin");
   check("new admin card prefilled with account email", adminCard?.contactEmail === "alex-admin@test.com");
 
@@ -193,8 +193,8 @@ try {
   check("reassign as admin of another league", replace.status === 200);
   const afterReplace = await api(port, "/api/staff-profiles");
   const replacedCard = (afterReplace.data.profiles || []).find((p) => p.userId === playerId);
-  check("card lists the new league", (replacedCard?.leagueTitles || []).some((t) => /League 2/.test(t)));
-  check("old League 1 is gone", !(replacedCard?.leagueTitles || []).some((t) => /League 1/.test(t)));
+  check("card lists the new league", (replacedCard?.leagueTitles || []).some((t) => /Division 2/.test(t)));
+  check("old Division 1 is gone", !(replacedCard?.leagueTitles || []).some((t) => /Division 1/.test(t)));
 
   const revokeHead = await api(port, "/api/admin/revoke-admin", {
     method: "POST",

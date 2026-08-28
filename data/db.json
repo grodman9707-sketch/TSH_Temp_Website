@@ -64,56 +64,56 @@
     {
       "id": 1,
       "regionalId": 1,
-      "name": "League 1",
+      "name": "Division 1",
       "format": "Best of 9",
       "sortOrder": 0
     },
     {
       "id": 2,
       "regionalId": 1,
-      "name": "League 2",
+      "name": "Division 2",
       "format": "Best of 9",
       "sortOrder": 1
     },
     {
       "id": 3,
       "regionalId": 1,
-      "name": "League 3",
+      "name": "Division 3",
       "format": "Best of 9",
       "sortOrder": 2
     },
     {
       "id": 4,
       "regionalId": 1,
-      "name": "League 4",
+      "name": "Division 4",
       "format": "Best of 9",
       "sortOrder": 3
     },
     {
       "id": 5,
       "regionalId": 2,
-      "name": "League 1",
+      "name": "Division 1",
       "format": "Best of 9",
       "sortOrder": 0
     },
     {
       "id": 6,
       "regionalId": 2,
-      "name": "League 2",
+      "name": "Division 2",
       "format": "Best of 9",
       "sortOrder": 1
     },
     {
       "id": 7,
       "regionalId": 2,
-      "name": "League 3",
+      "name": "Division 3",
       "format": "Best of 9",
       "sortOrder": 2
     },
     {
       "id": 8,
       "regionalId": 2,
-      "name": "League 4",
+      "name": "Division 4",
       "format": "Best of 9",
       "sortOrder": 3
     }
