@@ -64,6 +64,7 @@ try {
   check("public staff list ok", listed.status === 200 && listed.data.ok);
   check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
   check("support email on staff list", listed.data.supportEmail === "Support@tshdartsleague.com");
+  check("league Discord invite on staff list", listed.data.discordInvite === "https://discord.gg/PjXMqRQCfS");
   const founderCard = (listed.data.profiles || []).find((p) => p.userId === 1);
   check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
   check("one card per person", (listed.data.profiles || []).filter((p) => p.userId === 1).length === 1);
@@ -294,6 +295,10 @@ try {
   check("contact page lists support email", appJs.includes("Support@tshdartsleague.com"));
   check("contact page uses official Admin Team heading", appJs.includes("admin-team-title") && appJs.includes("Admin Team"));
   check("contact page highlights Discord First callout", appJs.includes("discord-first") && appJs.includes("Discord First! E-mail if that Fails!"));
+  check("Discord First callout is a server link", appJs.includes("discord-first") && appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes('data-external="1"'));
+  check("admin Discord opens as an external link", appJs.includes("function discordDisplay") && appJs.includes("Open Discord") && appJs.includes("isInternalNav"));
+  check("header shows Sign In next to Sign Up on all devices", appJs.includes('class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>') && !appJs.includes("hidden sm:inline-flex"));
+  check("sidebar includes the league Discord server", appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes(">Discord</a>"));
 } finally {
   child.kill("SIGTERM");
 }

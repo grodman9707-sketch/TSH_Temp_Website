@@ -59,6 +59,7 @@ try {
   check("content ok", contentRes.ok && content.ok);
   check("league email is TSH Gmail", content.league?.email === CONTACT);
   check("league support email is listed", content.league?.supportEmail === "Support@tshdartsleague.com");
+  check("league Discord invite is listed", content.league?.discordInvite === "https://discord.gg/PjXMqRQCfS");
   check("league has no formerly field", !("formerly" in (content.league || {})));
   const blob = JSON.stringify(content);
   check("content JSON has no WDL / World Darts League", !BANNED.test(blob));
@@ -97,6 +98,7 @@ const migrated = await startServer(migrateDir, migratePort);
 try {
   const content = await (await fetch(`http://127.0.0.1:${migratePort}/api/content`)).json();
   check("migrate updates contact email", content.league?.email === CONTACT);
+  check("migrate adds Discord invite", content.league?.discordInvite === "https://discord.gg/PjXMqRQCfS");
   check("migrate removes formerly", !("formerly" in (content.league || {})));
   check("migrate strips WDL from FAQ and news payload", !BANNED.test(JSON.stringify(content)));
   const news = await (await fetch(`http://127.0.0.1:${migratePort}/api/announcements`)).json();
