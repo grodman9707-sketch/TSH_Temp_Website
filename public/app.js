@@ -2,6 +2,7 @@ import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrT
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
+const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
 const $ = (sel, el = document) => el.querySelector(sel);
 
 const state = {
@@ -592,6 +593,17 @@ function go(path) {
   state.notice = "";
   render();
 }
+function isInternalNav(a) {
+  if (!a || !a.href || a.hasAttribute("download") || a.hasAttribute("data-external")) return false;
+  if (a.target && a.target !== "_self") return false;
+  const proto = String(a.protocol || "").toLowerCase();
+  if (proto !== "http:" && proto !== "https:") return false;
+  try {
+    return new URL(a.href, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
 
 async function queueAdminScan() {
   const id = state._pendingScanId;
@@ -682,18 +694,26 @@ function layout(inner, { arena = false, home = false } = {}) {
                 `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`
             )
             .join("")}
+          <a href="${esc(LEAGUE_DISCORD_INVITE)}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>
         </nav>
-        <div class="mt-auto p-4 text-xs text-muted">${state.user ? `<button class="btn-ghost w-full" data-act="logout">Sign out ${esc(state.user.name)}</button>` : "The Social Hub Darts League"}</div>
+        <div class="mt-auto p-4 text-xs text-muted">${
+          state.user
+            ? `<button class="btn-ghost w-full" data-act="logout">Sign out ${esc(state.user.name)}</button>`
+            : `<div class="flex flex-col gap-2">
+                <a href="/sign-in" class="btn-ghost w-full">SIGN IN</a>
+                <a href="/sign-up" class="btn-gold w-full">SIGN UP</a>
+              </div>`
+        }</div>
       </aside>
       <nav class="sticky top-0 z-30 border-b border-white/10 ${home ? "bg-black/30 backdrop-blur" : "bg-background"}">
-        <div class="flex h-14 items-center justify-between px-4">
-          <button class="h-10 w-10 rounded border border-white/15 hover:border-primary" data-act="open-menu">☰</button>
-          <a href="/" class="flex items-center">${crest(56)}</a>
-          <div class="flex gap-2">
+        <div class="flex h-14 items-center justify-between gap-2 px-3 sm:px-4">
+          <button class="h-10 w-10 shrink-0 rounded border border-white/15 hover:border-primary" data-act="open-menu" aria-label="Open menu">☰</button>
+          <a href="/" class="flex min-w-0 items-center justify-center">${crest(56)}</a>
+          <div class="header-auth">
             ${
               state.user
                 ? `<a href="/dashboard" class="inline-flex items-center gap-2 btn-gold py-1 pl-1 pr-3">${avatarImg(state.user, 28)}<span>${esc((state.user.nickname || state.user.name).split(" ")[0].toUpperCase())}</span></a>`
-                : `<a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/sign-in" class="btn-ghost hidden sm:inline-flex">SIGN IN</a>`
+                : `<a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>`
             }
           </div>
         </div>
@@ -708,13 +728,26 @@ function esc(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
+function discordHref(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^(discord\.gg|discord\.com|discordapp\.com)\//i.test(s)) return `https://${s}`;
+  if (/^\d{17,20}$/.test(s)) return `https://discord.com/users/${s}`;
+  return "";
+}
+function externalLink(href, label, className = "discord-link") {
+  const url = discordHref(href) || String(href || "").trim();
+  if (!url) return `<span class="text-muted">Not listed yet</span>`;
+  return `<a class="${className}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-external="1">${label}</a>`;
+}
 function discordDisplay(url) {
-  const s = String(url || "").trim();
-  if (!s) return `<span class="text-muted">Not listed yet</span>`;
-  if (/^https?:\/\//i.test(s)) {
-    return `<a class="gold" href="${esc(s)}" target="_blank" rel="noopener noreferrer">Discord profile</a>`;
-  }
-  return `<span>${esc(s)}</span>`;
+  const href = discordHref(url);
+  const raw = String(url || "").trim();
+  if (!href && !raw) return `<span class="text-muted">Not listed yet</span>`;
+  if (!href) return `<span>${esc(raw)}</span>`;
+  const isInvite = /discord\.gg\//i.test(href) || /discord\.com\/invite\//i.test(href);
+  return externalLink(href, isInvite ? "Join Discord Server" : "Open Discord");
 }
 function staffDisplayName(p) {
   const nick = String(p?.nickname || "").trim();
@@ -815,6 +848,14 @@ async function pageHome() {
                 `<a href="/regionals/${r.slug}" class="glass flex items-center gap-5 rounded-xl p-6 text-left hover:border-primary">${crest(96, regionalCrest(r.slug))}<div><h3 class="text-xl font-bold">${esc(r.fullTitle)}</h3><p class="mt-2 text-sm text-muted">${esc(r.region)} — climb the divisions weekly.</p></div></a>`
             )
             .join("")}
+          <a href="${esc(content.league?.discordInvite || LEAGUE_DISCORD_INVITE)}" class="glass flex items-center gap-5 rounded-xl p-6 text-left hover:border-primary md:col-span-2" target="_blank" rel="noopener noreferrer" data-external="1">
+            <div class="discord-mark" aria-hidden="true">D</div>
+            <div>
+              <h3 class="text-xl font-bold">League Discord</h3>
+              <p class="mt-2 text-sm text-muted">Join the TSH Darts League server to talk with players and admins.</p>
+              <p class="mt-2 text-sm font-bold gold">Open Discord →</p>
+            </div>
+          </a>
         </div>
       </div>
     </section>
@@ -837,11 +878,12 @@ async function pageHome() {
           <img src="${CRESTS.main}" alt="TSH" class="mb-3" style="width:88px;height:88px;object-fit:contain">
           <h3 class="text-lg font-bold">The Social Hub Darts League</h3>
           <a class="mt-3 inline-block text-sm gold" href="mailto:${esc(content.league?.email || "thesocialhubinformation@gmail.com")}">${esc(content.league?.email || "thesocialhubinformation@gmail.com")}</a>
+          <div class="mt-4">${externalLink(content.league?.discordInvite || LEAGUE_DISCORD_INVITE, "Join Discord Server")}</div>
         </div>
         <div>
           <h3 class="text-lg font-bold">Join the league</h3>
           <p class="mt-3 text-sm text-muted">Free to enter. Create an account and we will place you by your DartCounter average.</p>
-          <div class="mt-4 flex gap-3"><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/rules" class="btn-ghost">Rules</a></div>
+          <div class="mt-4 flex flex-wrap gap-3"><a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/rules" class="btn-ghost">Rules</a></div>
         </div>
       </div>
       <p class="mx-auto mt-10 max-w-5xl text-xs text-muted">© 2026 The Social Hub Darts League. All rights reserved.</p>
@@ -1138,7 +1180,8 @@ async function pageDashboard() {
             mineCard.leagueTitle ? ` · ${esc(mineCard.leagueTitle)}` : ""
           }</div>
           <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Discord profile link</label>
-          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/your-id">
+          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/your-id" inputmode="url" autocomplete="url">
+          <p class="text-xs text-muted">Paste your Discord profile URL. Players tap Open Discord on any device.</p>
           <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Fallback email</label>
           <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="If Discord fails">
           <button class="btn-gold">SAVE CONTACT CARD</button>
@@ -1294,6 +1337,7 @@ async function contactBlock() {
   const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
   const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
   const supportEmail = d.supportEmail || "Support@tshdartsleague.com";
+  const discordInvite = d.discordInvite || LEAGUE_DISCORD_INVITE;
   const profiles = Array.isArray(d.profiles) ? d.profiles : [];
   const cards = profiles.length
     ? `<div class="mt-6 grid gap-4 sm:grid-cols-2">${profiles
@@ -1335,17 +1379,21 @@ async function contactBlock() {
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
         <div class="mt-6 space-y-4">
           <div>
+            <div class="text-[11px] font-bold tracking-widest gold">DISCORD SERVER</div>
+            <div class="mt-2">${externalLink(discordInvite, "Join Discord Server")}</div>
+          </div>
+          <div>
             <div class="text-[11px] font-bold tracking-widest gold">SUPPORT</div>
-            <a class="mt-1 inline-block text-lg font-bold gold" href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>
+            <a class="mt-1 inline-block text-lg font-bold gold break-all" href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>
           </div>
           <div>
             <div class="text-[11px] font-bold tracking-widest gold">LEAGUE INBOX</div>
-            <a class="mt-1 inline-block gold" href="mailto:${esc(email)}">${esc(email)}</a>
+            <a class="mt-1 inline-block gold break-all" href="mailto:${esc(email)}">${esc(email)}</a>
           </div>
         </div>
       </div>`)}
       <h2 class="admin-team-title">Admin Team</h2>
-      <p class="discord-first">Discord First! E-mail if that Fails!</p>
+      <a class="discord-first" href="${esc(discordInvite)}" target="_blank" rel="noopener noreferrer" data-external="1">Discord First! E-mail if that Fails!</a>
       ${cards}
     </section>`;
 }
@@ -1779,7 +1827,7 @@ document.addEventListener("click", async (e) => {
     return;
   }
   const a = e.target.closest("a");
-  if (a && a.href && a.origin === location.origin && !a.hasAttribute("download")) {
+  if (a && isInternalNav(a)) {
     const next = new URL(a.href);
     if (next.pathname === location.pathname && next.hash) {
       e.preventDefault();

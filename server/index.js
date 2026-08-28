@@ -38,6 +38,7 @@ const MAX_OWNERS = 3;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
 const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
 const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
+const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
 const LEGACY_CONTACT_EMAIL = "worlddartsleagueinfo@gmail.com";
 const MOCK_EMAILS = new Set([
   "admin@tshdarts.com",
@@ -587,6 +588,10 @@ function migrate(db) {
       db.league.supportEmail = LEAGUE_SUPPORT_EMAIL;
       changed = true;
     }
+    if (!db.league.discordInvite) {
+      db.league.discordInvite = LEAGUE_DISCORD_INVITE;
+      changed = true;
+    }
   }
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
@@ -1046,6 +1051,7 @@ async function handleApi(req, res, url) {
       ok: true,
       leagueEmail: db.league?.email || LEAGUE_CONTACT_EMAIL,
       supportEmail: db.league?.supportEmail || LEAGUE_SUPPORT_EMAIL,
+      discordInvite: db.league?.discordInvite || LEAGUE_DISCORD_INVITE,
       profiles: publicStaffProfiles(db),
     });
   }

@@ -67,9 +67,11 @@ try {
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("nav has About Us instead of a top-level Contact tab", appJs.includes('["/about", "About Us"]') && !appJs.includes('["/contact", "Contact"]'));
   check("About page loads /api/about and keeps Contact as a section", appJs.includes("/api/about") && appJs.includes("pageAbout") && appJs.includes('id="contact"'));
+  check("Contact includes the league Discord server link", appJs.includes("Join Discord Server") && appJs.includes("discord.gg/PjXMqRQCfS"));
   check("/contact still routes to About Us", appJs.includes('q === "/about" || q === "/contact"'));
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("about styles are served", css.includes(".about-kicker") && css.includes(".rules-note"));
+  check("header auth and Discord links are sized for phones", css.includes(".header-auth") && css.includes(".discord-link"));
 } finally {
   if (child.exitCode == null) {
     child.kill("SIGTERM");
