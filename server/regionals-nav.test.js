@@ -53,13 +53,22 @@ try {
   const europe = (data.regionals || []).find((r) => r.slug === "europe");
   const americas = (data.regionals || []).find((r) => r.slug === "americas");
   check("Europe and Americas regions are present", Boolean(europe && americas));
-  check("Europe has four divisions", Array.isArray(europe?.leagues) && europe.leagues.length === 4);
+  const europeLadder = ["Premier", "Championship", "Division 1", "Division 2", "Division 3", "Division 4", "Foundation", "Development"];
+  check("Europe has eight divisions", Array.isArray(europe?.leagues) && europe.leagues.length === 8);
   check("Americas has four divisions", Array.isArray(americas?.leagues) && americas.leagues.length === 4);
-  check("divisions are named Division 1–4", (europe?.leagues || []).every((l, i) => l.displayName === `Division ${i + 1}`));
-  check("division links jump to the table", europe?.leagues?.[0]?.href === "/regionals/europe/leagues/1");
+  check(
+    "Europe ladder is Premier through Development",
+    (europe?.leagues || []).every((l, i) => l.displayName === europeLadder[i])
+  );
+  check("Americas divisions stay Division 1–4", (americas?.leagues || []).every((l, i) => l.displayName === `Division ${i + 1}`));
+  check("Premier sits above Division 1", europe?.leagues?.[0]?.displayName === "Premier" && europe?.leagues?.[2]?.displayName === "Division 1");
+  check("Foundation and Development sit below Division 4", europe?.leagues?.[6]?.displayName === "Foundation" && europe?.leagues?.[7]?.displayName === "Development");
+  check("division links jump to the table", europe?.leagues?.[0]?.href === `/regionals/europe/leagues/${europe?.leagues?.[0]?.id}`);
 
   const league = await (await fetch(`http://127.0.0.1:${port}/api/leagues/1`)).json();
   check("league payload uses Division in the title", /Division 1/.test(league.league?.title || "") && league.league?.displayName === "Division 1");
+  const premier = await (await fetch(`http://127.0.0.1:${port}/api/leagues/${europe?.leagues?.[0]?.id}`)).json();
+  check("Premier league payload", premier.league?.displayName === "Premier" && /Premier/.test(premier.league?.title || ""));
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
@@ -108,7 +117,17 @@ const migrated = spawn(process.execPath, [path.join(root, "server/index.js")], {
 try {
   await waitHealth(migratePort, migrated);
   const renamed = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals`)).json();
-  check("migrate renames League 1 to Division 1", renamed.regionals?.[0]?.leagues?.[0]?.displayName === "Division 1");
+  const migratedEurope = renamed.regionals?.[0];
+  const migratedNames = (migratedEurope?.leagues || []).map((l) => l.displayName);
+  check("migrate renames League 1 to Division 1", migratedNames.includes("Division 1"));
+  check(
+    "migrate adds Premier, Championship, Foundation, Development",
+    ["Premier", "Championship", "Foundation", "Development"].every((name) => migratedNames.includes(name))
+  );
+  check(
+    "migrated Europe order is Premier through Development",
+    JSON.stringify(migratedNames) === JSON.stringify(["Premier", "Championship", "Division 1", "Division 2", "Division 3", "Division 4", "Foundation", "Development"])
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - migrate:", err.message);
