@@ -62,32 +62,60 @@
   ],
   "leagues": [
     {
+      "id": 9,
+      "regionalId": 1,
+      "name": "Premier",
+      "format": "Best of 9",
+      "sortOrder": 0
+    },
+    {
+      "id": 10,
+      "regionalId": 1,
+      "name": "Championship",
+      "format": "Best of 9",
+      "sortOrder": 1
+    },
+    {
       "id": 1,
       "regionalId": 1,
       "name": "Division 1",
       "format": "Best of 9",
-      "sortOrder": 0
+      "sortOrder": 2
     },
     {
       "id": 2,
       "regionalId": 1,
       "name": "Division 2",
       "format": "Best of 9",
-      "sortOrder": 1
+      "sortOrder": 3
     },
     {
       "id": 3,
       "regionalId": 1,
       "name": "Division 3",
       "format": "Best of 9",
-      "sortOrder": 2
+      "sortOrder": 4
     },
     {
       "id": 4,
       "regionalId": 1,
       "name": "Division 4",
       "format": "Best of 9",
-      "sortOrder": 3
+      "sortOrder": 5
+    },
+    {
+      "id": 11,
+      "regionalId": 1,
+      "name": "Foundation",
+      "format": "Best of 9",
+      "sortOrder": 6
+    },
+    {
+      "id": 12,
+      "regionalId": 1,
+      "name": "Development",
+      "format": "Best of 9",
+      "sortOrder": 7
     },
     {
       "id": 5,

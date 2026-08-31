@@ -446,6 +446,51 @@ function divisionName(league) {
   const m = raw.match(/^League\s+(\d+)$/i);
   return m ? `Division ${m[1]}` : raw;
 }
+const EUROPE_DIVISION_LADDER = [
+  "Premier",
+  "Championship",
+  "Division 1",
+  "Division 2",
+  "Division 3",
+  "Division 4",
+  "Foundation",
+  "Development",
+];
+function europeRegional(db) {
+  return (db.regionals || []).find((r) => r.slug === "europe" || Number(r.id) === 1) || null;
+}
+function ensureEuropeDivisions(db) {
+  if (!Array.isArray(db.leagues)) db.leagues = [];
+  const europe = europeRegional(db);
+  if (!europe) return false;
+  let changed = false;
+  let nextId = Math.max(0, ...db.leagues.map((l) => Number(l.id) || 0)) + 1;
+  for (const name of EUROPE_DIVISION_LADDER) {
+    const existing = db.leagues.find(
+      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
+    );
+    if (!existing) {
+      db.leagues.push({
+        id: nextId++,
+        regionalId: europe.id,
+        name,
+        format: "Best of 9",
+        sortOrder: 0,
+      });
+      changed = true;
+    }
+  }
+  EUROPE_DIVISION_LADDER.forEach((name, i) => {
+    const league = db.leagues.find(
+      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
+    );
+    if (league && league.sortOrder !== i) {
+      league.sortOrder = i;
+      changed = true;
+    }
+  });
+  return changed;
+}
 function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
   return `${regional?.fullTitle || "TSH"} ${divisionName(league)}`;
@@ -627,6 +672,7 @@ function migrate(db) {
       }
     }
   }
+  if (ensureEuropeDivisions(db)) changed = true;
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
       const beforeA = item.a;
