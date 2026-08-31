@@ -453,6 +453,23 @@
             },
             {
               "type": "p",
+              "text": "TSH Europe divisions, from highest to lowest:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Premier",
+                "Championship",
+                "Division 1",
+                "Division 2",
+                "Division 3",
+                "Division 4",
+                "Foundation",
+                "Development"
+              ]
+            },
+            {
+              "type": "p",
               "text": "All allocation decisions are final."
             }
           ]
