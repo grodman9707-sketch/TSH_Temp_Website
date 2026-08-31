@@ -1155,6 +1155,17 @@ function pageSignIn() {
   );
 }
 function pageSignUp() {
+  if (state.user) {
+    return layout(
+      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
+        <p class="text-xs font-semibold tracking-[0.3em] gold">SIGN UP</p>
+        <h1 class="mt-2 text-3xl font-extrabold">You already have an account</h1>
+        <p class="mt-2 text-sm text-muted">Each player may only sign up once. You are signed in as ${esc(state.user.nickname || state.user.name)}.</p>
+        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
+      `)}</div>`,
+      { arena: true }
+    );
+  }
   const s = state.signup;
   const step = s.step || 1;
   const total = 5;
@@ -1177,6 +1188,7 @@ function pageSignUp() {
       <input name="email" type="email" value="${esc(s.email)}" placeholder="you@email.com" required autocomplete="email">
       <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Password</label>
       ${passwordField("password", "Password", "new-password", `required value="${esc(s.password)}"`)}
+      <p class="text-xs text-muted">One account per player. If you already registered, <a class="gold" href="/sign-in">sign in</a> instead.</p>
     `;
   } else if (step === 2) {
     const opt = (key, title, img, note) => `
@@ -1232,6 +1244,29 @@ function pageSignUp() {
   );
 }
 async function pageApply() {
+  const u = state.user;
+  if (u?.hasPendingApplication) {
+    return layout(
+      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
+        <p class="text-xs font-semibold tracking-[0.3em] gold">JOIN THE LEAGUE</p>
+        <h1 class="mt-2 text-3xl font-extrabold">Application already received</h1>
+        <p class="mt-2 text-sm text-muted">You already have a pending application. Each player may only sign up once. An admin will place you in a division.</p>
+        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
+      `)}</div>`,
+      { arena: true }
+    );
+  }
+  if (u?.fullyPlaced) {
+    return layout(
+      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
+        <p class="text-xs font-semibold tracking-[0.3em] gold">JOIN THE LEAGUE</p>
+        <h1 class="mt-2 text-3xl font-extrabold">Already in the league</h1>
+        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Contact an admin if you need a division change.</p>
+        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
+      `)}</div>`,
+      { arena: true }
+    );
+  }
   const d = await api("/api/regionals");
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
@@ -2013,10 +2048,16 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "SIGNUP") {
       Object.assign(state.signup, fd);
       const step = Number(form.dataset.step || state.signup.step || 1);
+      if (step === 1) {
+        await api("/api/auth/check-signup", { method: "POST", body: JSON.stringify({ email: state.signup.email }) });
+      }
       if (step === 2 && !state.signup.regional) {
         state.error = "Choose TSH Europe, TSH Americas, or Both.";
         render();
         return;
+      }
+      if (step === 3) {
+        await api("/api/auth/check-signup", { method: "POST", body: JSON.stringify({ dartcounterName: state.signup.dartcounterName }) });
       }
       if (step === 5) {
         const avg = String(state.signup.avg || "").replace(/[^0-9.]/g, "");

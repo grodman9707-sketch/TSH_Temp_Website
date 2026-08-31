@@ -153,10 +153,45 @@ function publicUser(u, db) {
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
     notifyPrefs: { email: u.notifyPrefs?.email !== false },
     timezone: u.timezone || "",
+    hasPendingApplication: db ? userHasPendingApplication(db, u.id) : false,
+    fullyPlaced: db ? isFullyPlaced(db, u) : false,
   };
 }
 function nextId(list) {
   return Math.max(0, ...(Array.isArray(list) ? list : []).map((x) => Number(x.id) || 0)) + 1;
+}
+function normIdent(value) {
+  return String(value || "").trim().toLowerCase();
+}
+function identityConflict(db, { email, username, dartcounterName } = {}, excludeUserId = null) {
+  const emailKey = normIdent(email);
+  const usernameKey = normIdent(username);
+  const dcKey = normIdent(dartcounterName);
+  for (const u of db.users || []) {
+    if (excludeUserId != null && Number(u.id) === Number(excludeUserId)) continue;
+    const uEmail = normIdent(u.email);
+    const uUser = normIdent(u.username);
+    const uDc = normIdent(u.dartcounterName);
+    if (emailKey && uEmail === emailKey) return "That email is already registered. Sign in instead.";
+    if (emailKey && uUser === emailKey) return "That email is already used as a username.";
+    if (usernameKey && uUser === usernameKey) return "That username is already in use.";
+    if (usernameKey && uEmail === usernameKey) return "That username matches an existing account email.";
+    if (dcKey && uDc === dcKey) return "That DartCounter name is already registered. Each player may only have one TSH account.";
+  }
+  return null;
+}
+function userHasPendingApplication(db, userId) {
+  return (db.applications || []).some((a) => Number(a.userId) === Number(userId) && a.status === "pending");
+}
+function applicationConflict(db, user) {
+  if (!user) return "Login required";
+  if (userHasPendingApplication(db, user.id)) {
+    return "You already have a pending application. An admin will place you in a division.";
+  }
+  if (isFullyPlaced(db, user)) {
+    return "You are already placed in the league. Contact an admin if you need a change.";
+  }
+  return null;
 }
 function publicApproval(a, db) {
   const target = db.users.find((u) => u.id === a.targetUserId);
@@ -1150,15 +1185,32 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (method === "POST" && p === "/api/auth/check-signup") {
+    const email = String(body.email || "").trim();
+    const username = String(body.username || "").trim();
+    const dartcounterName = String(body.dartcounterName || "").trim();
+    if (!email && !username && !dartcounterName) {
+      return json(res, 400, { ok: false, error: "Enter an email or DartCounter name to check" });
+    }
+    const conflict = identityConflict(db, { email, username, dartcounterName });
+    if (conflict) return json(res, 400, { ok: false, error: conflict });
+    return json(res, 200, { ok: true, available: true });
+  }
+
   if (method === "POST" && p === "/api/auth/register") {
-    const { name, email, password } = body;
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim();
+    const password = String(body.password || "");
+    const username = String(body.username || "").trim();
+    const dartcounterName = String(body.dartcounterName || "").trim() || name;
     if (!name || !email || !password) return json(res, 400, { ok: false, error: "Name, email and password are required" });
-    if (db.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) return json(res, 400, { ok: false, error: "Email already registered" });
+    const conflict = identityConflict(db, { email, username, dartcounterName });
+    if (conflict) return json(res, 400, { ok: false, error: conflict });
     const created = {
       id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
       name,
       email,
-      username: "",
+      username,
       password,
       role: "player",
       roles: [],
@@ -1169,8 +1221,8 @@ async function handleApi(req, res, url) {
       regionalChoice: body.regional || "europe",
       regionalIds: body.regional === "americas" ? [2] : body.regional === "both" ? [1, 2] : [1],
       regionalId: body.regional === "americas" ? 2 : 1,
-      dartcounterName: body.dartcounterName || name,
-      nickname: body.nickname || "",
+      dartcounterName,
+      nickname: String(body.nickname || "").trim(),
       avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
       country: "",
       avatarFile: null,
@@ -1256,7 +1308,10 @@ async function handleApi(req, res, url) {
     if (!name) return json(res, 400, { ok: false, error: "Name is required" });
     u.name = name;
     u.nickname = String(body.nickname || "").trim();
-    u.dartcounterName = String(body.dartcounterName || "").trim() || u.name;
+    const dartcounterName = String(body.dartcounterName || "").trim() || u.name;
+    const dcConflict = identityConflict(db, { dartcounterName }, u.id);
+    if (dcConflict) return json(res, 400, { ok: false, error: dcConflict });
+    u.dartcounterName = dartcounterName;
     if (body.avg !== undefined && body.avg !== "") {
       u.avg = Number(String(body.avg).replace(/[^0-9.]/g, "")) || 0;
     }
@@ -1294,12 +1349,8 @@ async function handleApi(req, res, url) {
     const email = String(body.email || "").trim();
     const username = String(body.username || "").trim();
     if (!email) return json(res, 400, { ok: false, error: "Email is required" });
-    if (db.users.some((x) => x.id !== u.id && x.email.toLowerCase() === email.toLowerCase())) {
-      return json(res, 400, { ok: false, error: "That email is already in use" });
-    }
-    if (username && db.users.some((x) => x.id !== u.id && String(x.username || "").toLowerCase() === username.toLowerCase())) {
-      return json(res, 400, { ok: false, error: "That username is already in use" });
-    }
+    const accountConflict = identityConflict(db, { email, username }, u.id);
+    if (accountConflict) return json(res, 400, { ok: false, error: accountConflict });
     const newPassword = String(body.newPassword || "");
     if (newPassword) {
       if (String(body.currentPassword || "") !== u.password) {
@@ -1348,6 +1399,11 @@ async function handleApi(req, res, url) {
   }
   if (method === "POST" && p === "/api/apply") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const blocked = applicationConflict(db, user);
+    if (blocked) return json(res, 400, { ok: false, error: blocked });
+    const dartcounterName = String(body.dartcounterName || "").trim() || user.name;
+    const dcConflict = identityConflict(db, { dartcounterName }, user.id);
+    if (dcConflict) return json(res, 400, { ok: false, error: dcConflict });
     const application = {
       id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
       userId: user.id,
@@ -1357,8 +1413,8 @@ async function handleApi(req, res, url) {
       regionalId: body.regional === "americas" ? 2 : Number(body.regionalId) || 1,
       regionalIds: body.regional === "both" ? [1, 2] : body.regional === "americas" ? [2] : [Number(body.regionalId) || 1],
       avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
-      dartcounterName: body.dartcounterName || user.name,
-      nickname: body.nickname || "",
+      dartcounterName,
+      nickname: String(body.nickname || "").trim(),
       status: "pending",
       createdAt: new Date().toISOString(),
     };
@@ -1878,14 +1934,17 @@ async function handleApi(req, res, url) {
       const name = String(body.name || "").trim();
       const email = String(body.email || "").trim();
       const password = String(body.password || "").trim();
+      const username = String(body.username || "").trim();
+      const dartcounterName = String(body.dartcounterName || "").trim() || name;
       if (!name || !email || !password) return json(res, 400, { ok: false, error: "Name, email and password are required" });
-      if (db.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) return json(res, 400, { ok: false, error: "Email already registered" });
+      const conflict = identityConflict(db, { email, username, dartcounterName });
+      if (conflict) return json(res, 400, { ok: false, error: conflict });
       const league = body.leagueId ? db.leagues.find((l) => l.id === Number(body.leagueId)) : null;
       const created = {
         id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
         name,
         email,
-        username: String(body.username || "").trim(),
+        username,
         password,
         role: "player",
         roles: [],
@@ -1896,16 +1955,13 @@ async function handleApi(req, res, url) {
         regionalChoice: league ? (league.regionalId === 2 ? "americas" : "europe") : "europe",
         regionalIds: league ? [league.regionalId] : [1],
         regionalId: league ? league.regionalId : 1,
-        dartcounterName: String(body.dartcounterName || "").trim() || name,
+        dartcounterName,
         nickname: String(body.nickname || "").trim(),
         avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
         country: "",
         avatarFile: null,
         avatarUpdatedAt: null,
       };
-      if (created.username && db.users.some((u) => String(u.username || "").toLowerCase() === created.username.toLowerCase())) {
-        return json(res, 400, { ok: false, error: "That username is already in use" });
-      }
       db.users.push(created);
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(created, db) });
