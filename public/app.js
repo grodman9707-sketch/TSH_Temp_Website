@@ -1745,27 +1745,54 @@ async function pageAdmin() {
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <button class="btn-gold">PLACE</button>
         </form>`, "mt-4")}
-      ${panel(`<h2 class="text-lg font-bold">Generate season fixtures</h2>
-        <p class="mt-1 text-sm text-muted">Builds a round-robin so every player in the league meets every other player. Odd numbers get a bye that week. Existing pairings for that season are skipped unless you replace unplayed matches.</p>
-        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="GENERATE">
-          <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
-          <input name="season" type="number" min="1" value="1" placeholder="Season">
-          <input name="startDate" type="date" value="${new Date().toISOString().slice(0, 10)}">
-          <input name="weekGapDays" type="number" min="1" value="7" placeholder="Days between weeks">
-          <label class="check-row"><input type="checkbox" name="doubleRound" value="1"> Home and away (double round-robin)</label>
-          <label class="check-row"><input type="checkbox" name="replaceScheduled" value="1"> Replace unplayed fixtures this season</label>
-          <button class="btn-gold md:col-span-3">GENERATE FIXTURES</button>
-        </form>`, "mt-4")}
-      ${panel(`<h2 class="text-lg font-bold">Create one fixture</h2>
-        <form class="mt-3 grid gap-3 md:grid-cols-5" data-form="FIXTURE">
-          <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
-          <input name="week" value="1" placeholder="Week">
-          <select name="homeId" required><option value="">Home</option>${everyone.map(playerOption).join("")}</select>
-          <select name="awayId" required><option value="">Away</option>${everyone.map(playerOption).join("")}</select>
-          <input name="date" type="date">
-          <label class="check-row md:col-span-5"><input type="checkbox" name="skipVisitorAccept" value="1"> Skip visitor accept for this match only (screenshots can go in without ACCEPT TIME)</label>
-          <button class="btn-gold md:col-span-5">ADD FIXTURE</button>
-        </form>`, "mt-4")}
+      ${panel(`<h2 class="text-lg font-bold">Fixtures</h2>
+        <p class="mt-1 text-sm text-muted">${
+          (state.fixtureBuilder?.mode || "season") === "individual"
+            ? "Create one match between two players already placed in the chosen division."
+            : "Builds a round-robin so every player in the division meets every other player. Odd numbers get a bye that week. Weeks are seven days apart. Existing pairings for that season are skipped unless you replace unplayed matches."
+        }</p>
+        ${(() => {
+          const fb = state.fixtureBuilder || { mode: "season", leagueId: "" };
+          const mode = fb.mode === "individual" ? "individual" : "season";
+          const leagueId = String(fb.leagueId || "");
+          const today = new Date().toISOString().slice(0, 10);
+          const divisionPlayers = leagueId ? everyone.filter((p) => userLeagueIds(p).includes(Number(leagueId))) : [];
+          const pick = (p, selectedId) => playerOption(p).replace("<option ", `<option ${String(p.id) === String(selectedId) ? "selected " : ""}`);
+          const leagueSelect = `<select name="leagueId" data-act="fixture-league" required><option value="">Division</option>${d.leagues
+            .map((l) => `<option value="${l.id}"${String(l.id) === leagueId ? " selected" : ""}>${esc(l.title || l.name)}</option>`)
+            .join("")}</select>`;
+          const modeSelect = `<select name="mode" data-act="fixture-mode" required>
+            <option value="season"${mode === "season" ? " selected" : ""}>Season</option>
+            <option value="individual"${mode === "individual" ? " selected" : ""}>Individual fixture</option>
+          </select>`;
+          let extra = "";
+          if (mode === "season") {
+            extra = `
+              <input name="season" type="number" min="1" value="${esc(fb.season || "1")}" placeholder="Season">
+              <input name="startDate" type="date" value="${esc(fb.startDate || today)}">
+              <label class="check-row"><input type="checkbox" name="doubleRound" value="1"${fb.doubleRound ? " checked" : ""}> Home and away (double round-robin)</label>
+              <label class="check-row"><input type="checkbox" name="replaceScheduled" value="1"${fb.replaceScheduled ? " checked" : ""}> Replace unplayed fixtures this season</label>
+            `;
+          } else if (leagueId) {
+            extra = `
+              <select name="homeId" required><option value="">Home player</option>${divisionPlayers.map((p) => pick(p, fb.homeId)).join("")}</select>
+              <select name="awayId" required><option value="">Away player</option>${divisionPlayers.map((p) => pick(p, fb.awayId)).join("")}</select>
+              <input name="week" value="${esc(fb.week || "1")}" placeholder="Week">
+              <input name="date" type="date" value="${esc(fb.date || "")}">
+              <input name="season" type="hidden" value="${esc(fb.season || "1")}">
+              <label class="check-row md:col-span-2"><input type="checkbox" name="skipVisitorAccept" value="1"${fb.skipVisitorAccept ? " checked" : ""}> Skip visitor accept for this match only (screenshots can go in without ACCEPT TIME)</label>
+              ${divisionPlayers.length < 2 ? `<p class="text-sm text-muted md:col-span-2">Place at least two players in this division first.</p>` : ""}
+            `;
+          } else {
+            extra = `<p class="text-sm text-muted md:col-span-2">Choose a division to pick the two players.</p>`;
+          }
+          return `<form class="mt-3 grid gap-3 md:grid-cols-2" data-form="FIXTURES">
+            ${modeSelect}
+            ${leagueSelect}
+            ${extra}
+            <button class="btn-gold md:col-span-2"${mode === "individual" && (!leagueId || divisionPlayers.length < 2) ? " disabled" : ""}>${mode === "individual" ? "ADD FIXTURE" : "GENERATE FIXTURES"}</button>
+          </form>`;
+        })()}`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
         <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
@@ -2008,6 +2035,29 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const fixtureField = e.target.closest("[data-act=fixture-mode], [data-act=fixture-league]");
+  if (fixtureField) {
+    const form = fixtureField.closest("form");
+    if (!form) return;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    const prev = state.fixtureBuilder || {};
+    const leagueChanged = String(fd.leagueId || "") !== String(prev.leagueId || "");
+    state.fixtureBuilder = {
+      mode: fd.mode === "individual" ? "individual" : "season",
+      leagueId: fd.leagueId || "",
+      season: fd.season || prev.season || "1",
+      startDate: fd.startDate || prev.startDate || "",
+      week: fd.week || prev.week || "1",
+      date: fd.date || prev.date || "",
+      doubleRound: Boolean(fd.doubleRound),
+      replaceScheduled: Boolean(fd.replaceScheduled),
+      skipVisitorAccept: Boolean(fd.skipVisitorAccept),
+      homeId: leagueChanged ? "" : fd.homeId || prev.homeId || "",
+      awayId: leagueChanged ? "" : fd.awayId || prev.awayId || "",
+    };
+    render();
+    return;
+  }
   const input = e.target.closest("input[data-draft-slot]");
   if (!input || input.type !== "file") return;
   const file = input.files?.[0];
@@ -2136,7 +2186,7 @@ document.addEventListener("submit", async (e) => {
       await api(`/api/fixtures/${form.dataset.id}/accept-time`, { method: "POST", body: "{}" });
       state.notice = "Kickoff time agreed. Either player can now upload both screenshots.";
       render();
-    } else if (kind === "GENERATE") {
+    } else if (kind === "GENERATE" || (kind === "FIXTURES" && fd.mode !== "individual")) {
       const d = await api("/api/admin/fixtures/generate", { method: "POST", body: JSON.stringify(fd) });
       state.notice = `Generated ${d.created} fixture${d.created === 1 ? "" : "s"} across ${d.weeks} week${d.weeks === 1 ? "" : "s"}${d.skipped ? ` (${d.skipped} already existed)` : ""}.`;
       render();
@@ -2226,7 +2276,7 @@ document.addEventListener("submit", async (e) => {
           ? `Placed in ${titles[titles.length - 1] || "that league"}. They can still be placed in the other regional.`
           : "Player placed.";
       render();
-    } else if (kind === "ADD FIXTURE" || kind === "FIXTURE") {
+    } else if (kind === "ADD FIXTURE" || kind === "FIXTURE" || (kind === "FIXTURES" && fd.mode === "individual")) {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
       state.notice = fd.skipVisitorAccept ? "Fixture created. Visitor accept is skipped for this match only." : "Fixture created.";
       render();

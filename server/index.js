@@ -1916,7 +1916,7 @@ async function handleApi(req, res, url) {
       const doubleRound = body.doubleRound === true || body.doubleRound === "1" || body.doubleRound === "on";
       const replaceScheduled = body.replaceScheduled === true || body.replaceScheduled === "1" || body.replaceScheduled === "on";
       const startDate = String(body.startDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
-      const weekGapDays = Math.max(1, Number(body.weekGapDays) || 7);
+      const weekGapDays = 7;
       if (replaceScheduled) {
         const keep = [];
         for (const f of db.fixtures) {
