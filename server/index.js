@@ -530,10 +530,20 @@ function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
   return `${regional?.fullTitle || "TSH"} ${divisionName(league)}`;
 }
+function compareLeagueOrder(a, b) {
+  const ra = Number(a.regionalId) || 0;
+  const rb = Number(b.regionalId) || 0;
+  if (ra !== rb) return ra - rb;
+  const ao = Number(a.sortOrder);
+  const bo = Number(b.sortOrder);
+  const as = Number.isFinite(ao) ? ao : 0;
+  const bs = Number.isFinite(bo) ? bo : 0;
+  return as - bs || (Number(a.id) || 0) - (Number(b.id) || 0);
+}
 function leaguesForRegional(db, regional) {
   return db.leagues
     .filter((l) => l.regionalId === regional.id)
-    .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) || a.id - b.id)
+    .sort(compareLeagueOrder)
     .map((l) => ({
       id: l.id,
       name: l.name,
@@ -1140,9 +1150,9 @@ function serveStatic(req, res, urlPath) {
 }
 
 function scopedLeagues(db, user) {
-  if (canOverride(user)) return db.leagues;
   const ids = new Set(adminLeagueIds(user));
-  return db.leagues.filter((l) => ids.has(l.id));
+  const scoped = canOverride(user) ? [...db.leagues] : db.leagues.filter((l) => ids.has(l.id));
+  return scoped.sort(compareLeagueOrder);
 }
 function scopedFixtures(db, user) {
   if (canOverride(user)) return db.fixtures;
@@ -1182,11 +1192,14 @@ async function handleApi(req, res, url) {
   if (method === "GET" && regionalMatch) {
     const regional = db.regionals.find((r) => r.slug === regionalMatch[1]);
     if (!regional) return json(res, 404, { ok: false, error: "Not found" });
-    const leagues = db.leagues.filter((l) => l.regionalId === regional.id).map((l) => ({
-      ...l,
-      displayName: divisionName(l),
-      divisionAdmins: divisionAdminsForLeague(db, l.id).map((a) => ({ id: a.id, name: a.name, nickname: a.nickname })),
-    }));
+    const leagues = db.leagues
+      .filter((l) => l.regionalId === regional.id)
+      .sort(compareLeagueOrder)
+      .map((l) => ({
+        ...l,
+        displayName: divisionName(l),
+        divisionAdmins: divisionAdminsForLeague(db, l.id).map((a) => ({ id: a.id, name: a.name, nickname: a.nickname })),
+      }));
     const players = db.users.filter((u) => placedRegionalIds(db, u).includes(regional.id));
     return json(res, 200, { ok: true, regional, leagues, counts: { players: players.length, teams: 0, leagues: leagues.length } });
   }
@@ -1726,7 +1739,7 @@ async function handleApi(req, res, url) {
         approvals: visibleApprovals,
         applications,
         leagues,
-        allLeagues: db.leagues.map((l) => ({ ...l, title: leagueTitle(db, l) })),
+        allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
         fixtures,
       });
     }

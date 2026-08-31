@@ -70,6 +70,19 @@ try {
   const premier = await (await fetch(`http://127.0.0.1:${port}/api/leagues/${europe?.leagues?.[0]?.id}`)).json();
   check("Premier league payload", premier.league?.displayName === "Premier" && /Premier/.test(premier.league?.title || ""));
 
+  const overview = await (await fetch(`http://127.0.0.1:${port}/api/regionals/europe`)).json();
+  check("Europe overview API ok", overview.ok && Array.isArray(overview.leagues));
+  check(
+    "Europe overview lists Premier and Championship above Division 1",
+    overview.leagues?.[0]?.displayName === "Premier" &&
+      overview.leagues?.[1]?.displayName === "Championship" &&
+      overview.leagues?.[2]?.displayName === "Division 1"
+  );
+  check(
+    "Europe overview lists Foundation and Development below Division 4",
+    overview.leagues?.[6]?.displayName === "Foundation" && overview.leagues?.[7]?.displayName === "Development"
+  );
+
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
   check("each region has its own divisions dropdown", appJs.includes("class=\"nav-sub\"") && appJs.includes("nav-subsub"));
@@ -127,6 +140,16 @@ try {
   check(
     "migrated Europe order is Premier through Development",
     JSON.stringify(migratedNames) === JSON.stringify(["Premier", "Championship", "Division 1", "Division 2", "Division 3", "Division 4", "Foundation", "Development"])
+  );
+  const overviewMigrated = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals/europe`)).json();
+  const overviewNames = (overviewMigrated.leagues || []).map((l) => l.displayName || l.name);
+  check(
+    "Europe overview after migrate lists Premier above Division 1",
+    overviewNames[0] === "Premier" && overviewNames[1] === "Championship" && overviewNames[2] === "Division 1"
+  );
+  check(
+    "Europe overview after migrate matches the ladder",
+    JSON.stringify(overviewNames) === JSON.stringify(["Premier", "Championship", "Division 1", "Division 2", "Division 3", "Division 4", "Foundation", "Development"])
   );
 } catch (err) {
   failures++;
