@@ -116,6 +116,29 @@
               "text": "All decisions are final."
             }
           ]
+        },
+        {
+          "id": "2.5",
+          "title": "One Account Per Player",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Each player may hold only one TSH Darts League account. Duplicate sign-ups are not permitted."
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Email addresses must be unique",
+                "Usernames must be unique and must not match another player's email",
+                "DartCounter display names must be unique",
+                "A player may not submit a second application while one is pending, or after they have been placed"
+              ]
+            },
+            {
+              "type": "p",
+              "text": "If you already have an account, sign in instead of registering again. Contact TSH Administration if you need help accessing an existing account."
+            }
+          ]
         }
       ]
     },
