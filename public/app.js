@@ -1,5 +1,5 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
-import { applyAnnouncementFormat, formatAnnouncementBody, NEWS_EMOJIS } from "./announcementFormat.js";
+import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -738,7 +738,10 @@ function layout(inner, { arena = false, home = false } = {}) {
           ${links
             .map(([href, label]) => {
               if (href === "/regionals") return navRegionalsBlock();
-              return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${navActive(href) ? "gold" : "text-white/80 hover:text-primary"}">${label}</a>`;
+              const glow = href === "/announcements" && state.newsGlow;
+              const tone = glow ? "nav-news-glow" : navActive(href) ? "gold" : "text-white/80 hover:text-primary";
+              const extra = glow ? ` aria-label="${esc(label)} — new announcement"` : "";
+              return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${tone}"${extra}>${label}</a>`;
             })
             .join("")}
           <a href="${esc(LEAGUE_DISCORD_INVITE)}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>
@@ -870,6 +873,32 @@ function applyNewsToolbar(textarea, kind, extra) {
   textarea.setSelectionRange(next.start, next.end);
   refreshNewsPreview(textarea.closest("form"));
 }
+function newsCard(item, { canDelete = false, compact = false } = {}) {
+  const fresh = newsTabShouldGlow([item]);
+  const deleteBtn = canDelete
+    ? `<form class="mt-3" data-form="DELETENEWS" data-id="${item.id}"><button class="btn-ghost">DELETE</button></form>`
+    : "";
+  return panel(
+    `${fresh ? `<div class="news-fresh-badge">New</div>` : ""}
+      <div class="text-xs text-muted">${new Date(item.createdAt).toLocaleDateString()}</div>
+      <h2 class="${compact ? "mt-1 text-lg font-bold" : "mt-1 text-xl font-bold"}">${esc(item.title)}</h2>
+      <div class="news-body mt-2">${formatAnnouncementBody(item.body)}</div>
+      ${deleteBtn}`
+  );
+}
+
+async function loadNewsMeta() {
+  try {
+    const d = await api("/api/announcements");
+    state.announcements = d.announcements || [];
+    state.canDeleteNews = Boolean(d.canDelete);
+    state.canPostNews = Boolean(d.canPost);
+    state.newsGlow = newsTabShouldGlow(state.announcements);
+  } catch {
+    state.announcements = state.announcements || [];
+    state.newsGlow = newsTabShouldGlow(state.announcements);
+  }
+}
 
 async function pageHome() {
   const [stats, content, regionals, tickerData] = await Promise.all([
@@ -882,6 +911,18 @@ async function pageHome() {
   if (!ticker.length) ticker = [{ div: "PDC", text: "Upcoming live darts dates will appear here", live: false }];
   const loop = [...ticker, ...ticker];
   const faq = content.content.faq || [];
+  const homeNews = announcementsForHome(state.announcements || []);
+  const homeNewsSection = homeNews.length
+    ? `<section class="home-news bg-background px-6 py-16">
+      <div class="mx-auto max-w-3xl">
+        <p class="text-center text-xs font-semibold tracking-[0.3em] gold">LEAGUE NEWS</p>
+        <h2 class="mt-2 text-center text-3xl font-bold">Latest announcements</h2>
+        <p class="mt-3 text-center text-sm text-muted">Posts from the last 7 days. Older news stays on the News page.</p>
+        <div class="mt-8 space-y-3">${homeNews.map((item) => newsCard(item, { canDelete: state.canDeleteNews })).join("")}</div>
+        <div class="mt-6 text-center"><a href="/announcements" class="btn-gold">ALL NEWS</a></div>
+      </div>
+    </section>`
+    : "";
   return layout(
     `
     <section class="relative flex min-h-[calc(100vh-3.5rem)] flex-col justify-end pb-24 pt-10">
@@ -901,6 +942,7 @@ async function pageHome() {
         </div>
       </div>
     </section>
+    ${homeNewsSection}
     <section class="bg-background px-6 py-20">
       <div class="mx-auto max-w-5xl text-center">
         <h2 class="text-3xl font-bold">TSH In Numbers</h2>
@@ -1566,12 +1608,12 @@ async function pageAbout() {
   );
 }
 async function pageNews() {
-  const d = await api("/api/announcements");
+  const items = state.announcements || [];
+  const canDelete = Boolean(state.canDeleteNews);
+  const empty = `<p class="mt-6 text-sm text-muted">No announcements yet.</p>`;
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10"><h1 class="text-3xl font-extrabold">News</h1>
-      <div class="mt-6 space-y-3">${d.announcements
-        .map((item) => panel(`<div class="text-xs text-muted">${new Date(item.createdAt).toLocaleDateString()}</div><h2 class="mt-1 text-xl font-bold">${esc(item.title)}</h2><div class="news-body mt-2">${formatAnnouncementBody(item.body)}</div>`))
-        .join("")}</div></div>`,
+      <div class="mt-6 space-y-3">${items.length ? items.map((item) => newsCard(item, { canDelete })).join("") : empty}</div></div>`,
     { arena: true }
   );
 }
@@ -1908,10 +1950,9 @@ async function pageAdmin() {
         })}`, "mt-4")}`
           : ""
       }
-      ${
-        d.isOwner
-          ? panel(`<h2 class="text-lg font-bold">Post announcement</h2>
-        <p class="mt-1 text-sm text-muted">Use the buttons to center, indent, add paragraphs, or drop in emojis. Blank lines start a new paragraph.</p>
+      ${panel(
+        `<h2 class="text-lg font-bold">Post announcement</h2>
+        <p class="mt-1 text-sm text-muted">Owners, Head Admins, and Division Admins can publish. Only owners and Head Admins can delete. Use the buttons to center, indent, add paragraphs, or drop in emojis.</p>
         <form class="mt-3 space-y-3" data-form="NEWS">
           <input name="title" placeholder="Title" required>
           ${newsComposeTools()}
@@ -1921,9 +1962,18 @@ async function pageAdmin() {
             <div class="news-body news-preview" data-news-preview><p class="text-muted">Your formatted announcement will appear here.</p></div>
           </div>
           <button class="btn-gold">PUBLISH</button>
-        </form>`, "mt-4")
-          : ""
-      }
+        </form>
+        ${
+          d.isOwner || d.isHeadAdmin
+            ? `<div class="mt-6 space-y-3"><h3 class="text-sm font-bold tracking-widest uppercase text-muted">Published</h3>${
+                (state.announcements || []).length
+                  ? (state.announcements || []).map((item) => newsCard(item, { canDelete: true, compact: true })).join("")
+                  : `<p class="text-sm text-muted">No announcements yet.</p>`
+              }</div>`
+            : ""
+        }`,
+        "mt-4"
+      )}
     </div>`,
     { arena: true }
   );
@@ -1964,6 +2014,7 @@ async function render() {
       return;
     }
     await loadNavTree();
+    await loadNewsMeta();
     const map = {
       home: pageHome,
       regionals: pageRegionals,
@@ -2399,6 +2450,11 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Announcement posted.";
+      render();
+    } else if (kind === "DELETENEWS") {
+      if (!window.confirm("Delete this announcement? This cannot be undone.")) return;
+      await api(`/api/admin/announcements/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
+      state.notice = "Announcement deleted.";
       render();
     }
   } catch (err) {
