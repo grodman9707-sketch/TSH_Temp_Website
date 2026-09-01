@@ -1,4 +1,5 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
+import { applyAnnouncementFormat, formatAnnouncementBody, NEWS_EMOJIS } from "./announcementFormat.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -854,6 +855,21 @@ function renderRuleSection(section) {
 function panel(html, extra = "") {
   return `<div class="glass rounded-xl p-5 ${extra}">${html}</div>`;
 }
+function refreshNewsPreview(form) {
+  const ta = form?.querySelector("textarea[name=body]");
+  const preview = form?.querySelector("[data-news-preview]");
+  if (!ta || !preview) return;
+  const html = formatAnnouncementBody(ta.value);
+  preview.innerHTML = html || `<p class="text-muted">Your formatted announcement will appear here.</p>`;
+}
+function applyNewsToolbar(textarea, kind, extra) {
+  if (!textarea) return;
+  const next = applyAnnouncementFormat(textarea.value, textarea.selectionStart, textarea.selectionEnd, kind, extra);
+  textarea.value = next.value;
+  textarea.focus();
+  textarea.setSelectionRange(next.start, next.end);
+  refreshNewsPreview(textarea.closest("form"));
+}
 
 async function pageHome() {
   const [stats, content, regionals, tickerData] = await Promise.all([
@@ -1554,10 +1570,28 @@ async function pageNews() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10"><h1 class="text-3xl font-extrabold">News</h1>
       <div class="mt-6 space-y-3">${d.announcements
-        .map((item) => panel(`<div class="text-xs text-muted">${new Date(item.createdAt).toLocaleDateString()}</div><h2 class="mt-1 text-xl font-bold">${esc(item.title)}</h2><p class="mt-2 text-sm text-white/80">${esc(item.body)}</p>`))
+        .map((item) => panel(`<div class="text-xs text-muted">${new Date(item.createdAt).toLocaleDateString()}</div><h2 class="mt-1 text-xl font-bold">${esc(item.title)}</h2><div class="news-body mt-2">${formatAnnouncementBody(item.body)}</div>`))
         .join("")}</div></div>`,
     { arena: true }
   );
+}
+
+function newsComposeTools() {
+  const emojis = NEWS_EMOJIS.map((emo) => `<button type="button" class="news-emoji-btn" data-act="news-emoji" data-emoji="${esc(emo)}" aria-label="Insert ${esc(emo)}">${emo}</button>`).join("");
+  return `<div class="news-fmt-bar" role="toolbar" aria-label="Announcement formatting">
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="bold"><strong>B</strong></button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="italic"><em>I</em></button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="center">Center</button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="indent">Indent</button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="right">Right</button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="list">List</button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="para">Paragraph</button>
+      <button type="button" class="news-fmt-btn" data-act="news-fmt" data-fmt="rule">Line</button>
+      <div class="news-emoji-wrap">
+        <button type="button" class="news-fmt-btn" data-act="news-emoji-toggle" aria-expanded="false">Emoji</button>
+        <div class="news-emoji-picker hidden" data-news-emoji-picker>${emojis}</div>
+      </div>
+    </div>`;
 }
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
@@ -1877,9 +1911,15 @@ async function pageAdmin() {
       ${
         d.isOwner
           ? panel(`<h2 class="text-lg font-bold">Post announcement</h2>
+        <p class="mt-1 text-sm text-muted">Use the buttons to center, indent, add paragraphs, or drop in emojis. Blank lines start a new paragraph.</p>
         <form class="mt-3 space-y-3" data-form="NEWS">
           <input name="title" placeholder="Title" required>
-          <textarea name="body" rows="3" placeholder="Body" required></textarea>
+          ${newsComposeTools()}
+          <textarea name="body" rows="8" class="news-body-input" placeholder="Write the announcement…" required></textarea>
+          <div class="news-preview-wrap">
+            <p class="news-preview-label">Preview</p>
+            <div class="news-body news-preview" data-news-preview><p class="text-muted">Your formatted announcement will appear here.</p></div>
+          </div>
           <button class="btn-gold">PUBLISH</button>
         </form>`, "mt-4")
           : ""
@@ -1958,6 +1998,38 @@ async function render() {
 }
 
 document.addEventListener("click", async (e) => {
+  const fmtBtn = e.target.closest("[data-act=news-fmt]");
+  if (fmtBtn) {
+    e.preventDefault();
+    applyNewsToolbar(fmtBtn.closest("form")?.querySelector("textarea[name=body]"), fmtBtn.dataset.fmt);
+    return;
+  }
+  const emojiToggle = e.target.closest("[data-act=news-emoji-toggle]");
+  if (emojiToggle) {
+    e.preventDefault();
+    const picker = emojiToggle.closest(".news-emoji-wrap")?.querySelector("[data-news-emoji-picker]");
+    if (!picker) return;
+    const open = picker.classList.contains("hidden");
+    document.querySelectorAll("[data-news-emoji-picker]").forEach((el) => el.classList.add("hidden"));
+    document.querySelectorAll("[data-act=news-emoji-toggle]").forEach((el) => el.setAttribute("aria-expanded", "false"));
+    if (open) {
+      picker.classList.remove("hidden");
+      emojiToggle.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+  const emojiBtn = e.target.closest("[data-act=news-emoji]");
+  if (emojiBtn) {
+    e.preventDefault();
+    applyNewsToolbar(emojiBtn.closest("form")?.querySelector("textarea[name=body]"), "emoji", emojiBtn.dataset.emoji);
+    emojiBtn.closest(".news-emoji-wrap")?.querySelector("[data-news-emoji-picker]")?.classList.add("hidden");
+    emojiBtn.closest(".news-emoji-wrap")?.querySelector("[data-act=news-emoji-toggle]")?.setAttribute("aria-expanded", "false");
+    return;
+  }
+  if (!e.target.closest(".news-emoji-wrap")) {
+    document.querySelectorAll("[data-news-emoji-picker]").forEach((el) => el.classList.add("hidden"));
+    document.querySelectorAll("[data-act=news-emoji-toggle]").forEach((el) => el.setAttribute("aria-expanded", "false"));
+  }
   const toggle = e.target.closest("[data-act=toggle-password]");
   if (toggle) {
     e.preventDefault();
@@ -2031,6 +2103,9 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("input", (e) => {
   if (e.target.dataset.numeric === "avg") {
     e.target.value = e.target.value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+  }
+  if (e.target.matches("textarea.news-body-input")) {
+    refreshNewsPreview(e.target.closest("form"));
   }
 });
 
