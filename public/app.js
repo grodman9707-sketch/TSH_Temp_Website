@@ -873,7 +873,6 @@ function applyNewsToolbar(textarea, kind, extra) {
   textarea.setSelectionRange(next.start, next.end);
   refreshNewsPreview(textarea.closest("form"));
 }
-
 function newsCard(item, { canDelete = false, compact = false } = {}) {
   const fresh = newsTabShouldGlow([item]);
   const deleteBtn = canDelete
