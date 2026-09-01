@@ -697,3 +697,33 @@ button.btn-gold:disabled {
   color: #e8b425;
   margin-bottom: 0.45rem;
 }
+.news-fresh-badge {
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #e8b425;
+  color: #0b1018;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+@keyframes news-glow-pulse {
+  0%, 100% {
+    text-shadow: 0 0 6px rgba(232, 180, 37, 0.35);
+    box-shadow: inset 3px 0 0 #e8b425;
+  }
+  50% {
+    text-shadow: 0 0 16px rgba(232, 180, 37, 0.95), 0 0 28px rgba(232, 180, 37, 0.45);
+    box-shadow: inset 3px 0 0 #fff3c4;
+  }
+}
+.nav-news-glow {
+  color: #e8b425;
+  box-shadow: inset 3px 0 0 #e8b425;
+  animation: news-glow-pulse 1.7s ease-in-out infinite;
+}
+.nav-news-glow:hover {
+  color: #fff;
+}

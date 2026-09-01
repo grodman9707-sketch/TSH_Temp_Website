@@ -1185,7 +1185,14 @@ async function handleApi(req, res, url) {
     const regionals = db.regionals.map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
     return json(res, 200, { ok: true, regionals });
   }
-  if (method === "GET" && p === "/api/announcements") return json(res, 200, { ok: true, announcements: db.announcements });
+  if (method === "GET" && p === "/api/announcements") {
+    return json(res, 200, {
+      ok: true,
+      announcements: db.announcements,
+      canPost: isStaff(user),
+      canDelete: canOverride(user),
+    });
+  }
   if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
 
   const regionalMatch = p.match(/^\/api\/regionals\/([^/]+)$/);
@@ -2108,11 +2115,30 @@ async function handleApi(req, res, url) {
       return json(res, 200, { ok: true });
     }
     if (method === "POST" && p === "/api/admin/announcements") {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can post news" });
-      const item = { id: Math.max(0, ...db.announcements.map((a) => a.id)) + 1, title: body.title, body: body.body, createdAt: new Date().toISOString() };
+      if (!isStaff(user)) return json(res, 403, { ok: false, error: "Only league staff can post news" });
+      const title = String(body.title || "").trim();
+      const text = String(body.body ?? "");
+      if (!title || !text.trim()) return json(res, 400, { ok: false, error: "Title and body are required" });
+      const item = {
+        id: Math.max(0, ...db.announcements.map((a) => a.id)) + 1,
+        title,
+        body: text,
+        createdAt: new Date().toISOString(),
+        postedById: user.id,
+      };
       db.announcements.unshift(item);
       writeDb(db);
       return json(res, 200, { ok: true, announcement: item });
+    }
+    const deleteNews = p.match(/^\/api\/admin\/announcements\/(\d+)\/delete$/);
+    if (method === "POST" && deleteNews) {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can delete news" });
+      const id = Number(deleteNews[1]);
+      const found = db.announcements.find((a) => a.id === id);
+      if (!found) return json(res, 404, { ok: false, error: "Announcement not found" });
+      db.announcements = db.announcements.filter((a) => a.id !== id);
+      writeDb(db);
+      return json(res, 200, { ok: true });
     }
   }
 

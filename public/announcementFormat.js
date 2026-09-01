@@ -22,6 +22,28 @@ export const NEWS_EMOJIS = [
   "⚡", "👑", "🎊", "🙌", "👍", "✅", "❗", "📌",
 ];
 
+export const NEWS_HOME_MS = 7 * 24 * 60 * 60 * 1000;
+export const NEWS_GLOW_MS = 48 * 60 * 60 * 1000;
+
+export function announcementAgeMs(item, now = Date.now()) {
+  const t = Date.parse(item?.createdAt);
+  if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
+  return now - t;
+}
+
+export function isAnnouncementWithin(item, windowMs, now = Date.now()) {
+  const age = announcementAgeMs(item, now);
+  return age >= 0 && age < windowMs;
+}
+
+export function announcementsForHome(items, now = Date.now()) {
+  return (Array.isArray(items) ? items : []).filter((item) => isAnnouncementWithin(item, NEWS_HOME_MS, now));
+}
+
+export function newsTabShouldGlow(items, now = Date.now()) {
+  return (Array.isArray(items) ? items : []).some((item) => isAnnouncementWithin(item, NEWS_GLOW_MS, now));
+}
+
 export function escapeAnnouncement(s) {
   return String(s ?? "")
     .replaceAll("&", "&amp;")
