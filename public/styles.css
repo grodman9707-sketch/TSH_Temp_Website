@@ -656,6 +656,35 @@ button.btn-gold:disabled {
   padding: 0.7rem 0.9rem;
   color: #fff;
 }
+.regional-ack-panel {
+  border-left: 3px solid #e8b425;
+  box-shadow: inset 3px 0 0 rgba(232, 180, 37, 0.25);
+}
+.regional-ack-kicker {
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #e8b425;
+}
+.regional-ack h2 {
+  margin-top: 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+.regional-ack p {
+  margin-top: 0.55rem;
+  color: rgba(255,255,255,.82);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.regional-ack p:first-of-type {
+  margin-top: 0.65rem;
+}
+.regional-ack strong {
+  color: #e8b425;
+  font-weight: 800;
+}
 .news-body {
   color: rgba(255, 255, 255, 0.82);
   font-size: 0.875rem;
