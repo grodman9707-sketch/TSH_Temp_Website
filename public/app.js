@@ -443,12 +443,12 @@ function shotDraftFor(id) {
 function screenshotUploader(f) {
   if (f.status === "played") return fixtureStatus(f);
   if (f.hasBothScreenshots || f.status === "submitted") {
-    return `<div class="text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">${
+    return `<div class="text-left sm:text-right"><div class="text-xs font-bold tracking-widest gold">BOTH SCREENSHOTS IN</div><div class="mt-1 text-xs text-muted">${
       hasNumericExtracted(f.extractedStats) ? "Stats extracted, awaiting admin verify." : "Waiting on admin to verify each player’s stats."
     }</div></div>`;
   }
   if (!scheduleUnlocked(f)) {
-    return `<div class="text-right space-y-1">
+    return `<div class="text-left sm:text-right space-y-1">
       <div class="text-xs font-bold tracking-widest text-muted">${f.scheduleStatus === "proposed" ? "WAITING FOR VISITOR TO ACCEPT" : "WAITING FOR HOME TO PROPOSE"}</div>
       <div class="text-xs text-muted">Screenshots unlock after the visiting player accepts the time.</div>
     </div>`;
@@ -483,7 +483,7 @@ function scheduleActions(f) {
   let bits = "";
   if (home) {
     bits += `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="PROPOSE" data-id="${f.id}">
-      <label class="text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
+      <label class="min-w-0 flex-1 text-[11px] uppercase tracking-widest text-muted">Propose date & time (your local time)
         <input name="datetime" type="datetime-local" required value="${esc(toLocalInputFromInstant(f.startAt) || toLocalInput(f.proposedDate || f.date, f.proposedTime || f.time))}">
       </label>
       <button class="btn-gold">${proposed ? "RE-PROPOSE" : "PROPOSE"}</button>
@@ -665,9 +665,9 @@ const CRESTS = {
   europe: "/images/tsh-europe-crest.png",
   americas: "/images/tsh-america-crest.png",
 };
-function crest(size = 64, which = "main") {
+function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
-  return `<img src="${src}" alt="TSH" class="crest-img" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
+  return `<img src="${src}" alt="TSH" class="crest-img ${extraClass}" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
 }
 function regionalCrest(slug) {
   if (slug === "europe") return "europe";
@@ -756,14 +756,14 @@ function layout(inner, { arena = false, home = false } = {}) {
               </div>`
         }</div>
       </aside>
-      <nav class="sticky top-0 z-30 border-b border-white/10 ${home ? "bg-black/30 backdrop-blur" : "bg-background"}">
+      <nav class="site-nav sticky top-0 z-30 border-b border-white/10 ${home ? "bg-black/30 backdrop-blur" : "bg-background"}">
         <div class="flex h-14 items-center justify-between gap-2 px-3 sm:px-4">
           <button class="h-10 w-10 shrink-0 rounded border border-white/15 hover:border-primary" data-act="open-menu" aria-label="Open menu">☰</button>
-          <a href="/" class="flex min-w-0 items-center justify-center">${crest(56)}</a>
+          <a href="/" class="flex min-w-0 items-center justify-center">${crest(56, "main", "header-crest")}</a>
           <div class="header-auth">
             ${
               state.user
-                ? `<a href="/dashboard" class="inline-flex items-center gap-2 btn-gold py-1 pl-1 pr-3">${avatarImg(state.user, 28)}<span>${esc((state.user.nickname || state.user.name).split(" ")[0].toUpperCase())}</span></a>`
+                ? `<a href="/dashboard" class="inline-flex items-center gap-2 btn-gold py-1 pl-1 pr-3">${avatarImg(state.user, 28)}<span class="header-user-name">${esc((state.user.nickname || state.user.name).split(" ")[0].toUpperCase())}</span></a>`
                 : `<a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>`
             }
           </div>
@@ -958,10 +958,10 @@ async function pageHome() {
   const faq = content.content.faq || [];
   const homeNews = announcementsForHome(state.announcements || []);
   const homeNewsSection = homeNews.length
-    ? `<section class="home-news bg-background px-6 py-16">
+    ? `<section class="home-news bg-background px-4 py-12 sm:px-6 sm:py-16">
       <div class="mx-auto max-w-3xl">
-        <p class="text-center text-xs font-semibold tracking-[0.3em] gold">LEAGUE NEWS</p>
-        <h2 class="mt-2 text-center text-3xl font-bold">Latest announcements</h2>
+        <p class="page-kicker text-center text-xs font-semibold gold">LEAGUE NEWS</p>
+        <h2 class="page-title mt-2 text-center font-bold">Latest announcements</h2>
         <p class="mt-3 text-center text-sm text-muted">Posts from the last 7 days. Older news stays on the News page.</p>
         <div class="mt-8 space-y-3">${homeNews.map((item) => newsCard(item, { canDelete: state.canDeleteNews })).join("")}</div>
         <div class="mt-6 text-center"><a href="/announcements" class="btn-gold">ALL NEWS</a></div>
@@ -971,11 +971,11 @@ async function pageHome() {
   return layout(
     `
     <section class="relative flex min-h-[calc(100vh-3.5rem)] flex-col justify-end pb-24 pt-10">
-      <div class="relative z-10 px-6 md:px-12">
-        <p class="mb-3 text-xs font-semibold tracking-[0.35em] gold">THE SOCIAL HUB PRESENTS</p>
-        <h1 class="max-w-xl text-5xl font-extrabold leading-[0.95] tracking-tight sm:text-7xl">WHERE THE<br><span class="gold">CHAMPIONS</span><br>COMPETE</h1>
+      <div class="relative z-10 px-4 sm:px-6 md:px-12">
+        <p class="page-kicker mb-3 text-xs font-semibold gold">THE SOCIAL HUB PRESENTS</p>
+        <h1 class="hero-title max-w-xl font-extrabold tracking-tight">WHERE THE<br><span class="gold">CHAMPIONS</span><br>COMPETE</h1>
       </div>
-      <p class="relative z-10 mx-auto mt-16 max-w-3xl px-6 text-center text-sm leading-relaxed text-white/80">${esc(content.content.hero_description)}</p>
+      <p class="relative z-10 mx-auto mt-10 max-w-3xl px-4 text-center text-sm leading-relaxed text-white/80 sm:mt-16 sm:px-6">${esc(content.content.hero_description)}</p>
       <div class="absolute bottom-0 left-0 right-0 overflow-hidden border-t border-white/10 bg-black/70">
         <div class="ticker flex w-max gap-10 whitespace-nowrap py-2 text-xs font-semibold tracking-wider">
           ${loop
@@ -988,9 +988,9 @@ async function pageHome() {
       </div>
     </section>
     ${homeNewsSection}
-    <section class="bg-background px-6 py-20">
+    <section class="bg-background px-4 py-12 sm:px-6 sm:py-20">
       <div class="mx-auto max-w-5xl text-center">
-        <h2 class="text-3xl font-bold">TSH In Numbers</h2>
+        <h2 class="page-title font-bold">TSH In Numbers</h2>
         <p class="mt-3 text-muted">Live numbers from the current season.</p>
         <p class="mt-2 text-xs gold">● Live data</p>
         <div class="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -1000,25 +1000,25 @@ async function pageHome() {
             [stats.total180s, "Total 180s"],
             [stats.topCheckout, "Top Checkout"],
           ]
-            .map(([v, l]) => `<div class="glass rounded-xl px-4 py-8"><div class="text-4xl font-extrabold gold">${v}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${l}</div></div>`)
+            .map(([v, l]) => `<div class="glass rounded-xl px-3 py-6 sm:px-4 sm:py-8"><div class="text-3xl font-extrabold gold sm:text-4xl">${v}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${l}</div></div>`)
             .join("")}
         </div>
       </div>
     </section>
-    <section class="bg-background px-6 pb-20">
+    <section class="bg-background px-4 pb-16 sm:px-6 sm:pb-20">
       <div class="mx-auto max-w-5xl text-center">
-        <h2 class="text-3xl font-bold">Join Our Active Communities</h2>
+        <h2 class="page-title font-bold">Join Our Active Communities</h2>
         <p class="mt-3 text-muted">${esc(content.content.communities_description)}</p>
         <div class="mt-10 grid gap-4 md:grid-cols-2">
           ${regionals.regionals
             .map(
               (r) =>
-                `<a href="/regionals/${r.slug}" class="glass flex items-center gap-5 rounded-xl p-6 text-left hover:border-primary">${crest(96, regionalCrest(r.slug))}<div><h3 class="text-xl font-bold">${esc(r.fullTitle)}</h3><p class="mt-2 text-sm text-muted">${esc(r.region)} — climb the divisions weekly.</p></div></a>`
+                `<a href="/regionals/${r.slug}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6">${crest(96, regionalCrest(r.slug))}<div class="min-w-0"><h3 class="text-xl font-bold">${esc(r.fullTitle)}</h3><p class="mt-2 text-sm text-muted">${esc(r.region)} — climb the divisions weekly.</p></div></a>`
             )
             .join("")}
-          <a href="${esc(content.league?.discordInvite || LEAGUE_DISCORD_INVITE)}" class="glass flex items-center gap-5 rounded-xl p-6 text-left hover:border-primary md:col-span-2" target="_blank" rel="noopener noreferrer" data-external="1">
+          <a href="${esc(content.league?.discordInvite || LEAGUE_DISCORD_INVITE)}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6 md:col-span-2" target="_blank" rel="noopener noreferrer" data-external="1">
             <div class="discord-mark" aria-hidden="true">D</div>
-            <div>
+            <div class="min-w-0">
               <h3 class="text-xl font-bold">League Discord</h3>
               <p class="mt-2 text-sm text-muted">Join the TSH Darts League server to talk with players and admins.</p>
               <p class="mt-2 text-sm font-bold gold">Open Discord →</p>
@@ -1027,25 +1027,25 @@ async function pageHome() {
         </div>
       </div>
     </section>
-    <section class="bg-background px-6 pb-20">
+    <section class="bg-background px-4 pb-16 sm:px-6 sm:pb-20">
       <div class="mx-auto max-w-3xl">
-        <h2 class="text-center text-3xl font-bold">Frequently Asked Questions</h2>
+        <h2 class="page-title text-center font-bold">Frequently Asked Questions</h2>
         <div class="mt-8 space-y-2" id="faq">
           ${faq
             .map(
               (item, i) =>
-                `<button class="glass flex w-full flex-col rounded-xl px-5 py-4 text-left" data-faq="${i}"><span class="flex items-center justify-between font-semibold">${esc(item.q)} <span>▾</span></span><span class="faq-a mt-3 hidden text-sm text-muted">${esc(item.a)}</span></button>`
+                `<button class="glass flex w-full flex-col rounded-xl px-4 py-4 text-left sm:px-5" data-faq="${i}"><span class="faq-q"><span class="faq-q-text">${esc(item.q)}</span> <span>▾</span></span><span class="faq-a mt-3 hidden text-sm text-muted">${esc(item.a)}</span></button>`
             )
             .join("")}
         </div>
       </div>
     </section>
-    <footer class="border-t border-white/10 bg-[#07090f] px-6 py-12">
+    <footer class="border-t border-white/10 bg-[#07090f] px-4 py-10 sm:px-6 sm:py-12">
       <div class="mx-auto grid max-w-5xl gap-8 md:grid-cols-2">
         <div>
           <img src="${CRESTS.main}" alt="TSH" class="mb-3" style="width:88px;height:88px;object-fit:contain">
           <h3 class="text-lg font-bold">The Social Hub Darts League</h3>
-          <a class="mt-3 inline-block text-sm gold" href="mailto:${esc(content.league?.email || "thesocialhubinformation@gmail.com")}">${esc(content.league?.email || "thesocialhubinformation@gmail.com")}</a>
+          <a class="mt-3 inline-block break-all text-sm gold" href="mailto:${esc(content.league?.email || "thesocialhubinformation@gmail.com")}">${esc(content.league?.email || "thesocialhubinformation@gmail.com")}</a>
           <div class="mt-4">${externalLink(content.league?.discordInvite || LEAGUE_DISCORD_INVITE, "Join Discord Server")}</div>
         </div>
         <div>
@@ -1066,7 +1066,7 @@ async function pageRegionals() {
   return layout(
     `<div class="mx-auto max-w-xl px-4 py-10">
       <a href="/" class="gold text-sm font-bold">← TSH</a>
-      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="text-3xl font-extrabold tracking-widest">REGIONALS</h1><p class="mt-2 text-sm text-muted">TSH Darts League → pick a region, then a division.</p></div>`)}
+      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="page-title font-extrabold tracking-widest">REGIONALS</h1><p class="mt-2 text-sm text-muted">TSH Darts League → pick a region, then a division.</p></div>`)}
       <div class="mt-4 space-y-3">
         ${(d.regionals || [])
           .map((r) => {
@@ -1077,7 +1077,7 @@ async function pageRegionals() {
               )
               .join("");
             return `<div class="glass rounded-xl p-5">
-              <a href="/regionals/${r.slug}" class="flex items-center justify-between gap-4 text-left">
+              <a href="/regionals/${r.slug}" class="split-row text-left">
                 <div>
                   <div class="text-[11px] font-bold tracking-widest gold">REGIONAL LEAGUE</div>
                   <div class="mt-1 text-lg font-bold">${esc(r.name)}</div>
@@ -1085,7 +1085,7 @@ async function pageRegionals() {
                 </div>
                 ${crest(72, regionalCrest(r.slug))}
               </a>
-              <div class="mt-4 grid grid-cols-2 gap-2">${divisions}</div>
+              <div class="mt-4 division-grid">${divisions}</div>
             </div>`;
           })
           .join("")}
@@ -1104,8 +1104,8 @@ async function pageRegional(slug) {
       <div class="mt-2 text-xl font-bold">${esc(r.name)}</div>
       <p class="text-sm text-muted">${esc(r.fullTitle)} regional league</p>
       ${panel(`<div class="text-center"><img src="${CRESTS[regionalCrest(r.slug)]}" alt="${esc(r.fullTitle)}" class="crest-regional mx-auto"><div class="mt-3 text-sm font-bold tracking-[0.3em] gold">${esc(r.name.toUpperCase())}</div></div>`, "mt-6")}
-      <a href="/rules" class="glass mt-3 flex items-center justify-between rounded-xl px-5 py-4"><span>📘 ${esc(r.fullTitle)} Rules</span><span class="text-sm text-muted">Read more ></span></a>
-      <div class="mt-4 grid grid-cols-3 gap-3">
+      <a href="/rules" class="glass mt-3 flex items-center justify-between gap-3 rounded-xl px-4 py-4 sm:px-5"><span class="min-w-0">📘 ${esc(r.fullTitle)} Rules</span><span class="shrink-0 text-sm text-muted">Read more ></span></a>
+      <div class="mt-4 region-stat-grid">
         ${[
           [d.counts.players, "PLAYERS"],
           [d.counts.teams, "TEAMS"],
@@ -1119,9 +1119,9 @@ async function pageRegional(slug) {
         ${d.leagues
           .map(
             (l) =>
-              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass flex items-center justify-between rounded-xl px-5 py-4"><div><div class="font-bold">${esc(divisionLabel(l))}</div><div class="text-sm text-muted">${esc(l.format)}${
+              `<a href="/regionals/${slug}/leagues/${l.id}" class="glass split-row rounded-xl px-4 py-4 sm:px-5"><div class="min-w-0"><div class="font-bold">${esc(divisionLabel(l))}</div><div class="text-sm text-muted">${esc(l.format)}${
                 (l.divisionAdmins || []).length ? ` · Admin: ${esc(l.divisionAdmins.map((a) => a.nickname || a.name).join(", "))}` : ""
-              }</div></div><span class="text-xs font-semibold tracking-widest gold">TABLE</span></a>`
+              }</div></div><span class="shrink-0 text-xs font-semibold tracking-widest gold">TABLE</span></a>`
           )
           .join("")}
       </div>
@@ -1142,7 +1142,7 @@ async function pageLeague(slug, id) {
         <span class="text-muted">/</span>
         <a href="/regionals/${slug}" class="gold inline-flex items-center gap-2">${crest(28, regionalCrest(slug))} ${esc(d.regional?.name || d.regional?.fullTitle || "")}</a>
       </div>
-      ${panel(`<div class="text-center"><h1 class="text-3xl font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
+      ${panel(`<div class="text-center"><h1 class="page-title font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
       ${panel(
         (d.divisionAdmins || []).length
           ? `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div>
@@ -1199,14 +1199,14 @@ async function pageLeague(slug, id) {
                             ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT SCREENSHOTS</a></div>`
                             : "";
                       return panel(
-                        `<div id="fixture-${f.id}" class="flex flex-wrap items-start justify-between gap-3">
-                          <div>
+                        `<div id="fixture-${f.id}" class="split-row">
+                          <div class="min-w-0">
                             <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
                             <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
                             ${proposalLine}
                             ${actions}
                           </div>
-                          <div>${fixtureStatus(f)}</div>
+                          <div class="shrink-0">${fixtureStatus(f)}</div>
                         </div>`
                       );
                     })
@@ -1234,7 +1234,7 @@ function passwordField(name, placeholder, autocomplete, extra = "") {
 function authForm(title, fields, submitLabel, extra = "") {
   return layout(
     `<div class="mx-auto max-w-md px-4 py-10">${panel(`
-      <h1 class="text-3xl font-extrabold">${title}</h1>
+      <h1 class="page-title font-extrabold">${title}</h1>
       ${extra}
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
@@ -1261,8 +1261,8 @@ function pageSignUp() {
   if (state.user) {
     return layout(
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="text-xs font-semibold tracking-[0.3em] gold">SIGN UP</p>
-        <h1 class="mt-2 text-3xl font-extrabold">You already have an account</h1>
+        <p class="page-kicker text-xs font-semibold gold">SIGN UP</p>
+        <h1 class="mt-2 page-title font-extrabold">You already have an account</h1>
         <p class="mt-2 text-sm text-muted">Each player may only sign up once. You are signed in as ${esc(state.user.nickname || state.user.name)}.</p>
         <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
       `)}</div>`,
@@ -1278,7 +1278,7 @@ function pageSignUp() {
       const n = i + 1;
       const on = n === step;
       const done = n < step;
-      return `<div class="flex-1 text-center"><div class="mx-auto h-1.5 rounded ${done || on ? "bg-primary" : "bg-white/15"}"></div><div class="mt-2 text-[10px] tracking-widest ${on ? "gold" : "text-muted"}">${label.toUpperCase()}</div></div>`;
+      return `<div class="flex-1 text-center"><div class="mx-auto h-1.5 rounded ${done || on ? "bg-primary" : "bg-white/15"}"></div><div class="step-label mt-2 text-[10px] tracking-widest ${on ? "gold" : "text-muted"}">${label.toUpperCase()}</div></div>`;
     })
     .join("");
 
@@ -1330,9 +1330,9 @@ function pageSignUp() {
 
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-      <p class="text-xs font-semibold tracking-[0.3em] gold">STEP ${step} OF ${total}</p>
-      <h1 class="mt-2 text-3xl font-extrabold">Sign up</h1>
-      <div class="mt-5 flex gap-2">${dots}</div>
+      <p class="page-kicker text-xs font-semibold gold">STEP ${step} OF ${total}</p>
+      <h1 class="mt-2 page-title font-extrabold">Sign up</h1>
+      <div class="signup-steps mt-5">${dots}</div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <form class="mt-6 space-y-4" data-form="SIGNUP" data-step="${step}">
         ${body}
@@ -1351,8 +1351,8 @@ async function pageApply() {
   if (u?.hasPendingApplication) {
     return layout(
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="text-xs font-semibold tracking-[0.3em] gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 text-3xl font-extrabold">Application already received</h1>
+        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
+        <h1 class="mt-2 page-title font-extrabold">Application already received</h1>
         <p class="mt-2 text-sm text-muted">You already have a pending application. Each player may only sign up once. An admin will place you in a division.</p>
         <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
       `)}</div>`,
@@ -1362,8 +1362,8 @@ async function pageApply() {
   if (u?.fullyPlaced) {
     return layout(
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="text-xs font-semibold tracking-[0.3em] gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 text-3xl font-extrabold">Already in the league</h1>
+        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
+        <h1 class="mt-2 page-title font-extrabold">Already in the league</h1>
         <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Contact an admin if you need a division change.</p>
         <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
       `)}</div>`,
@@ -1373,8 +1373,8 @@ async function pageApply() {
   const d = await api("/api/regionals");
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-      <p class="text-xs font-semibold tracking-[0.3em] gold">JOIN THE LEAGUE</p>
-      <h1 class="mt-2 text-3xl font-extrabold">Apply to TSH</h1>
+      <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
+      <h1 class="mt-2 page-title font-extrabold">Apply to TSH</h1>
       <p class="mt-2 text-sm text-muted">Free to enter. We place you by DartCounter average.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
@@ -1417,9 +1417,9 @@ async function pageDashboard() {
       <div class="flex flex-wrap items-center gap-4">
         ${avatarImg(u, 88)}
         <div>
-          <p class="text-xs font-semibold tracking-[0.3em] gold">PLAYER HUB</p>
-          <h1 class="mt-2 text-4xl font-extrabold">${esc(u.nickname || u.name)}</h1>
-          <p class="mt-2 text-muted">${esc(roleLabel(u))}${(u.leagueTitles || []).length ? ` · ${esc(u.leagueTitles.join(" · "))}` : " · Awaiting division"}${u.dartcounterName ? ` · DartCounter: ${esc(u.dartcounterName)}` : ""}${u.avg ? ` · 3DA ${esc(u.avg)}` : ""}</p>
+          <p class="page-kicker text-xs font-semibold gold">PLAYER HUB</p>
+          <h1 class="page-title mt-2 font-extrabold">${esc(u.nickname || u.name)}</h1>
+          <p class="mt-2 break-words text-muted">${esc(roleLabel(u))}${(u.leagueTitles || []).length ? ` · ${esc(u.leagueTitles.join(" · "))}` : " · Awaiting division"}${u.dartcounterName ? ` · DartCounter: ${esc(u.dartcounterName)}` : ""}${u.avg ? ` · 3DA ${esc(u.avg)}` : ""}</p>
         </div>
       </div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
@@ -1505,7 +1505,7 @@ async function pageMyMatches() {
   const d = await api("/api/my-fixtures");
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
-      <h1 class="text-3xl font-extrabold">My Matches</h1>
+      <h1 class="page-title font-extrabold">My Matches</h1>
       <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, upload both DartCounter screenshots together. The site will try to read the stats; a division admin verifies them before they count.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
@@ -1541,11 +1541,11 @@ async function pagePlayer(id) {
   const d = await api(`/api/player/${id}`);
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
-      ${panel(`<div class="flex items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div><p class="text-xs tracking-[0.3em] gold">${esc((d.regionals || []).map((r) => r.fullTitle).join(" · ") || d.regional?.fullTitle || "Unplaced")}</p>
-        <h1 class="mt-2 text-4xl font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
-        <p class="mt-2 text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
+      ${panel(`<div class="flex flex-wrap items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div class="min-w-0"><p class="page-kicker text-xs gold">${esc((d.regionals || []).map((r) => r.fullTitle).join(" · ") || d.regional?.fullTitle || "Unplaced")}</p>
+        <h1 class="page-title mt-2 font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
+        <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
       <div class="mt-4 space-y-3">${d.fixtures
-        .map((f) => panel(`<div class="flex justify-between"><div>${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
+        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
         .join("")}</div>
     </div>`,
     { arena: true }
@@ -1682,8 +1682,8 @@ async function pageBounty() {
           .join("")}</div>`;
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10 bounty-page">
-      <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
-      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "PreSeason Bounty")}</h1>
+      <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
+      <h1 class="page-title mt-2 font-extrabold">${esc(d.title || "PreSeason Bounty")}</h1>
       <p class="mt-4 max-w-3xl text-sm leading-relaxed text-white/80">${esc(d.intro || "")} Season starts ${esc(bountyDateLabel(d.seasonStart))}.</p>
       <nav class="bounty-toc mt-6" aria-label="Bounty hunt sections">
         <a href="/preseason-bounty#bounty-how">How to claim</a>
@@ -1733,8 +1733,8 @@ async function pageRules() {
     .join("");
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">${panel(`
-      <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
-      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "Rules")}</h1>
+      <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
+      <h1 class="page-title mt-2 font-extrabold">${esc(d.title || "Rules")}</h1>
       <p class="mt-4 text-sm leading-relaxed text-white/80">${esc(d.intro || "")}</p>
       <nav class="rules-toc mt-6" aria-label="Rules contents">${toc}</nav>
       <div class="rules-doc mt-2">${sections.map(renderRuleSection).join("")}</div>
@@ -1784,7 +1784,7 @@ async function contactBlock() {
     : `<p class="mt-6 text-sm text-muted">Staff cards appear here when someone is given a league role.</p>`;
   return `<section id="contact" class="about-section mt-10">
       ${panel(`<div class="text-center">
-        <h2 class="text-3xl font-extrabold">Contact</h2>
+        <h2 class="page-title font-extrabold">Contact</h2>
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
         <div class="mt-6 space-y-4">
           <div>
@@ -1825,8 +1825,8 @@ async function pageAbout() {
   const contact = await contactBlock();
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">${panel(`
-      <p class="text-xs font-semibold tracking-[0.3em] gold">TSH DARTS LEAGUE</p>
-      <h1 class="mt-2 text-4xl font-extrabold">${esc(d.title || "About Us")}</h1>
+      <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
+      <h1 class="page-title mt-2 font-extrabold">${esc(d.title || "About Us")}</h1>
       <p class="mt-4 text-sm leading-relaxed text-white/80">${esc(d.intro || "")}</p>
       <nav class="rules-toc mt-6" aria-label="About contents">${toc}</nav>
       <div class="about-doc mt-2">${sections.map(renderAboutSection).join("")}</div>
@@ -1841,7 +1841,7 @@ async function pageNews() {
   const canDelete = Boolean(state.canDeleteNews);
   const empty = `<p class="mt-6 text-sm text-muted">No announcements yet.</p>`;
   return layout(
-    `<div class="mx-auto max-w-3xl px-4 py-10"><h1 class="text-3xl font-extrabold">News</h1>
+    `<div class="mx-auto max-w-3xl px-4 py-10"><h1 class="page-title font-extrabold">News</h1>
       <div class="mt-6 space-y-3">${items.length ? items.map((item) => newsCard(item, { canDelete })).join("") : empty}</div></div>`,
     { arena: true }
   );
@@ -2004,7 +2004,7 @@ async function pageAdmin() {
       : "";
   return layout(
     `<div class="mx-auto max-w-7xl px-4 py-10">
-      <h1 class="text-4xl font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
+      <h1 class="page-title font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
       <p class="mt-2 text-muted">${
         d.isOwner
           ? "Promote owners (max 3), assign Head Admins and Division Admins, generate seasons, and run the league."
@@ -2041,7 +2041,7 @@ async function pageAdmin() {
           ? pending
               .map(
                 (a) =>
-                  `<div class="flex justify-between border-b border-white/10 py-2 text-sm"><span>${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}${a.placedLeagues?.length ? ` · already in ${esc(a.placedLeagues.join(" · "))}` : ""}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
+                  `<div class="split-row border-b border-white/10 py-2 text-sm"><span class="min-w-0 break-words">${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}${a.placedLeagues?.length ? ` · already in ${esc(a.placedLeagues.join(" · "))}` : ""}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
               )
               .join("")
           : `<p class="mt-3 text-muted">None yet.</p>`
@@ -2278,7 +2278,7 @@ async function render() {
     }
     if (route[0] === "admin") queueAdminScan();
   } catch (err) {
-    app.innerHTML = layout(`<div class="px-6 py-20 text-center"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
+    app.innerHTML = layout(`<div class="px-4 py-20 text-center sm:px-6"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
   }
 }
 
