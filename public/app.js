@@ -674,6 +674,24 @@ function regionalCrest(slug) {
   if (slug === "americas" || slug === "america") return "americas";
   return "main";
 }
+function regionalMainTimezone(slug) {
+  if (slug === "americas" || slug === "america") return "US Eastern Time (ET)";
+  return "UK time (GMT/BST)";
+}
+function regionalTimezoneAck(r) {
+  if (!r) return "";
+  const name = r.fullTitle || r.name || "this regional";
+  const zone = regionalMainTimezone(r.slug);
+  return panel(
+    `<div class="regional-ack">
+      <p class="regional-ack-kicker">Acknowledgement</p>
+      <h2>Timezone warning</h2>
+      <p>Any player competing in ${esc(name)} arranges and plays matches according to this regional’s main timezone: <strong>${esc(zone)}</strong>.</p>
+      <p>A time difference is not a legitimate excuse for missing a match or failing to arrange one. By playing here, you agree to arrange and play matches as though you were in this regional’s timezone.</p>
+    </div>`,
+    "mt-4 regional-ack-panel"
+  );
+}
 function navActive(href) {
   const path = String(state.path || "/").split("#")[0];
   if (href === "/about") return path === "/about" || path === "/contact";
@@ -1156,6 +1174,7 @@ async function pageRegional(slug) {
       <div class="mt-2 text-xl font-bold">${esc(r.name)}</div>
       <p class="text-sm text-muted">${esc(r.fullTitle)} regional league</p>
       ${panel(`<div class="text-center"><img src="${CRESTS[regionalCrest(r.slug)]}" alt="${esc(r.fullTitle)}" class="crest-regional mx-auto"><div class="mt-3 text-sm font-bold tracking-[0.3em] gold">${esc(r.name.toUpperCase())}</div></div>`, "mt-6")}
+      ${regionalTimezoneAck(r)}
       <a href="/rules" class="glass mt-3 flex items-center justify-between gap-3 rounded-xl px-4 py-4 sm:px-5"><span class="min-w-0">📘 ${esc(r.fullTitle)} Rules</span><span class="shrink-0 text-sm text-muted">Read more ></span></a>
       <div class="mt-4 region-stat-grid">
         ${[

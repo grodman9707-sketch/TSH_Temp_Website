@@ -87,9 +87,12 @@ try {
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
   check("each region has its own divisions dropdown", appJs.includes("class=\"nav-sub\"") && appJs.includes("nav-subsub"));
   check("regionals page lists divisions without extra hops", appJs.includes("REGIONAL LEAGUE") && appJs.includes("DIVISIONS"));
+  check("Europe and Americas overviews carry a timezone acknowledgement", appJs.includes("regionalTimezoneAck") && appJs.includes("Timezone warning") && appJs.includes("UK time (GMT/BST)") && appJs.includes("US Eastern Time (ET)"));
+  check("timezone ack says a time difference is not a legitimate excuse", appJs.includes("not a legitimate excuse") && appJs.includes("as though you were in this regional"));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("nested nav has phone-sized tap targets", css.includes(".nav-tree") && css.includes(".nav-subsub") && css.includes("min-height: 2.75rem"));
+  check("timezone acknowledgement has warning styling", css.includes(".regional-ack") && css.includes(".regional-ack-panel"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
