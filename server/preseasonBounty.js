@@ -156,6 +156,28 @@ export const CLAIM_STEPS = [
   "If asked, have your opponent sign off or verify the claim.",
 ];
 
+export function calendarDayLabel(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const months = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const day = Number(m[3]);
+  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+  return `${months[Number(m[2]) - 1]} ${day}${suffix}`;
+}
+
 export function bountyById(id) {
   return BOUNTIES.find((b) => b.id === id) || null;
 }
@@ -243,7 +265,7 @@ function publicBounty(bounty, { claimed = false, mysteryRevealed = false, myster
         }
       : { t1: "", t2: "", t3: "" };
     if (!mysteryRevealed) {
-      row.how = "Locked. Each tier’s target is revealed 7 days before season start (7 September).";
+      row.how = `Locked. Each tier’s target is revealed 7 days before season start (${calendarDayLabel(MYSTERY_REVEAL_AT)}).`;
     }
   }
   return row;
@@ -325,7 +347,9 @@ export function publicHunt(db, { user = null, now = new Date(), canAward = false
     title: "PreSeason Bounty Hunt",
     intro: "Hunt bonuses before the season starts. Signed-up players can join even if they are not placed yet. Bonus points count toward season standings.",
     seasonStart: SEASON_START,
+    seasonStartLabel: calendarDayLabel(SEASON_START),
     mysteryRevealAt: MYSTERY_REVEAL_AT,
+    mysteryRevealLabel: calendarDayLabel(MYSTERY_REVEAL_AT),
     discordChannel: DISCORD_CLAIM_CHANNEL,
     discordInvite: DISCORD_INVITE,
     rules: RULES,
@@ -422,7 +446,7 @@ export function awardBounty(db, { staff, userId, bountyId, now = new Date() }) {
     }
   }
   if (bounty.mystery && !isMysteryRevealed(db.preseasonBounty, now)) {
-    return { ok: false, error: "Mystery Target is still locked until 7 September", status: 400 };
+    return { ok: false, error: `Mystery Target is still locked until ${calendarDayLabel(MYSTERY_REVEAL_AT)}`, status: 400 };
   }
   const claim = {
     id: Math.max(0, ...(db.bountyClaims || []).map((c) => Number(c.id) || 0)) + 1,

@@ -860,9 +860,12 @@ function panel(html, extra = "") {
   return `<div class="glass rounded-xl p-5 ${extra}">${html}</div>`;
 }
 function bountyDateLabel(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const day = Number(m[3]);
+  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+  return `${months[Number(m[2]) - 1]} ${day}${suffix}`;
 }
 function bountyStatus(bounty, me) {
   if (bounty.claimed) return "claimed";
@@ -879,7 +882,7 @@ function bountyStatusLabel(status) {
 function mysteryDetail(bounty, tiers, me) {
   if (!bounty.mystery) return "";
   if (!bounty.mysteryRevealed) {
-    return `<p class="bounty-note">Revealed 7 days before season start (${esc(bountyDateLabel("2026-09-07T00:00:00.000Z"))}).</p>`;
+    return `<p class="bounty-note">Revealed 7 days before season start (${esc(bountyDateLabel("2026-09-07") || "September 7th")}).</p>`;
   }
   const targets = bounty.mysteryTargets || {};
   const rows = (tiers || []).map((t) => {
@@ -888,6 +891,55 @@ function mysteryDetail(bounty, tiers, me) {
     return `<div class="mystery-row${mine}"><span>${esc(t.name)}</span><span>${esc(text)}</span></div>`;
   });
   return `<div class="mystery-rows">${rows.join("")}</div>`;
+}
+function bountyAdminDesk(d) {
+  if (!d?.canAward) return "";
+  const bounties = Array.isArray(d.bounties) ? d.bounties : [];
+  return panel(
+    `<h2 class="text-lg font-bold">PreSeason Bounty</h2>
+        <p class="mt-1 text-sm text-muted">Players submit proof in ${esc(d.discordChannel || "#Claim_PreSeason_Bounty")}. After you review the ticket, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
+        <p class="mt-2"><a href="/preseason-bounty" class="text-sm font-bold tracking-widest gold">VIEW PLAYER PAGE →</a></p>
+        <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="BOUNTYAWARD">
+          <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
+            .map((p) => `<option value="${p.id}">${esc(p.displayName)} · ${esc(p.tierName)} · ${esc(p.avg)}</option>`)
+            .join("")}</select>
+          <select name="bountyId" required><option value="">Bounty</option>${bounties
+            .map((b) => `<option value="${esc(b.id)}">${esc(b.name)} (${b.points} pt)</option>`)
+            .join("")}</select>
+          <button class="btn-gold">AWARD BOUNTY</button>
+        </form>
+        ${
+          (d.claims || []).length
+            ? `<div class="mt-5 space-y-2">${d.claims
+                .map(
+                  (c) =>
+                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="BOUNTYREVOKE" data-user="${c.userId}" data-bounty="${esc(c.bountyId)}">
+                      <span><b>${esc(c.playerName)}</b> · ${esc(c.bountyName)} · ${c.points} pt</span>
+                      <button class="btn-ghost">REVOKE</button>
+                    </form>`
+                )
+                .join("")}</div>`
+            : `<p class="mt-4 text-sm text-muted">No claims recorded yet.</p>`
+        }
+        ${
+          d.canEditMystery
+            ? `<form class="mt-6 space-y-3" data-form="BOUNTYMYSTERY">
+                <h3 class="text-sm font-bold tracking-widest uppercase text-muted">Mystery targets</h3>
+                <p class="text-xs text-muted">Players see these after ${esc(d.mysteryRevealLabel || "September 7th")} (7 days before season start), or sooner if you tick Reveal now.</p>
+                ${(d.tiers || [])
+                  .map(
+                    (t) =>
+                      `<label class="block text-xs font-semibold uppercase tracking-widest text-muted">${esc(t.name)} (${esc(t.avgLabel)})</label>
+                       <input name="${esc(t.id)}" value="${esc((d.mysteryTargets || {})[t.id] || "")}" placeholder="Target for ${esc(t.name)}">`
+                  )
+                  .join("")}
+                <label class="check-row"><input type="checkbox" name="revealed" value="1"${d.mysteryForced ? " checked" : ""}> Reveal mystery targets now</label>
+                <button class="btn-gold">SAVE MYSTERY TARGETS</button>
+              </form>`
+            : ""
+        }`,
+    "mt-4"
+  );
 }
 function bountyCard(bounty, { me, tiers } = {}) {
   const status = bountyStatus(bounty, me);
@@ -1592,55 +1644,9 @@ async function pageBounty() {
         ${
           me?.joined
             ? `<p class="mt-2 text-sm text-white/80">Your eligible bounties are marked <span class="gold">Open</span>. Claimed cards show as Claimed. Other tiers stay visible so you can see the full hunt.</p>`
-            : `<p class="mt-2 text-sm text-white/80">Opt in to appear on the hunter board. Admins still record claims after Discord review.</p>`
+            : `<p class="mt-2 text-sm text-white/80">Opt in to appear on the hunter board. Staff record claims from Admin after Discord review.</p>`
         }`
       );
-  const staffPanel = d.canAward
-    ? panel(
-        `<h2 class="text-lg font-bold">Admin: record a claim</h2>
-        <p class="mt-1 text-sm text-muted">Players submit proof in ${esc(d.discordChannel || "#Claim_PreSeason_Bounty")}. After you review the ticket, award the bounty here so it shows on their tracker.</p>
-        <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="BOUNTYAWARD">
-          <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
-            .map((p) => `<option value="${p.id}">${esc(p.displayName)} · ${esc(p.tierName)} · ${esc(p.avg)}</option>`)
-            .join("")}</select>
-          <select name="bountyId" required><option value="">Bounty</option>${bounties
-            .map((b) => `<option value="${esc(b.id)}">${esc(b.name)} (${b.points} pt)</option>`)
-            .join("")}</select>
-          <button class="btn-gold">AWARD BOUNTY</button>
-        </form>
-        ${
-          (d.claims || []).length
-            ? `<div class="mt-5 space-y-2">${d.claims
-                .map(
-                  (c) =>
-                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="BOUNTYREVOKE" data-user="${c.userId}" data-bounty="${esc(c.bountyId)}">
-                      <span><b>${esc(c.playerName)}</b> · ${esc(c.bountyName)} · ${c.points} pt</span>
-                      <button class="btn-ghost">REVOKE</button>
-                    </form>`
-                )
-                .join("")}</div>`
-            : `<p class="mt-4 text-sm text-muted">No claims recorded yet.</p>`
-        }
-        ${
-          d.canEditMystery
-            ? `<form class="mt-6 space-y-3" data-form="BOUNTYMYSTERY">
-                <h3 class="text-sm font-bold tracking-widest uppercase text-muted">Mystery targets</h3>
-                <p class="text-xs text-muted">Players see these after 7 September, or sooner if you tick Reveal now.</p>
-                ${(d.tiers || [])
-                  .map(
-                    (t) =>
-                      `<label class="block text-xs font-semibold uppercase tracking-widest text-muted">${esc(t.name)} (${esc(t.avgLabel)})</label>
-                       <input name="${esc(t.id)}" value="${esc((d.mysteryTargets || {})[t.id] || "")}" placeholder="Target for ${esc(t.name)}">`
-                  )
-                  .join("")}
-                <label class="check-row"><input type="checkbox" name="revealed" value="1"${d.mysteryForced ? " checked" : ""}> Reveal mystery targets now</label>
-                <button class="btn-gold">SAVE MYSTERY TARGETS</button>
-              </form>`
-            : ""
-        }`,
-        "mt-4"
-      )
-    : "";
   const howCards = (d.claimSteps || [])
     .map((step, i) => `<div class="bounty-step"><div class="bounty-step-n">${i + 1}</div><p>${esc(step)}</p></div>`)
     .join("");
@@ -1684,7 +1690,7 @@ async function pageBounty() {
     `<div class="mx-auto max-w-5xl px-4 py-10 bounty-page">
       <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
       <h1 class="page-title mt-2 font-extrabold">${esc(d.title || "PreSeason Bounty")}</h1>
-      <p class="mt-4 max-w-3xl text-sm leading-relaxed text-white/80">${esc(d.intro || "")} Season starts ${esc(bountyDateLabel(d.seasonStart))}.</p>
+      <p class="mt-4 max-w-3xl text-sm leading-relaxed text-white/80">${esc(d.intro || "")} Season starts ${esc(d.seasonStartLabel || bountyDateLabel(d.seasonStart) || "September 14th")}.</p>
       <nav class="bounty-toc mt-6" aria-label="Bounty hunt sections">
         <a href="/preseason-bounty#bounty-how">How to claim</a>
         <a href="/preseason-bounty#bounty-t1">Tier 1</a>
@@ -1694,14 +1700,13 @@ async function pageBounty() {
         <a href="/preseason-bounty#bounty-board">Hunter board</a>
       </nav>
       <div class="mt-6">${joinPanel}</div>
-      ${staffPanel}
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
       <section id="bounty-how" class="mt-10">
         <h2 class="text-2xl font-extrabold">How it works</h2>
         <div class="bounty-rules mt-4">${ruleCards}</div>
         <h3 class="mt-8 text-lg font-bold">How to claim</h3>
-        <p class="mt-1 text-sm text-muted">Claims are reviewed on Discord. The site tracks which bonuses you have achieved after an admin awards them.</p>
+        <p class="mt-1 text-sm text-muted">Claims are reviewed on Discord. Staff then award them from Admin so they show on your tracker.</p>
         <div class="bounty-steps mt-4">${howCards}</div>
         <div class="mt-4">${externalLink(d.discordInvite || LEAGUE_DISCORD_INVITE, `Open Discord · ${d.discordChannel || "#Claim_PreSeason_Bounty"}`)}</div>
       </section>
@@ -1865,7 +1870,10 @@ function newsComposeTools() {
     </div>`;
 }
 async function pageAdmin() {
-  const d = await api("/api/admin/overview");
+  const [d, bounty] = await Promise.all([
+    api("/api/admin/overview"),
+    api("/api/preseason-bounty").catch(() => ({})),
+  ]);
   const everyone = d.users;
   const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
@@ -2017,9 +2025,7 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
         <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub. The cards appear on About Us.</p>
         <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
-      ${panel(`<h2 class="text-lg font-bold">PreSeason Bounty</h2>
-        <p class="mt-1 text-sm text-muted">Award claimed bounties after Discord review. Players see them on their tracker.</p>
-        <a href="/preseason-bounty" class="mt-3 inline-block text-sm font-bold tracking-widest gold">OPEN BOUNTY DESK →</a>`, "mt-4")}
+      ${bountyAdminDesk(bounty)}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
