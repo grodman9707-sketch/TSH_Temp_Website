@@ -11,6 +11,7 @@ import {
   isMysteryRevealed,
   maxPoints,
   maxPointsForTier,
+  calendarDayLabel,
   publicHunt,
   tierForAvg,
 } from "./preseasonBounty.js";
@@ -34,6 +35,8 @@ check("avg 39.9 is Tier 3", tierForAvg(39.9).id === "t3");
 check("avg 40 is Tier 2", tierForAvg(40).id === "t2");
 check("avg 54.9 is Tier 2", tierForAvg(54.9).id === "t2");
 check("avg 55 is Tier 1", tierForAvg(55).id === "t1");
+check("season start label is September 14th", calendarDayLabel("2026-09-14T00:00:00.000Z") === "September 14th");
+check("mystery reveal label is September 7th", calendarDayLabel("2026-09-07T00:00:00.000Z") === "September 7th");
 check("mystery locked before 7 September", isMysteryRevealed({ mysteryRevealed: false }, "2026-09-02T12:00:00.000Z") === false);
 check("mystery open on 7 September", isMysteryRevealed({ mysteryRevealed: false }, "2026-09-07T00:00:00.000Z") === true);
 check("admin can force mystery open", isMysteryRevealed({ mysteryRevealed: true }, "2026-09-02T12:00:00.000Z") === true);
@@ -124,7 +127,7 @@ try {
   check("guest sees catalog and no me tracker", Array.isArray(open.data.bounties) && open.data.bounties.length === 16 && open.data.me == null);
   check("guest does not see award desk", open.data.canAward !== true && !open.data.awardPlayers);
   check("claim channel is listed", open.data.discordChannel === "#Claim_PreSeason_Bounty");
-  check("season start is 14 September 2026", String(open.data.seasonStart).startsWith("2026-09-14"));
+  check("season start is September 14th", open.data.seasonStartLabel === "September 14th" && String(open.data.seasonStart).startsWith("2026-09-14"));
 
   const joinAnon = await api(port, "/api/preseason-bounty/join", { method: "POST", body: {} });
   check("join requires login", joinAnon.status === 401);
@@ -153,7 +156,7 @@ try {
   const ownerTok = owner.data.token;
 
   const staffView = await api(port, "/api/preseason-bounty", { token: ownerTok });
-  check("staff can award from the bounty page", staffView.data.canAward === true && staffView.data.canEditMystery === true);
+  check("staff payload includes the award desk data", staffView.data.canAward === true && staffView.data.canEditMystery === true);
   check("staff sees player list", Array.isArray(staffView.data.awardPlayers) && staffView.data.awardPlayers.length >= 2);
 
   const wrongTier = await api(port, "/api/admin/preseason-bounty/award", {
@@ -224,9 +227,14 @@ try {
   check("revoked bounty leaves the tracker", afterRevoke.data.me.claimedIds.includes("u-mystery") === false);
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
+  const bountyFn = appJs.slice(appJs.indexOf("async function pageBounty"), appJs.indexOf("async function pageRules"));
+  const adminFn = appJs.slice(appJs.indexOf("async function pageAdmin"), appJs.indexOf("function matchRoute"));
   check("sidebar has PreSeason Bounty tab", appJs.includes('["/preseason-bounty", "PreSeason Bounty"]'));
   check("bounty page renderer is wired", appJs.includes("pageBounty") && appJs.includes('q === "/preseason-bounty"'));
-  check("join and award forms exist", appJs.includes("BOUNTYJOIN") && appJs.includes("BOUNTYAWARD") && appJs.includes("JOIN THE HUNT"));
+  check("players can join from the bounty page", bountyFn.includes("BOUNTYJOIN") && bountyFn.includes("JOIN THE HUNT"));
+  check("public bounty page has no award desk", !bountyFn.includes("BOUNTYAWARD") && !bountyFn.includes("BOUNTYREVOKE") && !bountyFn.includes("BOUNTYMYSTERY"));
+  check("award desk lives on Admin", adminFn.includes("bountyAdminDesk(bounty)") && appJs.includes('data-form="BOUNTYAWARD"'));
+  check("page states season starts September 14th", bountyFn.includes("September 14th"));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("bounty styles are served", css.includes(".bounty-card") && css.includes(".bounty-hunter") && css.includes(".bounty-progress"));
