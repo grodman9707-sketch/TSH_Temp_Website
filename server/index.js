@@ -44,6 +44,7 @@ const sessionsPath = path.join(dataDir, "sessions.json");
 const uploadsDir = path.join(dataDir, "uploads");
 const publicDir = path.join(root, "public");
 const MAX_OWNERS = 3;
+const RESET_CODE_TTL_MS = 30 * 60 * 1000;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
 const JASON_JACKSON_EMAIL = "jasonjackson@tshdartsleague.com";
 const JASON_JACKSON_PASSWORD = "owner123";
@@ -100,6 +101,48 @@ function loadSessions() {
 function saveSessions() {
   writeJson(sessionsPath, Object.fromEntries(sessions));
 }
+function clearSessionsForUser(userId) {
+  for (const [token, id] of sessions) {
+    if (Number(id) === Number(userId)) sessions.delete(token);
+  }
+}
+function htmlEsc(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+function newResetCode() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+function codesEqual(a, b) {
+  const x = Buffer.from(String(a || ""), "utf8");
+  const y = Buffer.from(String(b || ""), "utf8");
+  if (!x.length || x.length !== y.length) return false;
+  return crypto.timingSafeEqual(x, y);
+}
+function findUserByEmail(db, email) {
+  const key = normIdent(email);
+  if (!key) return null;
+  return (db.users || []).find((u) => normIdent(u.email) === key) || null;
+}
+function passwordResetEmail(user, code) {
+  const name = htmlEsc(user.nickname || user.name || "there");
+  return {
+    to: user.email,
+    subject: "Your TSH Darts League password reset code",
+    html:
+      `<p>Hi ${name},</p>` +
+      `<p>Your TSH Darts League password reset code is:</p>` +
+      `<p style="font-size:28px;letter-spacing:6px;font-weight:700">${htmlEsc(code)}</p>` +
+      `<p>Enter this code on the Forgot Password page, then choose a new password. It expires in 30 minutes.</p>` +
+      `<p>If you did not ask to reset your password, you can ignore this email — your current password still works.</p>` +
+      `<p>— TSH Darts League</p>`,
+    userId: user.id,
+    type: "password_reset",
+  };
+}
 
 function cookieSecureFor(req) {
   const proto = String(req?.headers?.["x-forwarded-proto"] || "");
@@ -142,7 +185,7 @@ function writeDb(db) {
   writeJson(dbPath, db);
 }
 function publicUser(u, db) {
-  const { password, avatarFile, ...rest } = u;
+  const { password, avatarFile, passwordReset, ...rest } = u;
   const leagueIds = userLeagueIds(u);
   const adminIds = adminLeagueIds(u);
   const roles = userRoles(u);
@@ -1411,6 +1454,48 @@ async function handleApi(req, res, url) {
     sessions.set(token, found.id);
     saveSessions();
     return json(res, 200, { ok: true, token, user: publicUser(found, db), remember }, { "Set-Cookie": sessionCookie(token, { remember, req }) });
+  }
+
+  if (method === "POST" && p === "/api/auth/forgot-password") {
+    const email = String(body.email || "").trim();
+    if (!email) return json(res, 400, { ok: false, error: "Enter the email on your account" });
+    const found = findUserByEmail(db, email);
+    const generic = { ok: true, sent: true, message: "If that email is registered, we sent a reset code." };
+    if (!found || !found.email) return json(res, 200, generic);
+    const code = newResetCode();
+    found.passwordReset = { code, expiresAt: new Date(Date.now() + RESET_CODE_TTL_MS).toISOString() };
+    writeDb(db);
+    try {
+      await sendEmail(passwordResetEmail(found, code));
+    } catch (err) {
+      console.error("Password reset email failed:", err);
+      return json(res, 500, { ok: false, error: "Could not send the reset email. Try again in a moment." });
+    }
+    return json(res, 200, generic);
+  }
+
+  if (method === "POST" && p === "/api/auth/reset-password") {
+    const email = String(body.email || "").trim();
+    const code = String(body.code || "").replace(/\s+/g, "");
+    const newPassword = String(body.newPassword || body.password || "");
+    if (!email || !code) return json(res, 400, { ok: false, error: "Email and reset code are required" });
+    if (newPassword.length < 6) return json(res, 400, { ok: false, error: "New password must be at least 6 characters" });
+    const found = findUserByEmail(db, email);
+    const reset = found?.passwordReset;
+    const expiresAt = reset?.expiresAt ? Date.parse(reset.expiresAt) : NaN;
+    const expired = !Number.isFinite(expiresAt) || expiresAt < Date.now();
+    if (!found || !reset?.code || expired || !codesEqual(reset.code, code)) {
+      return json(res, 400, { ok: false, error: "Invalid or expired reset code" });
+    }
+    found.password = newPassword;
+    found.passwordReset = null;
+    writeDb(db);
+    clearSessionsForUser(found.id);
+    saveSessions();
+    const token = crypto.randomBytes(24).toString("hex");
+    sessions.set(token, found.id);
+    saveSessions();
+    return json(res, 200, { ok: true, token, user: publicUser(found, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
   if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about", "/api/preseason-bounty"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
