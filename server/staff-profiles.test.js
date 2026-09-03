@@ -225,11 +225,11 @@ try {
     token: ownerTok,
     body: { userId: otherId },
   });
-  check("assign second owner", makeOwner.status === 200);
+  check("assign additional owner", makeOwner.status === 200);
   const withSecond = await api(port, "/api/staff-profiles");
   check(
-    "second owner card generated",
-    (withSecond.data.profiles || []).filter((p) => p.roles?.includes("Owner")).length === 2
+    "new owner card generated",
+    (withSecond.data.profiles || []).some((p) => p.userId === otherId && p.roles?.includes("Owner"))
   );
 
   const requestRemove = await api(port, "/api/admin/revoke-admin", {

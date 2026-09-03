@@ -46,6 +46,8 @@ const publicDir = path.join(root, "public");
 const MAX_OWNERS = 3;
 const RESET_CODE_TTL_MS = 30 * 60 * 1000;
 const FOUNDING_OWNER_EMAIL = "grodman9707@gmail.com";
+const JASON_JACKSON_EMAIL = "jasonjackson@tshdartsleague.com";
+const JASON_JACKSON_PASSWORD = "owner123";
 const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
 const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
 const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
@@ -656,6 +658,60 @@ function placeUserInLeague(db, u, league) {
   u.leagueId = next[0] || null;
   return null;
 }
+function isJasonJacksonAccount(u) {
+  const name = normIdent(u?.name);
+  const dc = normIdent(u?.dartcounterName);
+  const user = normIdent(u?.username);
+  const email = normIdent(u?.email);
+  return name === "jason jackson" || dc === "jason jackson" || user === "jasonjackson" || email === JASON_JACKSON_EMAIL;
+}
+function ensureJasonJacksonOwner(db) {
+  if (!Array.isArray(db.users)) db.users = [];
+  let jason = db.users.find(isJasonJacksonAccount);
+  if (!jason) {
+    const created = {
+      name: "Jason Jackson",
+      email: JASON_JACKSON_EMAIL,
+      username: "JasonJackson",
+      dartcounterName: "Jason jackson",
+    };
+    if (identityConflict(db, created)) return false;
+    jason = {
+      id: nextId(db.users),
+      ...created,
+      password: JASON_JACKSON_PASSWORD,
+      role: "owner",
+      roles: ["owner"],
+      leagueId: null,
+      leagueIds: [],
+      adminLeagueId: null,
+      adminLeagueIds: [],
+      regionalChoice: "both",
+      regionalIds: [1, 2],
+      regionalId: 1,
+      nickname: "",
+      avg: 0,
+      country: "",
+      avatarFile: null,
+      avatarUpdatedAt: null,
+      notifyPrefs: { email: true },
+      timezone: defaultTimezoneForRegional("both"),
+      bountyHunt: false,
+    };
+    db.users.push(jason);
+    return true;
+  }
+  let changed = false;
+  if (jason.password !== JASON_JACKSON_PASSWORD) {
+    jason.password = JASON_JACKSON_PASSWORD;
+    changed = true;
+  }
+  if (!hasRole(jason, "owner")) {
+    addRole(jason, "owner");
+    changed = true;
+  }
+  return changed;
+}
 function migrate(db) {
   let changed = false;
   if (!Array.isArray(db.approvals)) {
@@ -727,6 +783,7 @@ function migrate(db) {
       changed = true;
     }
   }
+  if (ensureJasonJacksonOwner(db)) changed = true;
   const mockUsers = db.users.filter((u) => MOCK_EMAILS.has(String(u.email || "").toLowerCase()));
   if (mockUsers.length) {
     const mockIds = new Set(mockUsers.map((u) => u.id));
