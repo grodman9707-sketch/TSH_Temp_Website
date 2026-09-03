@@ -28,6 +28,7 @@ const state = {
     nickname: "",
     avg: "",
   },
+  reset: { email: "", sent: false },
 };
 
 function token() {
@@ -1323,9 +1324,36 @@ function pageSignIn() {
     "Sign in",
     `<input name="email" type="text" placeholder="Username or email" required autocomplete="username">
      ${passwordField("password", "Password", "current-password", "required")}
-     <label class="check-row"><input type="checkbox" name="remember" value="1"> Remember me</label>`,
+     <label class="check-row"><input type="checkbox" name="remember" value="1"> Remember me</label>
+     <p class="text-sm text-muted"><a class="gold" href="/forgot-password">Forgot password?</a></p>`,
     "SIGN IN",
     `<p class="mt-4 text-sm text-muted">New here? <a class="gold" href="/sign-up">Create an account</a></p>`
+  );
+}
+function pageForgotPassword() {
+  const r = state.reset || { email: "", sent: false };
+  if (!r.sent) {
+    return authForm(
+      "Forgot password",
+      `<input name="email" type="email" value="${esc(r.email)}" placeholder="Email on your account" required autocomplete="email">
+       <p class="text-sm text-muted">We’ll email a one-time code you can use to set a new password.</p>`,
+      "SEND RESET CODE",
+      `<p class="mt-4 text-sm text-muted"><a class="gold" href="/sign-in">Back to sign in</a></p>`
+    );
+  }
+  return authForm(
+    "Set a new password",
+    `<input name="email" type="email" value="${esc(r.email)}" required autocomplete="email">
+     <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Reset code</label>
+     <input name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" required autocomplete="one-time-code">
+     <label class="block text-xs font-semibold uppercase tracking-widest text-muted">New password</label>
+     ${passwordField("newPassword", "New password", "new-password", "required minlength=6")}
+     <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Confirm password</label>
+     ${passwordField("confirmPassword", "Confirm password", "new-password", "required minlength=6")}
+     <p class="text-sm text-muted">Check your inbox (and spam) for the code. It expires in 30 minutes.</p>
+     <p class="text-sm"><button type="button" class="gold" data-act="reset-email-again">Use a different email</button></p>`,
+    "SAVE NEW PASSWORD",
+    `<p class="mt-4 text-sm text-muted"><a class="gold" href="/sign-in">Back to sign in</a></p>`
   );
 }
 function pageSignUp() {
@@ -2247,6 +2275,7 @@ function matchRoute(path) {
   if (q === "/apply") return ["apply"];
   if (q === "/sign-in") return ["signin"];
   if (q === "/sign-up") return ["signup"];
+  if (q === "/forgot-password") return ["forgot"];
   if (q === "/dashboard") return ["dashboard"];
   if (q === "/my-matches") return ["matches"];
   if (q === "/rules") return ["rules"];
@@ -2281,6 +2310,7 @@ async function render() {
       apply: pageApply,
       signin: () => pageSignIn(),
       signup: () => pageSignUp(),
+      forgot: () => pageForgotPassword(),
       dashboard: pageDashboard,
       matches: pageMyMatches,
       player: () => pagePlayer(route[1]),
@@ -2407,6 +2437,14 @@ document.addEventListener("click", async (e) => {
     state.signup.step = Math.max(1, (state.signup.step || 1) - 1);
     state.error = "";
     render();
+    return;
+  }
+  if (e.target.closest("[data-act=reset-email-again]")) {
+    e.preventDefault();
+    state.reset = { email: state.reset?.email || "", sent: false };
+    state.error = "";
+    state.notice = "";
+    render();
   }
 });
 
@@ -2480,6 +2518,34 @@ document.addEventListener("submit", async (e) => {
       state.user = d.user;
       syncTimezone();
       go(isStaff(d.user) ? "/admin" : "/dashboard");
+    } else if (kind === "SEND RESET CODE") {
+      const email = String(fd.email || "").trim();
+      await api("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
+      state.reset = { email, sent: true };
+      state.notice = "If that email is registered, we sent a 6-digit reset code. Enter it below with a new password.";
+      state.error = "";
+      render();
+    } else if (kind === "SAVE NEW PASSWORD") {
+      if (String(fd.newPassword || "") !== String(fd.confirmPassword || "")) {
+        state.error = "New password and confirmation do not match.";
+        render();
+        return;
+      }
+      const d = await api("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ email: fd.email, code: fd.code, newPassword: fd.newPassword }),
+      });
+      storeToken(d.token, true);
+      state.user = d.user;
+      state.reset = { email: "", sent: false };
+      syncTimezone();
+      const dest = isStaff(d.user) ? "/admin" : "/dashboard";
+      history.pushState({}, "", dest);
+      state.path = dest;
+      state.menu = false;
+      state.error = "";
+      state.notice = "Password updated. You’re signed in.";
+      render();
     } else if (kind === "SIGNUP") {
       Object.assign(state.signup, fd);
       const step = Number(form.dataset.step || state.signup.step || 1);

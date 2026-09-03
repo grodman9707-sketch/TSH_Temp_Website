@@ -47,7 +47,7 @@ check(
     !html.includes("user-scalable=no")
 );
 check("mobile browser chrome matches the dark theme", html.includes('name="theme-color"') && html.includes("#090b11"));
-check("cache-busted CSS and JS stay in lockstep", html.includes("styles.css?v=34") && html.includes("app.js?v=34"));
+check("cache-busted CSS and JS stay in lockstep", html.includes("styles.css?v=35") && html.includes("app.js?v=35"));
 
 check("html/body clip horizontal overflow", css.includes("overflow-x: clip") && css.includes("max-width: 100%"));
 check("notched phones get safe-area padding", css.includes("env(safe-area-inset-top") && css.includes("env(safe-area-inset-left") && css.includes(".site-nav"));
