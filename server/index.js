@@ -210,6 +210,7 @@ function readDb() {
   const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
   if (!Array.isArray(db.approvals)) db.approvals = [];
   if (!Array.isArray(db.adminProfiles)) db.adminProfiles = [];
+  if (!Array.isArray(db.leagueRequests)) db.leagueRequests = [];
   return db;
 }
 function writeDb(db) {
@@ -240,6 +241,9 @@ function publicUser(u, db) {
     timezone: u.timezone || "",
     hasPendingApplication: db ? userHasPendingApplication(db, u.id) : false,
     fullyPlaced: db ? isFullyPlaced(db, u) : false,
+    leagues: db ? userLeagueSummaries(db, u) : [],
+    openJoinRegional: db ? openJoinRegional(db, u) : null,
+    pendingLeagueRequests: db ? pendingLeagueRequestsForUser(db, u.id) : [],
     bountyHunt: Boolean(u.bountyHunt),
     communityJoinPending: Boolean(u.communityJoinPending),
   };
@@ -665,6 +669,119 @@ function isFullyPlaced(db, u) {
   const have = new Set(placedRegionalIds(db, u));
   return userRegionalIds(u).every((id) => have.has(id));
 }
+function userLeagueSummaries(db, u) {
+  return userLeagueIds(u).map((id) => {
+    const league = db.leagues.find((l) => l.id === id);
+    const regional = league ? db.regionals.find((r) => r.id === league.regionalId) : null;
+    return {
+      id,
+      title: leagueTitle(db, league || { name: "League", regionalId: 0 }),
+      regionalId: league?.regionalId || null,
+      regionalName: regional?.fullTitle || regional?.name || "",
+    };
+  });
+}
+function pendingLeagueRequests(db, userId, kind) {
+  return (db.leagueRequests || []).filter(
+    (r) => r.status === "pending" && Number(r.userId) === Number(userId) && (!kind || r.kind === kind)
+  );
+}
+function publicLeagueRequest(r, db) {
+  const player = db.users.find((x) => x.id === r.userId);
+  const league = r.leagueId ? db.leagues.find((l) => l.id === Number(r.leagueId)) : null;
+  const regional = r.regionalId ? db.regionals.find((x) => x.id === Number(r.regionalId)) : null;
+  return {
+    id: r.id,
+    kind: r.kind,
+    userId: r.userId,
+    playerName: player?.nickname || player?.name || "Player",
+    playerAvg: player?.avg ?? "",
+    regionalId: r.regionalId || null,
+    regionalName: regional?.fullTitle || regional?.name || "",
+    leagueId: r.leagueId || null,
+    leagueTitle: league ? leagueTitle(db, league) : "",
+    status: r.status,
+    createdAt: r.createdAt,
+    note: r.note || "",
+  };
+}
+function pendingLeagueRequestsForUser(db, userId) {
+  return pendingLeagueRequests(db, userId).map((r) => publicLeagueRequest(r, db));
+}
+function openJoinRegional(db, u) {
+  const placed = new Set(placedRegionalIds(db, u));
+  if (placed.size !== 1) return null;
+  if (pendingLeagueRequests(db, u.id, "join").length) return null;
+  const id = [1, 2].find((rid) => !placed.has(rid));
+  if (!id) return null;
+  const regional = db.regionals.find((r) => r.id === id);
+  return { id, name: regional?.fullTitle || regional?.name || (id === 2 ? "TSH Americas" : "TSH Europe") };
+}
+function enableBothRegionals(u) {
+  u.regionalChoice = "both";
+  u.regionalIds = [1, 2];
+}
+function resolveMatchingLeagueRequests(db, u) {
+  let changed = false;
+  const placed = new Set(placedRegionalIds(db, u));
+  const leagues = new Set(userLeagueIds(u));
+  for (const r of db.leagueRequests || []) {
+    if (r.status !== "pending" || Number(r.userId) !== Number(u.id)) continue;
+    if (r.kind === "join" && placed.has(Number(r.regionalId))) {
+      r.status = "done";
+      r.resolvedAt = new Date().toISOString();
+      changed = true;
+    }
+    if (r.kind === "drop" && !leagues.has(Number(r.leagueId))) {
+      r.status = "done";
+      r.resolvedAt = new Date().toISOString();
+      changed = true;
+    }
+  }
+  return changed;
+}
+function visibleLeagueRequests(db, user) {
+  const pending = (db.leagueRequests || []).filter((r) => r.status === "pending");
+  if (canOverride(user)) return pending.map((r) => publicLeagueRequest(r, db));
+  const leagues = scopedLeagues(db, user);
+  const regionals = new Set(leagues.map((l) => l.regionalId));
+  const leagueIds = new Set(leagues.map((l) => l.id));
+  return pending
+    .filter((r) => (r.kind === "join" ? regionals.has(Number(r.regionalId)) : leagueIds.has(Number(r.leagueId))))
+    .map((r) => publicLeagueRequest(r, db));
+}
+function leagueRequestEmail(staff, request, player) {
+  const name = htmlEsc(player?.nickname || player?.name || "A player");
+  const detail =
+    request.kind === "join"
+      ? `join a second league (${htmlEsc(request.regionalName || "the other regional")})`
+      : `drop from ${htmlEsc(request.leagueTitle || "a league")}`;
+  return {
+    to: staff.email,
+    subject: `${player?.nickname || player?.name || "A player"} wants to ${request.kind === "join" ? "join a second league" : "drop from a league"}`,
+    html:
+      `<p>Hi ${htmlEsc(staff.nickname || staff.name || "there")},</p>` +
+      `<p><b>${name}</b> asked to ${detail}.</p>` +
+      (request.note ? `<p>Note: ${htmlEsc(request.note)}</p>` : "") +
+      `<p>Open <b>Admin</b> to place or unplace them.</p>` +
+      `<p>— TSH Darts League</p>`,
+    userId: staff.id,
+    type: "league_request",
+  };
+}
+async function notifyStaffLeagueRequest(db, requestView, player) {
+  const seen = new Set();
+  for (const staff of db.users.filter((u) => isStaff(u) && u.email && Number(u.id) !== Number(player?.id))) {
+    const key = String(staff.email || "").trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await sendEmail(leagueRequestEmail(staff, requestView, player));
+    } catch (err) {
+      console.error("League request email failed:", err);
+    }
+  }
+}
 function syncUserLeagues(u) {
   const ids = userLeagueIds(u);
   u.leagueIds = ids;
@@ -748,6 +865,10 @@ function migrate(db) {
   let changed = false;
   if (!Array.isArray(db.approvals)) {
     db.approvals = [];
+    changed = true;
+  }
+  if (!Array.isArray(db.leagueRequests)) {
+    db.leagueRequests = [];
     changed = true;
   }
   if (ensureBountyState(db)) changed = true;
@@ -1697,6 +1818,83 @@ async function handleApi(req, res, url) {
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
+  if (method === "POST" && p === "/api/account/league-request") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    if (!u) return json(res, 404, { ok: false, error: "Account not found" });
+    const kind = String(body.kind || "").trim();
+    const note = String(body.note || "").trim().slice(0, 300);
+    if (kind !== "join" && kind !== "drop") return json(res, 400, { ok: false, error: "Choose join or drop" });
+    let request;
+    if (kind === "join") {
+      const open = openJoinRegional(db, u);
+      if (!open) return json(res, 400, { ok: false, error: "You already play in two regionals, or a second-league request is already pending." });
+      const regionalId = Number(body.regionalId || open.id);
+      if (regionalId !== open.id) return json(res, 400, { ok: false, error: "That regional is not available as a second league" });
+      enableBothRegionals(u);
+      const pendingApp = (db.applications || []).find((a) => Number(a.userId) === Number(u.id) && a.status === "pending");
+      if (pendingApp) {
+        pendingApp.regionalChoice = "both";
+        pendingApp.regionalIds = [1, 2];
+      } else {
+        db.applications.push({
+          id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
+          userId: u.id,
+          name: u.name,
+          email: u.email,
+          regionalChoice: "both",
+          regionalId,
+          regionalIds: [1, 2],
+          avg: Number(u.avg) || 0,
+          dartcounterName: u.dartcounterName || u.name,
+          nickname: u.nickname || "",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        });
+      }
+      request = {
+        id: nextId(db.leagueRequests),
+        userId: u.id,
+        kind: "join",
+        regionalId,
+        leagueId: null,
+        status: "pending",
+        note,
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      const leagueId = Number(body.leagueId);
+      if (!userLeagueIds(u).includes(leagueId)) return json(res, 400, { ok: false, error: "You are not in that league" });
+      if (pendingLeagueRequests(db, u.id, "drop").some((r) => Number(r.leagueId) === leagueId)) {
+        return json(res, 400, { ok: false, error: "You already asked to drop from that league. An admin will review it." });
+      }
+      request = {
+        id: nextId(db.leagueRequests),
+        userId: u.id,
+        kind: "drop",
+        regionalId: leagueRegionalId(db, leagueId),
+        leagueId,
+        status: "pending",
+        note,
+        createdAt: new Date().toISOString(),
+      };
+    }
+    db.leagueRequests.push(request);
+    writeDb(db);
+    const view = publicLeagueRequest(request, db);
+    await notifyStaffLeagueRequest(db, view, u);
+    return json(res, 200, { ok: true, request: view, user: publicUser(u, db) });
+  }
+  if (method === "POST" && p === "/api/account/league-request/cancel") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const request = (db.leagueRequests || []).find((r) => Number(r.id) === Number(body.id) && Number(r.userId) === Number(user.id));
+    if (!request || request.status !== "pending") return json(res, 404, { ok: false, error: "Request not found" });
+    request.status = "cancelled";
+    request.resolvedAt = new Date().toISOString();
+    writeDb(db);
+    const u = db.users.find((x) => x.id === user.id);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
   if (method === "POST" && p === "/api/apply") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     const blocked = applicationConflict(db, user);
@@ -2014,6 +2212,7 @@ async function handleApi(req, res, url) {
         ),
         approvals: visibleApprovals,
         applications,
+        leagueRequests: visibleLeagueRequests(db, user),
         leagues,
         allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
         fixtures,
@@ -2132,6 +2331,42 @@ async function handleApi(req, res, url) {
       persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(target, db) });
     }
+    if (method === "POST" && p === "/api/admin/league-requests/resolve") {
+      const request = (db.leagueRequests || []).find((r) => Number(r.id) === Number(body.id));
+      if (!request || request.status !== "pending") return json(res, 404, { ok: false, error: "Request not found" });
+      const action = String(body.action || "").trim();
+      if (action !== "done" && action !== "dismiss") return json(res, 400, { ok: false, error: "Choose done or dismiss" });
+      const u = db.users.find((x) => x.id === request.userId);
+      if (!u) return json(res, 404, { ok: false, error: "Player not found" });
+      const visible = visibleLeagueRequests(db, user).some((r) => r.id === request.id);
+      if (!visible) return json(res, 403, { ok: false, error: "Not your request to review" });
+      if (action === "dismiss") {
+        if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can dismiss a request" });
+        request.status = "dismissed";
+        request.resolvedAt = new Date().toISOString();
+        request.resolvedById = user.id;
+        writeDb(db);
+        return json(res, 200, { ok: true, user: publicUser(u, db) });
+      }
+      if (request.kind === "drop") {
+        if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can drop a player from a league" });
+        const leagueId = Number(request.leagueId);
+        if (userLeagueIds(u).includes(leagueId)) unplaceUserFromLeagues(u, leagueId);
+        for (const appn of db.applications.filter((a) => a.userId === u.id)) {
+          appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
+        }
+      } else if (request.kind === "join") {
+        if (!placedRegionalIds(db, u).includes(Number(request.regionalId))) {
+          return json(res, 400, { ok: false, error: "Place them in that regional first, then mark this done." });
+        }
+      }
+      request.status = "done";
+      request.resolvedAt = new Date().toISOString();
+      request.resolvedById = user.id;
+      resolveMatchingLeagueRequests(db, u);
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(u, db) });
+    }
     if (method === "POST" && p === "/api/admin/place-player") {
       const u = db.users.find((x) => x.id === Number(body.userId));
       const league = db.leagues.find((l) => l.id === Number(body.leagueId));
@@ -2143,6 +2378,7 @@ async function handleApi(req, res, url) {
       for (const appn of apps) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
+      resolveMatchingLeagueRequests(db, u);
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db), fullyPlaced: isFullyPlaced(db, u) });
     }
@@ -2318,6 +2554,7 @@ async function handleApi(req, res, url) {
       for (const appn of db.applications.filter((a) => a.userId === u.id)) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
+      resolveMatchingLeagueRequests(db, u);
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
