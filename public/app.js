@@ -941,6 +941,33 @@ function bountyAdminDesk(d) {
             : `<p class="mt-4 text-sm text-muted">No claims recorded yet.</p>`
         }
         ${
+          d.canAwardBonus
+            ? `<form class="mt-8 grid gap-3 md:grid-cols-4" data-form="BONUSAWARD">
+                <h3 class="md:col-span-4 text-sm font-bold tracking-widest uppercase text-muted">Bonus points outside bounties</h3>
+                <p class="md:col-span-4 text-xs text-muted">Owners and Head Admins can add extra bonus points that are not tied to a bounty. They show on the hunter board and count in league tables.</p>
+                <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
+                  .map((p) => `<option value="${p.id}">${esc(p.displayName)} · ${esc(p.tierName)} · ${esc(p.avg)}</option>`)
+                  .join("")}</select>
+                <input name="points" type="number" min="1" max="50" step="1" placeholder="Points" required>
+                <input name="reason" maxlength="200" placeholder="Reason (optional)">
+                <button class="btn-gold">AWARD BONUS</button>
+              </form>
+              ${
+                (d.bonusAwards || []).length
+                  ? `<div class="mt-4 space-y-2">${d.bonusAwards
+                      .map(
+                        (a) =>
+                          `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="BONUSREVOKE" data-id="${a.id}">
+                            <span><b>${esc(a.playerName)}</b> · +${a.points} pt${a.reason ? ` · ${esc(a.reason)}` : ""}</span>
+                            <button class="btn-ghost">REVOKE</button>
+                          </form>`
+                      )
+                      .join("")}</div>`
+                  : `<p class="mt-4 text-sm text-muted">No extra bonus points awarded yet.</p>`
+              }`
+            : ""
+        }
+        ${
           d.canEditMystery
             ? `<form class="mt-6 space-y-3" data-form="BOUNTYMYSTERY">
                 <h3 class="text-sm font-bold tracking-widest uppercase text-muted">Mystery targets</h3>
@@ -1214,7 +1241,7 @@ async function pageLeague(slug, id) {
         <span class="text-muted">/</span>
         <a href="/regionals/${slug}" class="gold inline-flex items-center gap-2">${crest(28, regionalCrest(slug))} ${esc(d.regional?.name || d.regional?.fullTitle || "")}</a>
       </div>
-      ${panel(`<div class="text-center"><h1 class="page-title font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
+      ${panel(`<div class="text-center"><h1 class="page-title font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win${(d.standings || []).some((row) => Number(row.bonusPoints) > 0) ? " · extra staff bonus included in Pts" : ""}</p></div>`, "mt-4")}
       ${panel(
         (d.divisionAdmins || []).length
           ? `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div>
@@ -1687,7 +1714,7 @@ async function pageBounty() {
           <div class="bounty-stat"><div class="bounty-stat-n">${me?.universalClaimed || 0}/${me?.universalTotal || 4}</div><div class="bounty-stat-l">Universal</div></div>
           <div class="bounty-stat"><div class="bounty-stat-n">${me?.claimedCount || 0}/${bounties.length}</div><div class="bounty-stat-l">All bounties</div></div>
         </div>
-        <p class="mt-3 text-xs text-muted">Tier bounties are 2 points each. Universal bounties are 1 point each. Each bounty can be claimed once. Max ${esc(me?.maxPoints || 12)} bonus points.</p>
+        <p class="mt-3 text-xs text-muted">Tier bounties are 2 points each. Universal bounties are 1 point each. Each bounty can be claimed once. Max ${esc(me?.maxPoints || 12)} from bounties.${me?.bonusPoints ? ` Extra staff bonus: +${esc(me.bonusPoints)}.` : " Owners and Head Admins can add extra bonus points outside the hunt."}</p>
         ${
           me?.joined
             ? `<p class="mt-2 text-sm text-white/80">Your eligible bounties are marked <span class="gold">Open</span>. Claimed cards show as Claimed. Other tiers stay visible so you can see the full hunt.</p>`
@@ -1727,7 +1754,7 @@ async function pageBounty() {
               <div class="bounty-hunter-body">
                 <div class="font-semibold">${esc(h.displayName)}${mine ? " · you" : ""}</div>
                 <div class="text-xs text-muted">${esc(h.tierName)} · 3DA ${esc(h.avg)} · ${h.claimedCount} claimed</div>
-                ${claimedNames.length ? `<div class="bounty-chips">${claimedNames.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : `<div class="text-xs text-muted mt-1">No bounties claimed yet</div>`}
+                ${claimedNames.length ? `<div class="bounty-chips">${claimedNames.map((n) => `<span>${esc(n)}</span>`).join("")}${h.bonusPoints ? `<span>Staff bonus +${esc(h.bonusPoints)}</span>` : ""}</div>` : h.bonusPoints ? `<div class="bounty-chips"><span>Staff bonus +${esc(h.bonusPoints)}</span></div>` : `<div class="text-xs text-muted mt-1">No bounties claimed yet</div>`}
               </div>
               <div class="bounty-hunter-pts gold">${h.points}<span>pts</span></div>
             </div>`;
@@ -2806,6 +2833,17 @@ document.addEventListener("submit", async (e) => {
       const revealed = form.querySelector('input[name="revealed"]')?.checked === true;
       await api("/api/admin/preseason-bounty/mystery", { method: "POST", body: JSON.stringify({ ...fd, revealed }) });
       state.notice = revealed ? "Mystery targets saved and revealed." : "Mystery targets saved.";
+      render();
+    } else if (kind === "BONUSAWARD") {
+      await api("/api/admin/preseason-bounty/bonus", { method: "POST", body: JSON.stringify(fd) });
+      state.notice = "Bonus points awarded.";
+      render();
+    } else if (kind === "BONUSREVOKE") {
+      await api("/api/admin/preseason-bounty/bonus-revoke", {
+        method: "POST",
+        body: JSON.stringify({ awardId: form.dataset.id }),
+      });
+      state.notice = "Bonus award removed.";
       render();
     }
   } catch (err) {

@@ -9,11 +9,14 @@ import { runDueNotifications, sendEmail, emailConfigStatus } from "./notificatio
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
 import {
+  awardBonusPoints,
   awardBounty,
   ensureBountyState,
+  extraBonusPoints,
   joinHunt,
   leaveHunt,
   publicHunt,
+  revokeBonusAward,
   revokeBounty,
   saveMysteryTargets,
 } from "./preseasonBounty.js";
@@ -917,22 +920,26 @@ function migrate(db) {
 
 function standingsForLeague(db, leagueId) {
   const players = db.users.filter((u) => inLeague(u, leagueId));
-  const rows = players.map((p) => ({
-    playerId: p.id,
-    name: p.name,
-    nickname: p.nickname || "",
-    hasAvatar: Boolean(p.avatarFile),
-    avg: p.avg,
-    played: 0,
-    won: 0,
-    lost: 0,
-    legsFor: 0,
-    legsAgainst: 0,
-    points: 0,
-    oneEighties: 0,
-    matchAvgSum: 0,
-    matchAvgCount: 0,
-  }));
+  const rows = players.map((p) => {
+    const bonus = extraBonusPoints(db, p.id);
+    return {
+      playerId: p.id,
+      name: p.name,
+      nickname: p.nickname || "",
+      hasAvatar: Boolean(p.avatarFile),
+      avg: p.avg,
+      played: 0,
+      won: 0,
+      lost: 0,
+      legsFor: 0,
+      legsAgainst: 0,
+      bonusPoints: bonus,
+      points: bonus,
+      oneEighties: 0,
+      matchAvgSum: 0,
+      matchAvgCount: 0,
+    };
+  });
   const byId = Object.fromEntries(rows.map((r) => [r.playerId, r]));
   for (const f of db.fixtures.filter((x) => x.leagueId === leagueId && x.status === "played")) {
     const home = byId[f.homeId];
@@ -1270,6 +1277,14 @@ function scopedFixtures(db, user) {
   const ids = new Set(adminLeagueIds(user));
   return db.fixtures.filter((f) => ids.has(f.leagueId));
 }
+function huntView(user) {
+  return {
+    user,
+    canAward: Boolean(user && isStaff(user)),
+    canEditMystery: Boolean(user && canOverride(user)),
+    canAwardBonus: Boolean(user && canOverride(user)),
+  };
+}
 
 async function handleApi(req, res, url) {
   const db = readDb();
@@ -1285,11 +1300,7 @@ async function handleApi(req, res, url) {
     if (ensureBountyState(db)) persistDb(db);
     return json(res, 200, {
       ok: true,
-      ...publicHunt(db, {
-        user,
-        canAward: Boolean(user && isStaff(user)),
-        canEditMystery: Boolean(user && canOverride(user)),
-      }),
+      ...publicHunt(db, huntView(user)),
     });
   }
   if (method === "GET" && p === "/api/staff-profiles") {
@@ -1525,14 +1536,14 @@ async function handleApi(req, res, url) {
     const result = joinHunt(db, user);
     if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
     persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, { user, canAward: isStaff(user), canEditMystery: canOverride(user) }) });
+    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
   }
   if (method === "POST" && p === "/api/preseason-bounty/leave") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     const result = leaveHunt(db, user);
     if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
     persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, { user, canAward: isStaff(user), canEditMystery: canOverride(user) }) });
+    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
   }
 
   const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);
@@ -1861,13 +1872,27 @@ async function handleApi(req, res, url) {
       const result = awardBounty(db, { staff: user, userId: body.userId, bountyId: body.bountyId });
       if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
       persistDb(db);
-      return json(res, 200, { ok: true, claim: result.claim, ...publicHunt(db, { user, canAward: true, canEditMystery: canOverride(user) }) });
+      return json(res, 200, { ok: true, claim: result.claim, ...publicHunt(db, huntView(user)) });
     }
     if (method === "POST" && p === "/api/admin/preseason-bounty/revoke") {
       const result = revokeBounty(db, { userId: body.userId, bountyId: body.bountyId });
       if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
       persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, { user, canAward: true, canEditMystery: canOverride(user) }) });
+      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
+    }
+    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus") {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can award bonus points" });
+      const result = awardBonusPoints(db, { staff: user, userId: body.userId, points: body.points, reason: body.reason });
+      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
+      persistDb(db);
+      return json(res, 200, { ok: true, award: result.award, ...publicHunt(db, huntView(user)) });
+    }
+    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus-revoke") {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can revoke bonus points" });
+      const result = revokeBonusAward(db, { awardId: body.awardId });
+      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
+      persistDb(db);
+      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
     }
     if (method === "POST" && p === "/api/admin/preseason-bounty/mystery") {
       if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can set mystery targets" });
@@ -1876,7 +1901,7 @@ async function handleApi(req, res, url) {
         revealed: body.revealed === true || body.revealed === "1" || body.revealed === "on",
       });
       persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, { user, canAward: true, canEditMystery: true }) });
+      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
     }
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));

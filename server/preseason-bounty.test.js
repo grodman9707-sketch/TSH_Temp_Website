@@ -7,12 +7,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   BOUNTIES,
+  awardBonusPoints,
   awardBounty,
+  extraBonusPoints,
   isMysteryRevealed,
   maxPoints,
   maxPointsForTier,
   calendarDayLabel,
   publicHunt,
+  revokeBonusAward,
   tierForAvg,
 } from "./preseasonBounty.js";
 
@@ -62,6 +65,16 @@ check("admin can force mystery open", isMysteryRevealed({ mysteryRevealed: true 
   check("universal bounty awarded to any tier", uni.ok === true);
   const locked = awardBounty(db, { staff, userId: 2, bountyId: "u-mystery", now: new Date("2026-09-02T12:00:00.000Z") });
   check("mystery cannot be awarded before reveal", locked.ok === false);
+  const extra = awardBonusPoints(db, { staff, userId: 2, points: 3, reason: "Community night" });
+  check("staff bonus points can be awarded outside bounties", extra.ok === true && extra.award.points === 3);
+  check("extra bonus is stored on the player", extraBonusPoints(db, 2) === 3);
+  const huntWithBonus = publicHunt(db, { now: new Date("2026-09-02T12:00:00.000Z") });
+  const hunter = huntWithBonus.hunters.find((h) => h.userId === 2);
+  check("hunter board includes bounty points plus extra bonus", hunter.points === 2 + 1 + 3 && hunter.bonusPoints === 3);
+  const badPts = awardBonusPoints(db, { staff, userId: 2, points: 0 });
+  check("zero bonus points are rejected", badPts.ok === false);
+  const revokedExtra = revokeBonusAward(db, { awardId: extra.award.id });
+  check("extra bonus can be revoked", revokedExtra.ok === true && extraBonusPoints(db, 2) === 0);
 }
 
 async function waitHealth(port, child) {
@@ -125,7 +138,7 @@ try {
   const open = await api(port, "/api/preseason-bounty");
   check("bounty API ok without login", open.status === 200 && open.data.ok);
   check("guest sees catalog and no me tracker", Array.isArray(open.data.bounties) && open.data.bounties.length === 16 && open.data.me == null);
-  check("guest does not see award desk", open.data.canAward !== true && !open.data.awardPlayers);
+  check("guest does not see award desk", open.data.canAward !== true && open.data.canAwardBonus !== true && !open.data.awardPlayers);
   check("claim channel is listed", open.data.discordChannel === "#Claim_PreSeason_Bounty");
   check("season start is September 14th", open.data.seasonStartLabel === "September 14th" && String(open.data.seasonStart).startsWith("2026-09-14"));
 
@@ -156,7 +169,7 @@ try {
   const ownerTok = owner.data.token;
 
   const staffView = await api(port, "/api/preseason-bounty", { token: ownerTok });
-  check("staff payload includes the award desk data", staffView.data.canAward === true && staffView.data.canEditMystery === true);
+  check("staff payload includes the award desk data", staffView.data.canAward === true && staffView.data.canEditMystery === true && staffView.data.canAwardBonus === true);
   check("staff sees player list", Array.isArray(staffView.data.awardPlayers) && staffView.data.awardPlayers.length >= 2);
 
   const wrongTier = await api(port, "/api/admin/preseason-bounty/award", {
@@ -193,12 +206,22 @@ try {
   });
   check("API rejects a second claim of the same bounty", dup.status === 400);
 
+  const mysteryOpenByDate = isMysteryRevealed({ mysteryRevealed: false });
   const mysteryEarly = await api(port, "/api/admin/preseason-bounty/award", {
     method: "POST",
     token: ownerTok,
     body: { userId: t3.data.user.id, bountyId: "u-mystery" },
   });
-  check("API keeps mystery locked before reveal", mysteryEarly.status === 400);
+  if (mysteryOpenByDate) {
+    check("mystery is awardable once the reveal date has arrived", mysteryEarly.status === 200);
+    await api(port, "/api/admin/preseason-bounty/revoke", {
+      method: "POST",
+      token: ownerTok,
+      body: { userId: t3.data.user.id, bountyId: "u-mystery" },
+    });
+  } else {
+    check("API keeps mystery locked before reveal", mysteryEarly.status === 400);
+  }
 
   const reveal = await api(port, "/api/admin/preseason-bounty/mystery", {
     method: "POST",
@@ -226,6 +249,64 @@ try {
   const afterRevoke = await api(port, "/api/preseason-bounty", { token: t3Tok });
   check("revoked bounty leaves the tracker", afterRevoke.data.me.claimedIds.includes("u-mystery") === false);
 
+  const bonus = await api(port, "/api/admin/preseason-bounty/bonus", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: t3.data.user.id, points: 4, reason: "Hosted a social" },
+  });
+  check("owner can award bonus points outside bounties", bonus.status === 200 && bonus.data.award?.points === 4);
+  const afterBonus = await api(port, "/api/preseason-bounty", { token: t3Tok });
+  check("tracker adds extra bonus on top of bounty points", afterBonus.data.me.bonusPoints === 4 && afterBonus.data.me.points === afterBonus.data.me.bountyPoints + 4);
+
+  const placeT3 = await api(port, "/api/admin/place-player", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: t3.data.user.id, leagueId: 1 },
+  });
+  check("placed bonus player in a league", placeT3.status === 200);
+  const table = await api(port, "/api/leagues/1");
+  const row = (table.data.standings || []).find((r) => r.playerId === t3.data.user.id);
+  check("league table includes extra bonus points", row?.bonusPoints === 4 && row?.points === 4);
+
+  const divAdmin = await register(port, { name: "DivAdmin", avg: 45 });
+  const makeDiv = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: divAdmin.data.user.id, leagueId: 1 },
+  });
+  check("division admin assigned", makeDiv.status === 200);
+  const divTok = (await api(port, "/api/auth/login", { method: "POST", body: { email: "divadmin@test.com", password: "pass1234" } })).data.token;
+  const divBonus = await api(port, "/api/admin/preseason-bounty/bonus", {
+    method: "POST",
+    token: divTok,
+    body: { userId: t3.data.user.id, points: 1 },
+  });
+  check("division admin cannot award extra bonus", divBonus.status === 403);
+
+  const head = await register(port, { name: "HeadAdmin", avg: 50 });
+  const makeHead = await api(port, "/api/admin/assign-head-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: head.data.user.id },
+  });
+  check("head admin assigned", makeHead.status === 200);
+  const headTok = (await api(port, "/api/auth/login", { method: "POST", body: { email: "headadmin@test.com", password: "pass1234" } })).data.token;
+  const headBonus = await api(port, "/api/admin/preseason-bounty/bonus", {
+    method: "POST",
+    token: headTok,
+    body: { userId: t1.data.user.id, points: 2, reason: "Goodwill" },
+  });
+  check("head admin can award extra bonus", headBonus.status === 200 && headBonus.data.award?.points === 2);
+
+  const revokeBonus = await api(port, "/api/admin/preseason-bounty/bonus-revoke", {
+    method: "POST",
+    token: ownerTok,
+    body: { awardId: bonus.data.award.id },
+  });
+  check("owner can revoke extra bonus", revokeBonus.status === 200);
+  const afterBonusRevoke = await api(port, "/api/preseason-bounty", { token: t3Tok });
+  check("revoked extra bonus leaves the tracker", afterBonusRevoke.data.me.bonusPoints === 0);
+
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   const bountyFn = appJs.slice(appJs.indexOf("async function pageBounty"), appJs.indexOf("async function pageRules"));
   const adminFn = appJs.slice(appJs.indexOf("async function pageAdmin"), appJs.indexOf("function matchRoute"));
@@ -233,7 +314,7 @@ try {
   check("bounty page renderer is wired", appJs.includes("pageBounty") && appJs.includes('q === "/preseason-bounty"'));
   check("players can join from the bounty page", bountyFn.includes("BOUNTYJOIN") && bountyFn.includes("JOIN THE HUNT"));
   check("public bounty page has no award desk", !bountyFn.includes("BOUNTYAWARD") && !bountyFn.includes("BOUNTYREVOKE") && !bountyFn.includes("BOUNTYMYSTERY"));
-  check("award desk lives on Admin", adminFn.includes("bountyAdminDesk(bounty)") && appJs.includes('data-form="BOUNTYAWARD"'));
+  check("award desk lives on Admin", adminFn.includes("bountyAdminDesk(bounty)") && appJs.includes('data-form="BOUNTYAWARD"') && appJs.includes('data-form="BONUSAWARD"'));
   check("page states season starts September 14th", bountyFn.includes("September 14th"));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
