@@ -4,6 +4,22 @@ import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
 const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
+const LEAGUE_MESSENGER_INVITES = [
+  {
+    id: "europe",
+    label: "TSH Europe Messenger",
+    shortLabel: "Europe Messenger",
+    href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
+    blurb: "Open the Europe group and request to be added.",
+  },
+  {
+    id: "americas",
+    label: "TSH Americas Messenger",
+    shortLabel: "Americas Messenger",
+    href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
+    blurb: "Open the Americas group and request to be added.",
+  },
+];
 const $ = (sel, el = document) => el.querySelector(sel);
 
 const state = {
@@ -27,6 +43,7 @@ const state = {
     dartcounterName: "",
     nickname: "",
     avg: "",
+    clicked: {},
   },
   reset: { email: "", sent: false },
 };
@@ -105,6 +122,31 @@ function canOverride(u = state.user) {
 }
 function isStaff(u = state.user) {
   return hasRole(u, "owner") || hasRole(u, "head_admin") || hasRole(u, "admin");
+}
+function afterAuthPath(user = state.user) {
+  if (user?.communityJoinPending) return "/sign-up";
+  return isStaff(user) ? "/admin" : "/dashboard";
+}
+function messengerInvites(league) {
+  const list = Array.isArray(league?.messengerInvites) ? league.messengerInvites : [];
+  if (!list.length) return LEAGUE_MESSENGER_INVITES;
+  return list.map((item, i) => {
+    const fallback = LEAGUE_MESSENGER_INVITES[i] || LEAGUE_MESSENGER_INVITES[0];
+    return {
+      id: item.id || fallback.id,
+      label: item.label || fallback.label,
+      shortLabel: item.shortLabel || item.label || fallback.shortLabel,
+      href: item.href || fallback.href,
+      blurb: item.blurb || fallback.blurb,
+    };
+  });
+}
+function communityNavLinks(league) {
+  const discord = (league && league.discordInvite) || LEAGUE_DISCORD_INVITE;
+  const tone = "block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary";
+  return `${messengerInvites(league)
+    .map((m) => `<a href="${esc(m.href)}" class="${tone}" target="_blank" rel="noopener noreferrer" data-external="1">${esc(m.shortLabel)}</a>`)
+    .join("")}<a href="${esc(discord)}" class="${tone}" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>`;
 }
 function userLeagueIds(u) {
   if (Array.isArray(u?.leagueIds)) {
@@ -764,7 +806,7 @@ function layout(inner, { arena = false, home = false } = {}) {
               return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${tone}"${extra}>${label}</a>`;
             })
             .join("")}
-          <a href="${esc(LEAGUE_DISCORD_INVITE)}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>
+          ${communityNavLinks()}
         </nav>
         <div class="mt-auto p-4 text-xs text-muted">${
           state.user
@@ -830,6 +872,27 @@ function externalLink(href, label, className = "discord-link") {
   const url = discordHref(href) || String(href || "").trim();
   if (!url) return `<span class="text-muted">Not listed yet</span>`;
   return `<a class="${className}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-external="1">${label}</a>`;
+}
+function messengerCards(league) {
+  return messengerInvites(league)
+    .map(
+      (m) =>
+        `<a href="${esc(m.href)}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6" target="_blank" rel="noopener noreferrer" data-external="1">
+            <div class="messenger-mark" aria-hidden="true">M</div>
+            <div class="min-w-0">
+              <h3 class="text-xl font-bold">${esc(m.label)}</h3>
+              <p class="mt-2 text-sm text-muted">${esc(m.blurb)}</p>
+              <p class="mt-2 text-sm font-bold gold">Open Messenger →</p>
+            </div>
+          </a>`
+    )
+    .join("");
+}
+function communityInviteButtons(league, discordLabel = "Join Discord Server") {
+  const discord = (league && league.discordInvite) || LEAGUE_DISCORD_INVITE;
+  return `<div class="mt-4 flex flex-col items-start gap-2">${messengerInvites(league)
+    .map((m) => externalLink(m.href, `Join ${m.shortLabel}`))
+    .join("")}${externalLink(discord, discordLabel)}</div>`;
 }
 function discordDisplay(url) {
   const href = discordHref(url);
@@ -1087,6 +1150,7 @@ async function pageHome() {
                 `<a href="/regionals/${r.slug}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6">${crest(96, regionalCrest(r.slug))}<div class="min-w-0"><h3 class="text-xl font-bold">${esc(r.fullTitle)}</h3><p class="mt-2 text-sm text-muted">${esc(r.region)} — climb the divisions weekly.</p></div></a>`
             )
             .join("")}
+          ${messengerCards(content.league)}
           <a href="${esc(content.league?.discordInvite || LEAGUE_DISCORD_INVITE)}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6 md:col-span-2" target="_blank" rel="noopener noreferrer" data-external="1">
             <div class="discord-mark" aria-hidden="true">D</div>
             <div class="min-w-0">
@@ -1117,7 +1181,7 @@ async function pageHome() {
           <img src="${CRESTS.main}" alt="TSH" class="mb-3" style="width:88px;height:88px;object-fit:contain">
           <h3 class="text-lg font-bold">The Social Hub Darts League</h3>
           <a class="mt-3 inline-block break-all text-sm gold" href="mailto:${esc(content.league?.email || "thesocialhubinformation@gmail.com")}">${esc(content.league?.email || "thesocialhubinformation@gmail.com")}</a>
-          <div class="mt-4">${externalLink(content.league?.discordInvite || LEAGUE_DISCORD_INVITE, "Join Discord Server")}</div>
+          ${communityInviteButtons(content.league)}
         </div>
         <div>
           <h3 class="text-lg font-bold">Join the league</h3>
@@ -1356,7 +1420,48 @@ function pageForgotPassword() {
     `<p class="mt-4 text-sm text-muted"><a class="gold" href="/sign-in">Back to sign in</a></p>`
   );
 }
+function pageJoinCommunity() {
+  const clicked = state.signup.clicked || {};
+  const groups = messengerInvites();
+  const ready = groups.every((m) => clicked[m.id]);
+  const cards = groups
+    .map((m) => {
+      const on = Boolean(clicked[m.id]);
+      return `<a class="join-link-card${on ? " clicked" : ""}" href="${esc(m.href)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="${esc(m.id)}">
+        <div class="messenger-mark" aria-hidden="true">M</div>
+        <div class="min-w-0">
+          <h3>${esc(m.label)}</h3>
+          <p>${esc(m.blurb)}</p>
+          <p class="join-link-status">${on ? "Opened — request to be added in Messenger" : "Click to open and request to be added"}</p>
+        </div>
+      </a>`;
+    })
+    .join("");
+  return layout(
+    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
+      <p class="page-kicker text-xs font-semibold gold">AFTER SIGN UP</p>
+      <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Click both Messenger group links and request to be added. Discord is below if you also want the server.</p>
+      ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
+      <div class="mt-6 space-y-3">${cards}</div>
+      <a class="join-link-card join-link-discord mt-3${clicked.discord ? " clicked" : ""}" href="${esc(LEAGUE_DISCORD_INVITE)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="discord">
+        <div class="discord-mark" aria-hidden="true">D</div>
+        <div class="min-w-0">
+          <h3>League Discord</h3>
+          <p>Optional. Open the server and request to join if you use Discord.</p>
+          <p class="join-link-status">${clicked.discord ? "Opened" : "Open Discord"}</p>
+        </div>
+      </a>
+      <form class="mt-6" data-form="JOINCOMMUNITY">
+        <button class="btn-gold w-full py-3"${ready ? "" : " disabled"}>CONTINUE TO PLAYER HUB</button>
+        ${ready ? "" : `<p class="mt-3 text-center text-xs text-muted">Open both Messenger links and request to be added, then continue.</p>`}
+      </form>
+    `)}</div>`,
+    { arena: true }
+  );
+}
 function pageSignUp() {
+  if (state.user?.communityJoinPending) return pageJoinCommunity();
   if (state.user) {
     return layout(
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
@@ -1840,6 +1945,10 @@ async function contactBlock() {
         <p class="mt-3 text-muted">League inbox for general questions. Staff cards below for a named person.</p>
         <div class="mt-6 space-y-4">
           <div>
+            <div class="text-[11px] font-bold tracking-widest gold">MESSENGER GROUPS</div>
+            <div class="mt-2 flex flex-col items-start gap-2">${messengerInvites(d).map((m) => externalLink(m.href, `Join ${m.shortLabel}`)).join("")}</div>
+          </div>
+          <div>
             <div class="text-[11px] font-bold tracking-widest gold">DISCORD SERVER</div>
             <div class="mt-2">${externalLink(discordInvite, "Join Discord Server")}</div>
           </div>
@@ -2296,6 +2405,10 @@ async function render() {
       go("/sign-in");
       return;
     }
+    if (state.user?.communityJoinPending && route[0] !== "signup") {
+      go("/sign-up");
+      return;
+    }
     if (route[0] === "admin" && !isStaff()) {
       go("/dashboard");
       return;
@@ -2387,6 +2500,19 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     state.selectedResultId = Number(pick.dataset.id);
     render();
+    return;
+  }
+  const joinLink = e.target.closest("[data-act=join-link]");
+  if (joinLink) {
+    e.preventDefault();
+    const href = joinLink.getAttribute("href");
+    const id = joinLink.dataset.link;
+    if (href) window.open(href, "_blank", "noopener,noreferrer");
+    if (id) {
+      state.signup.clicked = { ...(state.signup.clicked || {}), [id]: true };
+      state.error = "";
+      render();
+    }
     return;
   }
   const a = e.target.closest("a");
@@ -2517,7 +2643,7 @@ document.addEventListener("submit", async (e) => {
       storeToken(d.token, remember || d.remember === true);
       state.user = d.user;
       syncTimezone();
-      go(isStaff(d.user) ? "/admin" : "/dashboard");
+      go(afterAuthPath(d.user));
     } else if (kind === "SEND RESET CODE") {
       const email = String(fd.email || "").trim();
       await api("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
@@ -2539,7 +2665,7 @@ document.addEventListener("submit", async (e) => {
       state.user = d.user;
       state.reset = { email: "", sent: false };
       syncTimezone();
-      const dest = isStaff(d.user) ? "/admin" : "/dashboard";
+      const dest = afterAuthPath(d.user);
       history.pushState({}, "", dest);
       state.path = dest;
       state.menu = false;
@@ -2574,9 +2700,21 @@ document.addEventListener("submit", async (e) => {
         });
         storeToken(d.token, true);
         state.user = d.user;
-        state.signup = { step: 1, name: "", email: "", password: "", regional: "", dartcounterName: "", nickname: "", avg: "" };
-        go("/dashboard");
-      } else {
+        state.signup = { step: 1, name: "", email: "", password: "", regional: "", dartcounterName: "", nickname: "", avg: "", clicked: {} };
+        go(afterAuthPath(d.user));
+      }
+    } else if (kind === "JOINCOMMUNITY") {
+      const clicked = state.signup.clicked || {};
+      const missing = messengerInvites().filter((m) => !clicked[m.id]);
+      if (missing.length) {
+        state.error = "Click both Messenger links and request to be added, then continue.";
+        render();
+        return;
+      }
+      const d = await api("/api/account/community-join", { method: "POST", body: JSON.stringify({ requested: true }) });
+      if (d.user) state.user = d.user;
+      state.signup.clicked = {};
+      go("/dashboard"); else {
         state.signup.step = step + 1;
         state.error = "";
         render();
@@ -2585,7 +2723,7 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ ...fd, timezone: BROWSER_TZ }) });
       storeToken(d.token, true);
       state.user = d.user;
-      go("/apply");
+      go(afterAuthPath(d.user));
     } else if (kind === "APPLY" || kind === "SUBMIT APPLICATION" || kind === "SIGN UP TO APPLY") {
       if (!state.user) return go("/sign-up");
       await api("/api/apply", { method: "POST", body: JSON.stringify(fd) });

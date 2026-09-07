@@ -5,6 +5,22 @@
     "email": "thesocialhubinformation@gmail.com",
     "supportEmail": "Support@tshdartsleague.com",
     "discordInvite": "https://discord.gg/PjXMqRQCfS",
+    "messengerInvites": [
+      {
+        "id": "europe",
+        "label": "TSH Europe Messenger",
+        "shortLabel": "Europe Messenger",
+        "href": "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
+        "blurb": "Open the Europe group and request to be added."
+      },
+      {
+        "id": "americas",
+        "label": "TSH Americas Messenger",
+        "shortLabel": "Americas Messenger",
+        "href": "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
+        "blurb": "Open the Americas group and request to be added."
+      }
+    ],
     "scoringApp": "DartCounter"
   },
   "content": {

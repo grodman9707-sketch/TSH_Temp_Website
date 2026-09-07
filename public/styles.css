@@ -149,6 +149,53 @@ video, canvas, svg {
   font-size: 1.5rem;
   font-weight: 800;
 }
+.messenger-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex-shrink: 0;
+  border-radius: 0.75rem;
+  background: #0084ff;
+  color: #fff;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+.join-link-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-align: left;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(16, 21, 34, 0.8);
+  min-height: 2.75rem;
+}
+.join-link-card:hover {
+  border-color: rgba(232, 180, 37, 0.45);
+}
+.join-link-card.clicked {
+  border-color: rgba(232, 180, 37, 0.7);
+}
+.join-link-card h3 {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+.join-link-card p {
+  margin-top: 0.2rem;
+  font-size: 0.85rem;
+  color: #999;
+}
+.join-link-status {
+  margin-top: 0.35rem !important;
+  font-size: 0.75rem !important;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e8b425 !important;
+}
 .header-auth {
   display: flex;
   align-items: center;
@@ -968,7 +1015,8 @@ input, select, textarea {
     align-items: center;
   }
   .community-card .crest-img,
-  .community-card .discord-mark {
+  .community-card .discord-mark,
+  .community-card .messenger-mark {
     width: 72px;
     height: 72px;
   }
