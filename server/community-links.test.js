@@ -1,6 +1,6 @@
 // Messenger group links sit above Discord, and sign-up ends with a join-request step.
 // Run: `node server/community-links.test.js`
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -60,6 +60,10 @@ child.stderr.on("data", (buf) => {
 });
 
 try {
+  const syntax = spawnSync(process.execPath, ["--check", path.join(root, "public/app.js")], { encoding: "utf8" });
+  check("app.js parses (a syntax error leaves the site as a black page)", syntax.status === 0);
+  if (syntax.status !== 0) console.error(syntax.stderr || syntax.stdout);
+
   await waitHealth(port, child);
 
   const content = await api(port, "/api/content");
@@ -110,6 +114,8 @@ try {
   check("signup last step asks them to request to be added", joinChunk.includes("request to be added") && joinChunk.includes("JOINCOMMUNITY"));
   check("signup last step includes Discord below Messenger", joinChunk.indexOf("League Discord") > joinChunk.indexOf("TSH Europe Messenger"));
   check("continue stays blocked until both Messenger links are opened", joinChunk.includes("Open both Messenger links"));
+  check("signup still advances between form steps", appJs.includes("state.signup.step = step + 1"));
+  check("join-community handler has no leftover else", !/go\("\/dashboard"\);\s*else\s*\{/.test(appJs));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("Messenger mark styles are served", css.includes(".messenger-mark") && css.includes(".join-link-card"));

@@ -190,7 +190,7 @@ try {
   check("sign-in page links to forgot password", appJs.includes('href="/forgot-password"') && appJs.includes("Forgot password?"));
   check("forgot-password route is wired", appJs.includes('q === "/forgot-password"') && appJs.includes("pageForgotPassword"));
   check("reset forms post to the new endpoints", appJs.includes("/api/auth/forgot-password") && appJs.includes("/api/auth/reset-password"));
-  check("cache-bust query is bumped", indexHtml.includes("app.js?v=36") && indexHtml.includes("styles.css?v=36"));
+  check("cache-bust query is bumped", indexHtml.includes("app.js?v=37") && indexHtml.includes("styles.css?v=37"));
 } finally {
   child.kill("SIGTERM");
 }
