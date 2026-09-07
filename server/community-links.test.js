@@ -97,11 +97,11 @@ try {
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   const homeChunk = appJs.slice(appJs.indexOf("Join Our Active Communities"), appJs.indexOf("Frequently Asked Questions"));
-  const eu = homeChunk.indexOf("TSH Europe Messenger");
-  const am = homeChunk.indexOf("TSH Americas Messenger");
+  const messengerCall = homeChunk.indexOf("messengerCards(");
   const discord = homeChunk.indexOf("League Discord");
-  check("home lists both Messenger groups", eu >= 0 && am >= 0 && homeChunk.includes(EUROPE_HREF) && homeChunk.includes(AMERICAS_HREF));
-  check("home Discord card sits below Messenger", discord > eu && discord > am);
+  check("home renders Messenger group cards", messengerCall >= 0);
+  check("home Discord card sits below Messenger", discord > messengerCall);
+  check("app includes both Messenger invite URLs", appJs.includes(EUROPE_HREF) && appJs.includes(AMERICAS_HREF));
 
   const navChunk = appJs.slice(appJs.indexOf("function communityNavLinks"), appJs.indexOf("function userLeagueIds"));
   check("sidebar lists Messenger before Discord", navChunk.includes("shortLabel") && navChunk.includes(">Discord</a>"));
