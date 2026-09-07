@@ -206,12 +206,22 @@ try {
   });
   check("API rejects a second claim of the same bounty", dup.status === 400);
 
+  const mysteryOpenByDate = isMysteryRevealed({ mysteryRevealed: false });
   const mysteryEarly = await api(port, "/api/admin/preseason-bounty/award", {
     method: "POST",
     token: ownerTok,
     body: { userId: t3.data.user.id, bountyId: "u-mystery" },
   });
-  check("API keeps mystery locked before reveal", mysteryEarly.status === 400);
+  if (mysteryOpenByDate) {
+    check("mystery is awardable once the reveal date has arrived", mysteryEarly.status === 200);
+    await api(port, "/api/admin/preseason-bounty/revoke", {
+      method: "POST",
+      token: ownerTok,
+      body: { userId: t3.data.user.id, bountyId: "u-mystery" },
+    });
+  } else {
+    check("API keeps mystery locked before reveal", mysteryEarly.status === 400);
+  }
 
   const reveal = await api(port, "/api/admin/preseason-bounty/mystery", {
     method: "POST",
