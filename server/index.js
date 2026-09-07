@@ -56,17 +56,17 @@ const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
 const LEAGUE_MESSENGER_INVITES = [
   {
     id: "friendlies",
-    label: "General Chat / Friendlies",
-    shortLabel: "Friendlies",
+    label: "TSH Waiting List",
+    shortLabel: "TSH Waiting List",
     href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the general chat for friendlies and casual games.",
+    blurb: "Open the TSH Waiting List.",
   },
   {
     id: "tsh",
-    label: "TSH Messenger Group",
-    shortLabel: "TSH Messenger",
+    label: "TSH General Chat",
+    shortLabel: "TSH General Chat",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Request to be added to the TSH Messenger group.",
+    blurb: "Request to be added to TSH General Chat.",
   },
 ];
 function messengerInvitesNeedUpdate(list) {
