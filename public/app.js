@@ -2729,6 +2729,10 @@ document.addEventListener("submit", async (e) => {
         state.user = d.user;
         state.signup = { step: 1, name: "", email: "", password: "", regional: "", dartcounterName: "", nickname: "", avg: "", clicked: {} };
         go(afterAuthPath(d.user));
+      } else {
+        state.signup.step = step + 1;
+        state.error = "";
+        render();
       }
     } else if (kind === "JOINCOMMUNITY") {
       const clicked = state.signup.clicked || {};
@@ -2741,11 +2745,7 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/account/community-join", { method: "POST", body: JSON.stringify({ requested: true }) });
       if (d.user) state.user = d.user;
       state.signup.clicked = {};
-      go("/dashboard"); else {
-        state.signup.step = step + 1;
-        state.error = "";
-        render();
-      }
+      go("/dashboard");
     } else if (kind === "CREATE ACCOUNT") {
       const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ ...fd, timezone: BROWSER_TZ }) });
       storeToken(d.token, true);
