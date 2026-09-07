@@ -6,17 +6,17 @@ const REMEMBER_KEY = "tsh_remember";
 const LEAGUE_MESSENGER_INVITES = [
   {
     id: "friendlies",
-    label: "General Chat / Friendlies",
-    shortLabel: "Friendlies",
+    label: "TSH Waiting List",
+    shortLabel: "TSH Waiting List",
     href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the general chat for friendlies and casual games.",
+    blurb: "Open the TSH Waiting List.",
   },
   {
     id: "tsh",
-    label: "TSH Messenger Group",
-    shortLabel: "TSH Messenger",
+    label: "TSH General Chat",
+    shortLabel: "TSH General Chat",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Request to be added to the TSH Messenger group.",
+    blurb: "Request to be added to TSH General Chat.",
   },
 ];
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -1000,7 +1000,7 @@ function bountyAdminDesk(d) {
   const bounties = Array.isArray(d.bounties) ? d.bounties : [];
   return panel(
     `<h2 class="text-lg font-bold">PreSeason Bounty</h2>
-        <p class="mt-1 text-sm text-muted">Players submit proof in the TSH Messenger group. After you review it, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
+        <p class="mt-1 text-sm text-muted">Players submit proof in TSH General Chat. After you review it, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
         <p class="mt-2"><a href="/preseason-bounty" class="text-sm font-bold tracking-widest gold">VIEW PLAYER PAGE →</a></p>
         <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="BOUNTYAWARD">
           <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
@@ -1474,8 +1474,8 @@ function pageJoinCommunity() {
             ? "Opened — request to be added"
             : "Click to request to be added"
           : on
-            ? "Opened — general chat / friendlies"
-            : "Click to open for friendlies";
+            ? "Opened — waiting list"
+            : "Click to open the waiting list";
       return `<a class="join-link-card${on ? " clicked" : ""}" href="${esc(m.href)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="${esc(m.id)}">
         <div class="messenger-mark" aria-hidden="true">M</div>
         <div class="min-w-0">
@@ -1490,7 +1490,7 @@ function pageJoinCommunity() {
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
       <p class="page-kicker text-xs font-semibold gold">AFTER SIGN UP</p>
       <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
-      <p class="mt-2 text-sm text-muted">Your account is ready. Open General Chat / Friendlies for casual games, then request to be added to the TSH Messenger group.</p>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Open TSH Waiting List, then request to be added to TSH General Chat.</p>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <div class="mt-6 space-y-3">${cards}</div>
       <form class="mt-6" data-form="JOINCOMMUNITY">
@@ -1989,9 +1989,9 @@ async function pageBounty() {
         <h2 class="text-2xl font-extrabold">How it works</h2>
         <div class="bounty-rules mt-4">${ruleCards}</div>
         <h3 class="mt-8 text-lg font-bold">How to claim</h3>
-        <p class="mt-1 text-sm text-muted">Claims are reviewed in the TSH Messenger group. Staff then award them from Admin so they show on your tracker.</p>
+        <p class="mt-1 text-sm text-muted">Claims are reviewed in TSH General Chat. Staff then award them from Admin so they show on your tracker.</p>
         <div class="bounty-steps mt-4">${howCards}</div>
-        <div class="mt-4">${externalLink(d.claimGroupHref || tshMessengerGroup()?.href, `Open ${d.claimGroupLabel || "TSH Messenger Group"}`)}</div>
+        <div class="mt-4">${externalLink(d.claimGroupHref || tshMessengerGroup()?.href, `Open ${d.claimGroupLabel || "TSH General Chat"}`)}</div>
       </section>
       ${tierSections}
       <section class="bounty-tier mt-10" id="bounty-universal">
@@ -2895,7 +2895,7 @@ document.addEventListener("submit", async (e) => {
       const clicked = state.signup.clicked || {};
       const missing = messengerInvites().filter((m) => !clicked[m.id]);
       if (missing.length) {
-        state.error = "Open General Chat / Friendlies and request to be added to the TSH Messenger group, then continue.";
+        state.error = "Open TSH Waiting List and request to be added to TSH General Chat, then continue.";
         render();
         return;
       }
@@ -3126,7 +3126,7 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "BOUNTYJOIN") {
       const d = await api("/api/preseason-bounty/join", { method: "POST", body: "{}" });
       if (d.user) state.user = d.user;
-      state.notice = "You're in the PreSeason Bounty Hunt. Play, then claim in the TSH Messenger group.";
+      state.notice = "You're in the PreSeason Bounty Hunt. Play, then claim in TSH General Chat.";
       render();
     } else if (kind === "BOUNTYLEAVE") {
       const d = await api("/api/preseason-bounty/leave", { method: "POST", body: "{}" });

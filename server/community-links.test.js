@@ -70,8 +70,8 @@ try {
   check("content ok", content.status === 200 && content.data.ok);
   const invites = content.data.league?.messengerInvites || [];
   check("two Messenger invites on the league", invites.length === 2);
-  check("General Chat / Friendlies URL", invites.some((m) => m.id === "friendlies" && m.href === FRIENDLIES_HREF));
-  check("TSH Messenger Group URL", invites.some((m) => m.id === "tsh" && m.href === TSH_GROUP_HREF));
+  check("TSH Waiting List URL", invites.some((m) => m.id === "friendlies" && m.label === "TSH Waiting List" && m.href === FRIENDLIES_HREF));
+  check("TSH General Chat URL", invites.some((m) => m.id === "tsh" && m.label === "TSH General Chat" && m.href === TSH_GROUP_HREF));
   check("league has no Discord invite", !content.data.league?.discordInvite);
 
   const anonJoin = await api(port, "/api/account/community-join", { method: "POST", body: { requested: true } });
@@ -111,12 +111,12 @@ try {
   check("app has no league Discord invite", !appJs.includes("discord.gg/PjXMqRQCfS"));
 
   const navChunk = appJs.slice(appJs.indexOf("function communityNavLinks"), appJs.indexOf("function userLeagueIds"));
-  check("sidebar lists Friendlies and TSH Messenger", navChunk.includes("shortLabel") && navChunk.includes("Invite a player"));
+  check("sidebar lists Waiting List and General Chat", navChunk.includes("m.shortLabel") && navChunk.includes("Invite a player") && appJs.includes('shortLabel: "TSH Waiting List"') && appJs.includes('shortLabel: "TSH General Chat"'));
   check("sidebar has no Discord server link", !navChunk.includes(">Discord</a>"));
 
   const joinChunk = appJs.slice(appJs.indexOf("function pageJoinCommunity"), appJs.indexOf("function pageInvite"));
   check("signup last step asks them to request to be added", joinChunk.includes("request to be added") && joinChunk.includes("JOINCOMMUNITY"));
-  check("signup last step names both Messenger groups", joinChunk.includes("General Chat / Friendlies") && joinChunk.includes("TSH Messenger group"));
+  check("signup last step names both chats", joinChunk.includes("TSH Waiting List") && joinChunk.includes("TSH General Chat"));
   check("signup last step has no Discord card", !joinChunk.includes("League Discord"));
   check("continue stays blocked until both Messenger links are opened", joinChunk.includes("Open both Facebook Messenger links"));
   check("invite page is wired", appJs.includes("function pageInvite") && appJs.includes('q === "/invite"') && appJs.includes("copy-invite"));

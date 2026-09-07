@@ -61,8 +61,8 @@ try {
   check("league support email is listed", content.league?.supportEmail === "Support@tshdartsleague.com");
   check("league has no Discord invite", !content.league?.discordInvite);
   check("league Messenger invites are listed", Array.isArray(content.league?.messengerInvites) && content.league.messengerInvites.length === 2);
-  check("Friendlies Messenger invite is listed", content.league.messengerInvites.some((m) => m.id === "friendlies" && /m\.me\/j\/vlpYxGLbrtubBKI6/.test(m.href)));
-  check("TSH Messenger Group invite is listed", content.league.messengerInvites.some((m) => m.id === "tsh" && /m\.me\/j\/0cIs92X7ME8Bhrbf/.test(m.href)));
+  check("Waiting List invite is listed", content.league.messengerInvites.some((m) => m.id === "friendlies" && m.label === "TSH Waiting List" && /m\.me\/j\/vlpYxGLbrtubBKI6/.test(m.href)));
+  check("General Chat invite is listed", content.league.messengerInvites.some((m) => m.id === "tsh" && m.label === "TSH General Chat" && /m\.me\/j\/0cIs92X7ME8Bhrbf/.test(m.href)));
   check("league has no formerly field", !("formerly" in (content.league || {})));
   const blob = JSON.stringify(content);
   check("content JSON has no WDL / World Darts League", !BANNED.test(blob));

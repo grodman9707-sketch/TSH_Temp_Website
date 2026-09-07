@@ -1,6 +1,6 @@
 export const SEASON_START = "2026-09-14T00:00:00.000Z";
 export const MYSTERY_REVEAL_AT = "2026-09-07T00:00:00.000Z";
-export const CLAIM_GROUP_LABEL = "TSH Messenger Group";
+export const CLAIM_GROUP_LABEL = "TSH General Chat";
 export const CLAIM_GROUP_HREF = "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c";
 
 export const TIERS = [
@@ -151,7 +151,7 @@ export const RULES = [
 
 export const CLAIM_STEPS = [
   "Play the match against a TSH league player (same tier for average-based bounties).",
-  "Post a screenshot of the match and proof of the bounty in the TSH Messenger group.",
+  "Post a screenshot of the match and proof of the bounty in TSH General Chat.",
   "Message an admin in that group so they can review it.",
   "If asked, have your opponent sign off or verify the claim.",
 ];
