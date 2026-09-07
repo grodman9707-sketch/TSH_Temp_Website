@@ -1632,7 +1632,7 @@ async function pageApply() {
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
         <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
         <h1 class="mt-2 page-title font-extrabold">Already in the league</h1>
-        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Contact an admin if you need a division change.</p>
+        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Use Player Hub if you want a second regional or to ask to drop from a league.</p>
         <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
       `)}</div>`,
       { arena: true }
@@ -1656,7 +1656,70 @@ async function pageApply() {
     { arena: true }
   );
 }
+function leagueChangePanel(u, { compact = false } = {}) {
+  if (!u) return "";
+  const leagues = Array.isArray(u.leagues) && u.leagues.length ? u.leagues : [];
+  const pending = Array.isArray(u.pendingLeagueRequests) ? u.pendingLeagueRequests : [];
+  const pendingJoin = pending.find((r) => r.kind === "join");
+  const pendingDrops = pending.filter((r) => r.kind === "drop");
+  const dropPendingIds = new Set(pendingDrops.map((r) => Number(r.leagueId)));
+  const open = u.openJoinRegional;
+  const dropChoices = leagues.filter((l) => !dropPendingIds.has(Number(l.id)));
+  const list =
+    leagues.length
+      ? `<ul class="mt-3 space-y-1 text-sm">${leagues
+          .map((l) => `<li><b>${esc(l.title)}</b> <span class="text-muted">· ${esc(l.regionalName)}</span></li>`)
+          .join("")}</ul>`
+      : `<p class="mt-3 text-sm text-muted">You are not in a division yet. An admin will place you after you apply.</p>`;
+  const joinBlock = pendingJoin
+    ? `<p class="mt-4 text-sm gold">Second-league request sent for ${esc(pendingJoin.regionalName)}. An admin will place you.</p>
+       <form class="mt-3" data-form="CANCELLEAGUE"><input type="hidden" name="id" value="${pendingJoin.id}"><button class="btn-ghost">CANCEL REQUEST</button></form>`
+    : open
+      ? `<form class="mt-4 space-y-3" data-form="JOINLEAGUE">
+          <input type="hidden" name="regionalId" value="${open.id}">
+          <p class="text-sm text-muted">You can add <b>${esc(open.name)}</b> as a second league. An admin will place you in a division there.</p>
+          <input name="note" maxlength="300" placeholder="Optional note for admins">
+          <button class="btn-gold">JOIN ${esc(open.name).toUpperCase()}</button>
+        </form>`
+      : leagues.length >= 2
+        ? `<p class="mt-4 text-sm text-muted">You already play in both regionals.</p>`
+        : "";
+  const dropBlock = pendingDrops.length
+    ? `<div class="mt-4 space-y-2">${pendingDrops
+        .map(
+          (r) =>
+            `<div class="text-sm"><span class="gold">Drop request sent</span> for ${esc(r.leagueTitle)}. Waiting on an admin.
+             <form class="mt-2" data-form="CANCELLEAGUE"><input type="hidden" name="id" value="${r.id}"><button class="btn-ghost">CANCEL REQUEST</button></form></div>`
+        )
+        .join("")}</div>`
+    : "";
+  const dropForm =
+    dropChoices.length
+      ? `<form class="mt-4 space-y-3" data-form="DROPLEAGUE">
+          <p class="text-sm text-muted">Need to leave a league? Ask an admin to drop you. You stay in the division until they confirm.</p>
+          <select name="leagueId" required>${dropChoices.map((l) => `<option value="${l.id}">${esc(l.title)} · ${esc(l.regionalName)}</option>`).join("")}</select>
+          <input name="note" maxlength="300" placeholder="Optional reason">
+          <button class="btn-ghost">ASK TO DROP</button>
+        </form>`
+      : "";
+  if (!leagues.length && !open && !pendingJoin && !pendingDrops.length) return "";
+  return panel(
+    `<h2 class="text-lg font-bold">${compact ? "Leagues" : "Your leagues"}</h2>
+      <p class="mt-1 text-sm text-muted">Join a second regional if you only play in one, or ask an admin to drop you from a league.</p>
+      ${list}
+      ${joinBlock}
+      ${dropBlock}
+      ${dropForm}`,
+    "mt-6"
+  );
+}
 async function pageDashboard() {
+  try {
+    const me = await api("/api/auth/me");
+    if (me.user) state.user = me.user;
+  } catch {
+    /* keep existing user */
+  }
   const d = await api("/api/my-fixtures");
   const u = state.user;
   const next = d.fixtures.find((f) => f.status === "scheduled");
@@ -1723,6 +1786,8 @@ async function pageDashboard() {
       )}
 
       ${staffContactPanel}
+
+      ${leagueChangePanel(u)}
 
       <div class="mt-10 grid gap-4 md:grid-cols-2">
         ${panel(`<h2 class="text-lg font-bold">Player profile</h2>
@@ -1813,6 +1878,7 @@ async function pagePlayer(id) {
       ${panel(`<div class="flex flex-wrap items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div class="min-w-0"><p class="page-kicker text-xs gold">${esc((d.regionals || []).map((r) => r.fullTitle).join(" · ") || d.regional?.fullTitle || "Unplaced")}</p>
         <h1 class="page-title mt-2 font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
         <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
+      ${Number(state.user?.id) === Number(d.player?.id) ? leagueChangePanel(state.user) : ""}
       <div class="mt-4 space-y-3">${d.fixtures
         .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : "TBD"}</div></div>`))
         .join("")}</div>
@@ -2273,6 +2339,35 @@ async function pageAdmin() {
               .join("")
           : `<p class="mt-3 text-muted">None yet.</p>`
       }`, "mt-6")}
+      ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
+        <p class="mt-1 text-sm text-muted">Players can ask to join a second regional or to drop from a league. Place join requests with the form below. Owners and Head Admins can drop a player from the requested league here.</p>
+        ${
+          (d.leagueRequests || []).length
+            ? `<div class="mt-3 space-y-3">${d.leagueRequests
+                .map((r) => {
+                  const join = r.kind === "join";
+                  return `<div class="border-b border-white/10 py-3 text-sm">
+                    <div class="font-semibold">${esc(r.playerName)} · ${join ? `join ${esc(r.regionalName)}` : `drop ${esc(r.leagueTitle)}`}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}</div>
+                    ${r.note ? `<p class="mt-1 text-muted">${esc(r.note)}</p>` : ""}
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      ${
+                        join
+                          ? `<p class="text-xs text-muted">Place them in ${esc(r.regionalName)} with Place a player. This row clears when they are placed.</p>`
+                          : d.canOverride
+                            ? `<form data-form="LEAGUERESOLVE"><input type="hidden" name="id" value="${r.id}"><input type="hidden" name="action" value="done"><button class="btn-gold">DROP FROM LEAGUE</button></form>`
+                            : `<p class="text-xs text-muted">An owner or head admin can drop them from this league.</p>`
+                      }
+                      ${
+                        d.canOverride
+                          ? `<form data-form="LEAGUERESOLVE"><input type="hidden" name="id" value="${r.id}"><input type="hidden" name="action" value="dismiss"><button class="btn-ghost">DISMISS</button></form>`
+                          : ""
+                      }
+                    </div>
+                  </div>`;
+                })
+                .join("")}</div>`
+            : `<p class="mt-3 text-muted">None yet.</p>`
+        }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <p class="mt-1 text-sm text-muted">Players who chose Both can be in one Europe league and one Americas league. Placing them in a second regional does not remove the first.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
@@ -2916,6 +3011,26 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/account/profile", { method: "POST", body: JSON.stringify(fd) });
       state.user = d.user;
       state.notice = "Profile saved.";
+      render();
+    } else if (kind === "JOINLEAGUE") {
+      const d = await api("/api/account/league-request", { method: "POST", body: JSON.stringify({ kind: "join", regionalId: fd.regionalId, note: fd.note }) });
+      state.user = d.user;
+      state.notice = "Request sent. An admin will place you in the second league.";
+      render();
+    } else if (kind === "DROPLEAGUE") {
+      if (!window.confirm("Ask an admin to drop you from this league? You stay in it until they confirm.")) return;
+      const d = await api("/api/account/league-request", { method: "POST", body: JSON.stringify({ kind: "drop", leagueId: fd.leagueId, note: fd.note }) });
+      state.user = d.user;
+      state.notice = "Drop request sent. An admin will review it.";
+      render();
+    } else if (kind === "CANCELLEAGUE") {
+      const d = await api("/api/account/league-request/cancel", { method: "POST", body: JSON.stringify({ id: fd.id }) });
+      state.user = d.user;
+      state.notice = "Request cancelled.";
+      render();
+    } else if (kind === "LEAGUERESOLVE") {
+      await api("/api/admin/league-requests/resolve", { method: "POST", body: JSON.stringify({ id: fd.id, action: fd.action }) });
+      state.notice = fd.action === "done" ? "Player dropped from that league." : "Request dismissed.";
       render();
     } else if (kind === "STAFFPROFILE") {
       const d = await api("/api/account/staff-profile", {
