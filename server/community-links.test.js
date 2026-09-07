@@ -111,7 +111,7 @@ try {
   check("app has no league Discord invite", !appJs.includes("discord.gg/PjXMqRQCfS"));
 
   const navChunk = appJs.slice(appJs.indexOf("function communityNavLinks"), appJs.indexOf("function userLeagueIds"));
-  check("sidebar lists Waiting List and General Chat", navChunk.includes("TSH Waiting List") && navChunk.includes("TSH General Chat") && navChunk.includes("Invite a player"));
+  check("sidebar lists Waiting List and General Chat", navChunk.includes("m.shortLabel") && navChunk.includes("Invite a player") && appJs.includes('shortLabel: "TSH Waiting List"') && appJs.includes('shortLabel: "TSH General Chat"'));
   check("sidebar has no Discord server link", !navChunk.includes(">Discord</a>"));
 
   const joinChunk = appJs.slice(appJs.indexOf("function pageJoinCommunity"), appJs.indexOf("function pageInvite"));
