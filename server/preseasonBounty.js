@@ -208,6 +208,10 @@ export function ensureBountyState(db) {
     db.bountyClaims = [];
     changed = true;
   }
+  if (!Array.isArray(db.bonusAwards)) {
+    db.bonusAwards = [];
+    changed = true;
+  }
   if (!db.preseasonBounty || typeof db.preseasonBounty !== "object") {
     db.preseasonBounty = defaultBountySettings();
     changed = true;
@@ -288,6 +292,20 @@ export function pointsForClaims(ids) {
   return total;
 }
 
+export function bonusAwardsForUser(db, userId) {
+  return (db.bonusAwards || []).filter((a) => Number(a.userId) === Number(userId));
+}
+
+export function extraBonusPoints(db, userId) {
+  return bonusAwardsForUser(db, userId).reduce((sum, a) => sum + (Number(a.points) || 0), 0);
+}
+
+function parseWholePoints(value) {
+  const n = Number(String(value ?? "").trim());
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return null;
+  return n;
+}
+
 export function maxPoints() {
   return BOUNTIES.reduce((sum, b) => sum + b.points, 0);
 }
@@ -304,6 +322,7 @@ export function playerSummary(db, u, { now } = {}) {
   const settings = db.preseasonBounty || defaultBountySettings();
   const mysteryRevealed = isMysteryRevealed(settings, now);
   const ids = claimedIds(db, u.id);
+  const extra = extraBonusPoints(db, u.id);
   const tier = tierForAvg(u.avg);
   const tierClaimed = ids.filter((id) => bountyById(id)?.kind === "tier").length;
   const universalClaimed = ids.filter((id) => bountyById(id)?.kind === "universal").length;
@@ -316,20 +335,22 @@ export function playerSummary(db, u, { now } = {}) {
     tierId: tier.id,
     tierName: tier.name,
     avgLabel: tier.avgLabel,
-    joined: Boolean(u.bountyHunt) || ids.length > 0,
+    joined: Boolean(u.bountyHunt) || ids.length > 0 || extra > 0,
     claimedIds: ids,
     claimedCount: ids.length,
     tierClaimed,
     tierTotal: BOUNTIES.filter((b) => b.kind === "tier" && b.tierId === tier.id).length,
     universalClaimed,
     universalTotal: BOUNTIES.filter((b) => b.kind === "universal").length,
-    points: pointsForClaims(ids),
+    bountyPoints: pointsForClaims(ids),
+    bonusPoints: extra,
+    points: pointsForClaims(ids) + extra,
     maxPoints: maxPointsForTier(tier.id),
     mysteryRevealed,
   };
 }
 
-export function publicHunt(db, { user = null, now = new Date(), canAward = false, canEditMystery = false } = {}) {
+export function publicHunt(db, { user = null, now = new Date(), canAward = false, canEditMystery = false, canAwardBonus = false } = {}) {
   ensureBountyState(db);
   const settings = db.preseasonBounty;
   const mysteryRevealed = isMysteryRevealed(settings, now);
@@ -360,6 +381,7 @@ export function publicHunt(db, { user = null, now = new Date(), canAward = false
     hunters,
     me: user ? playerSummary(db, user, { now }) : null,
     canAward,
+    canAwardBonus,
     canEditMystery,
   };
 
@@ -377,6 +399,8 @@ export function publicHunt(db, { user = null, now = new Date(), canAward = false
           tierName: s.tierName,
           joined: s.joined,
           claimedIds: s.claimedIds,
+          bountyPoints: s.bountyPoints,
+          bonusPoints: s.bonusPoints,
           points: s.points,
         };
       })
@@ -393,6 +417,22 @@ export function publicHunt(db, { user = null, now = new Date(), canAward = false
           bountyName: b?.name || c.bountyId,
           points: b?.points || 0,
           awardedAt: c.awardedAt,
+        };
+      })
+      .sort((a, b) => String(b.awardedAt || "").localeCompare(String(a.awardedAt || "")));
+  }
+
+  if (canAwardBonus) {
+    payload.bonusAwards = (db.bonusAwards || [])
+      .map((a) => {
+        const u = (db.users || []).find((x) => x.id === a.userId);
+        return {
+          id: a.id,
+          userId: a.userId,
+          points: Number(a.points) || 0,
+          reason: a.reason || "",
+          playerName: u ? hunterName(u) : "Player",
+          awardedAt: a.awardedAt,
         };
       })
       .sort((a, b) => String(b.awardedAt || "").localeCompare(String(a.awardedAt || "")));
@@ -467,6 +507,37 @@ export function revokeBounty(db, { userId, bountyId }) {
     (c) => !(Number(c.userId) === Number(userId) && c.bountyId === String(bountyId || ""))
   );
   if (db.bountyClaims.length === before) return { ok: false, error: "Claim not found", status: 400 };
+  return { ok: true };
+}
+
+export function awardBonusPoints(db, { staff, userId, points, reason, now = new Date() }) {
+  if (!staff) return { ok: false, error: "Login required", status: 401 };
+  ensureBountyState(db);
+  const n = parseWholePoints(points);
+  if (n == null || n > 50) {
+    return { ok: false, error: "Enter a whole number of bonus points from 1 to 50", status: 400 };
+  }
+  const target = (db.users || []).find((u) => u.id === Number(userId));
+  if (!target) return { ok: false, error: "Player not found", status: 400 };
+  const award = {
+    id: Math.max(0, ...(db.bonusAwards || []).map((a) => Number(a.id) || 0)) + 1,
+    userId: target.id,
+    points: n,
+    reason: String(reason || "").trim().slice(0, 200),
+    awardedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
+    awardedById: staff.id,
+  };
+  db.bonusAwards.push(award);
+  target.bountyHunt = true;
+  return { ok: true, award };
+}
+
+export function revokeBonusAward(db, { awardId }) {
+  ensureBountyState(db);
+  const id = Number(awardId);
+  const before = db.bonusAwards.length;
+  db.bonusAwards = db.bonusAwards.filter((a) => Number(a.id) !== id);
+  if (db.bonusAwards.length === before) return { ok: false, error: "Bonus award not found", status: 400 };
   return { ok: true };
 }
 
