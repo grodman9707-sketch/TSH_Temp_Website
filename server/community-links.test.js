@@ -1,4 +1,4 @@
-// Messenger group links sit above Discord, and sign-up ends with a join-request step.
+// Facebook Messenger groups, no league Discord, plus a shareable /invite link.
 // Run: `node server/community-links.test.js`
 import { spawn, spawnSync } from "child_process";
 import fs from "fs";
@@ -7,8 +7,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const EUROPE_HREF = "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c";
-const AMERICAS_HREF = "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c";
+const FRIENDLIES_HREF = "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c";
+const TSH_GROUP_HREF = "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c";
 
 let failures = 0;
 function check(name, cond) {
@@ -70,8 +70,9 @@ try {
   check("content ok", content.status === 200 && content.data.ok);
   const invites = content.data.league?.messengerInvites || [];
   check("two Messenger invites on the league", invites.length === 2);
-  check("Europe Messenger URL", invites.some((m) => m.id === "europe" && m.href === EUROPE_HREF));
-  check("Americas Messenger URL", invites.some((m) => m.id === "americas" && m.href === AMERICAS_HREF));
+  check("General Chat / Friendlies URL", invites.some((m) => m.id === "friendlies" && m.href === FRIENDLIES_HREF));
+  check("TSH Messenger Group URL", invites.some((m) => m.id === "tsh" && m.href === TSH_GROUP_HREF));
+  check("league has no Discord invite", !content.data.league?.discordInvite);
 
   const anonJoin = await api(port, "/api/account/community-join", { method: "POST", body: { requested: true } });
   check("community join requires login", anonJoin.status === 401);
@@ -102,23 +103,29 @@ try {
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   const homeChunk = appJs.slice(appJs.indexOf("Join Our Active Communities"), appJs.indexOf("Frequently Asked Questions"));
   const messengerCall = homeChunk.indexOf("messengerCards(");
-  const discord = homeChunk.indexOf("League Discord");
+  const inviteCard = homeChunk.indexOf("inviteShareCard(");
   check("home renders Messenger group cards", messengerCall >= 0);
-  check("home Discord card sits below Messenger", discord > messengerCall);
-  check("app includes both Messenger invite URLs", appJs.includes(EUROPE_HREF) && appJs.includes(AMERICAS_HREF));
+  check("home invite card sits with the community cards", inviteCard > messengerCall);
+  check("home has no Discord community card", !homeChunk.includes("League Discord") && !homeChunk.includes("Open Discord"));
+  check("app includes both Messenger invite URLs", appJs.includes(FRIENDLIES_HREF) && appJs.includes(TSH_GROUP_HREF));
+  check("app has no league Discord invite", !appJs.includes("discord.gg/PjXMqRQCfS"));
 
   const navChunk = appJs.slice(appJs.indexOf("function communityNavLinks"), appJs.indexOf("function userLeagueIds"));
-  check("sidebar lists Messenger before Discord", navChunk.includes("shortLabel") && navChunk.includes(">Discord</a>"));
+  check("sidebar lists Friendlies and TSH Messenger", navChunk.includes("shortLabel") && navChunk.includes("Invite a player"));
+  check("sidebar has no Discord server link", !navChunk.includes(">Discord</a>"));
 
-  const joinChunk = appJs.slice(appJs.indexOf("function pageJoinCommunity"), appJs.indexOf("function pageSignUp"));
+  const joinChunk = appJs.slice(appJs.indexOf("function pageJoinCommunity"), appJs.indexOf("function pageInvite"));
   check("signup last step asks them to request to be added", joinChunk.includes("request to be added") && joinChunk.includes("JOINCOMMUNITY"));
-  check("signup last step includes Discord below Messenger", joinChunk.indexOf("League Discord") > joinChunk.indexOf("TSH Europe Messenger"));
-  check("continue stays blocked until both Messenger links are opened", joinChunk.includes("Open both Messenger links"));
+  check("signup last step names both Messenger groups", joinChunk.includes("General Chat / Friendlies") && joinChunk.includes("TSH Messenger group"));
+  check("signup last step has no Discord card", !joinChunk.includes("League Discord"));
+  check("continue stays blocked until both Messenger links are opened", joinChunk.includes("Open both Facebook Messenger links"));
+  check("invite page is wired", appJs.includes("function pageInvite") && appJs.includes('q === "/invite"') && appJs.includes("copy-invite"));
   check("signup still advances between form steps", appJs.includes("state.signup.step = step + 1"));
   check("join-community handler has no leftover else", !/go\("\/dashboard"\);\s*else\s*\{/.test(appJs));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("Messenger mark styles are served", css.includes(".messenger-mark") && css.includes(".join-link-card"));
+  check("invite copy row styles are served", css.includes(".invite-row") && css.includes(".invite-url"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

@@ -64,7 +64,7 @@ try {
   check("public staff list ok", listed.status === 200 && listed.data.ok);
   check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
   check("support email on staff list", listed.data.supportEmail === "Support@tshdartsleague.com");
-  check("league Discord invite on staff list", listed.data.discordInvite === "https://discord.gg/PjXMqRQCfS");
+  check("staff list has no league Discord invite", !listed.data.discordInvite);
   check("Messenger invites on staff list", Array.isArray(listed.data.messengerInvites) && listed.data.messengerInvites.length === 2);
   const founderCard = (listed.data.profiles || []).find((p) => p.userId === 1);
   check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
@@ -295,11 +295,11 @@ try {
   check("contact page uses Role, not Status", appJs.includes(">ROLE<") && !appJs.includes(">STATUS<"));
   check("contact page lists support email", appJs.includes("Support@tshdartsleague.com"));
   check("contact page uses official Admin Team heading", appJs.includes("admin-team-title") && appJs.includes("Admin Team"));
-  check("contact page highlights Discord First callout", appJs.includes("discord-first") && appJs.includes("Discord First! E-mail if that Fails!"));
-  check("Discord First callout is a server link", appJs.includes("discord-first") && appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes('data-external="1"'));
+  check("contact page highlights Messenger First callout", appJs.includes("discord-first") && appJs.includes("Messenger First! E-mail if that Fails!"));
+  check("Messenger First callout is the TSH group link", appJs.includes("discord-first") && appJs.includes("tshMessengerGroup") && appJs.includes('data-external="1"'));
   check("admin Discord shows the profile URL, not Open Discord", appJs.includes("function discordDisplay") && appJs.includes("discord-profile-link") && appJs.includes("discordLinkLabel") && !appJs.includes("Players tap Open Discord"));
   check("header shows Sign In next to Sign Up on all devices", appJs.includes('class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>') && !appJs.includes("hidden sm:inline-flex"));
-  check("sidebar includes the league Discord server", appJs.includes("discord.gg/PjXMqRQCfS") && appJs.includes(">Discord</a>"));
+  check("sidebar has no league Discord server", !appJs.includes("discord.gg/PjXMqRQCfS") && !appJs.includes(">Discord</a>"));
 } finally {
   child.kill("SIGTERM");
 }

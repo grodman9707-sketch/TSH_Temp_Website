@@ -196,6 +196,17 @@ video, canvas, svg {
   text-transform: uppercase;
   color: #e8b425 !important;
 }
+.invite-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+.invite-url {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 0.85rem !important;
+}
 .header-auth {
   display: flex;
   align-items: center;

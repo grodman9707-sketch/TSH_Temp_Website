@@ -1,7 +1,7 @@
 export const SEASON_START = "2026-09-14T00:00:00.000Z";
 export const MYSTERY_REVEAL_AT = "2026-09-07T00:00:00.000Z";
-export const DISCORD_CLAIM_CHANNEL = "#Claim_PreSeason_Bounty";
-export const DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
+export const CLAIM_GROUP_LABEL = "TSH Messenger Group";
+export const CLAIM_GROUP_HREF = "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c";
 
 export const TIERS = [
   { id: "t1", name: "Tier 1", avgLabel: "55+ Avg", minAvg: 55, maxAvg: Infinity, blurb: "Highest averages. Same-tier matches only for these bounties." },
@@ -151,8 +151,8 @@ export const RULES = [
 
 export const CLAIM_STEPS = [
   "Play the match against a TSH league player (same tier for average-based bounties).",
-  `Post a screenshot of the match and proof of the bounty in Discord ${DISCORD_CLAIM_CHANNEL}.`,
-  "Open a ticket so an admin can review it.",
+  "Post a screenshot of the match and proof of the bounty in the TSH Messenger group.",
+  "Message an admin in that group so they can review it.",
   "If asked, have your opponent sign off or verify the claim.",
 ];
 
@@ -371,8 +371,8 @@ export function publicHunt(db, { user = null, now = new Date(), canAward = false
     seasonStartLabel: calendarDayLabel(SEASON_START),
     mysteryRevealAt: MYSTERY_REVEAL_AT,
     mysteryRevealLabel: calendarDayLabel(MYSTERY_REVEAL_AT),
-    discordChannel: DISCORD_CLAIM_CHANNEL,
-    discordInvite: DISCORD_INVITE,
+    claimGroupLabel: CLAIM_GROUP_LABEL,
+    claimGroupHref: CLAIM_GROUP_HREF,
     rules: RULES,
     claimSteps: CLAIM_STEPS,
     tiers: TIERS.map((t) => ({ id: t.id, name: t.name, avgLabel: t.avgLabel, blurb: t.blurb })),

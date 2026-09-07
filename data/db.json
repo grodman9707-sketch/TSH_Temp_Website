@@ -4,21 +4,20 @@
     "shortName": "TSH Darts League",
     "email": "thesocialhubinformation@gmail.com",
     "supportEmail": "Support@tshdartsleague.com",
-    "discordInvite": "https://discord.gg/PjXMqRQCfS",
     "messengerInvites": [
       {
-        "id": "europe",
-        "label": "TSH Europe Messenger",
-        "shortLabel": "Europe Messenger",
+        "id": "friendlies",
+        "label": "General Chat / Friendlies",
+        "shortLabel": "Friendlies",
         "href": "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
-        "blurb": "Open the Europe group and request to be added."
+        "blurb": "Open the general chat for friendlies and casual games."
       },
       {
-        "id": "americas",
-        "label": "TSH Americas Messenger",
-        "shortLabel": "Americas Messenger",
+        "id": "tsh",
+        "label": "TSH Messenger Group",
+        "shortLabel": "TSH Messenger",
         "href": "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-        "blurb": "Open the Americas group and request to be added."
+        "blurb": "Request to be added to the TSH Messenger group."
       }
     ],
     "scoringApp": "DartCounter"

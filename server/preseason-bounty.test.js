@@ -139,7 +139,8 @@ try {
   check("bounty API ok without login", open.status === 200 && open.data.ok);
   check("guest sees catalog and no me tracker", Array.isArray(open.data.bounties) && open.data.bounties.length === 16 && open.data.me == null);
   check("guest does not see award desk", open.data.canAward !== true && open.data.canAwardBonus !== true && !open.data.awardPlayers);
-  check("claim channel is listed", open.data.discordChannel === "#Claim_PreSeason_Bounty");
+  check("claim group is the TSH Messenger group", open.data.claimGroupLabel === "TSH Messenger Group" && /m\.me\/j\/0cIs92X7ME8Bhrbf/.test(open.data.claimGroupHref || ""));
+  check("bounty payload has no Discord invite", !open.data.discordInvite && !open.data.discordChannel);
   check("season start is September 14th", open.data.seasonStartLabel === "September 14th" && String(open.data.seasonStart).startsWith("2026-09-14"));
 
   const joinAnon = await api(port, "/api/preseason-bounty/join", { method: "POST", body: {} });
