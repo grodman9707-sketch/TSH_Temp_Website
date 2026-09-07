@@ -54,6 +54,22 @@ const JASON_JACKSON_PASSWORD = "owner123";
 const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
 const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
 const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
+const LEAGUE_MESSENGER_INVITES = [
+  {
+    id: "europe",
+    label: "TSH Europe Messenger",
+    shortLabel: "Europe Messenger",
+    href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
+    blurb: "Open the Europe group and request to be added.",
+  },
+  {
+    id: "americas",
+    label: "TSH Americas Messenger",
+    shortLabel: "Americas Messenger",
+    href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
+    blurb: "Open the Americas group and request to be added.",
+  },
+];
 const LEGACY_CONTACT_EMAIL = "worlddartsleagueinfo@gmail.com";
 const MOCK_EMAILS = new Set([
   "admin@tshdarts.com",
@@ -213,6 +229,7 @@ function publicUser(u, db) {
     hasPendingApplication: db ? userHasPendingApplication(db, u.id) : false,
     fullyPlaced: db ? isFullyPlaced(db, u) : false,
     bountyHunt: Boolean(u.bountyHunt),
+    communityJoinPending: Boolean(u.communityJoinPending),
   };
 }
 function nextId(list) {
@@ -821,6 +838,10 @@ function migrate(db) {
       db.league.discordInvite = LEAGUE_DISCORD_INVITE;
       changed = true;
     }
+    if (!Array.isArray(db.league.messengerInvites) || !db.league.messengerInvites.length) {
+      db.league.messengerInvites = LEAGUE_MESSENGER_INVITES;
+      changed = true;
+    }
   }
   if (Array.isArray(db.leagues)) {
     for (const league of db.leagues) {
@@ -1310,6 +1331,7 @@ async function handleApi(req, res, url) {
       leagueEmail: db.league?.email || LEAGUE_CONTACT_EMAIL,
       supportEmail: db.league?.supportEmail || LEAGUE_SUPPORT_EMAIL,
       discordInvite: db.league?.discordInvite || LEAGUE_DISCORD_INVITE,
+      messengerInvites: Array.isArray(db.league?.messengerInvites) && db.league.messengerInvites.length ? db.league.messengerInvites : LEAGUE_MESSENGER_INVITES,
       profiles: publicStaffProfiles(db),
     });
   }
@@ -1429,6 +1451,7 @@ async function handleApi(req, res, url) {
       notifyPrefs: { email: true },
       timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(body.regional),
       bountyHunt: false,
+      communityJoinPending: true,
     };
     db.users.push(created);
     db.applications.push({
@@ -1572,6 +1595,15 @@ async function handleApi(req, res, url) {
     if (body.avg !== undefined && body.avg !== "") {
       u.avg = Number(String(body.avg).replace(/[^0-9.]/g, "")) || 0;
     }
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/community-join") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+    u.communityJoinPending = false;
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }

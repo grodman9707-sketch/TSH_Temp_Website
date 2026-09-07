@@ -74,7 +74,10 @@ try {
   check("first registration succeeds", first.status === 200 && first.data.ok);
   check("pending flag on new user", first.data.user?.hasPendingApplication === true);
   check("not fully placed yet", first.data.user?.fullyPlaced === false);
+  check("new player must join the chats", first.data.user?.communityJoinPending === true);
   const patTok = first.data.token;
+  const joinedChats = await api(port, "/api/account/community-join", { method: "POST", token: patTok, body: { requested: true } });
+  check("joining chats clears the flag", joinedChats.status === 200 && joinedChats.data.user?.communityJoinPending === false);
 
   const dupEmail = await api(port, "/api/auth/register", {
     method: "POST",
@@ -213,6 +216,7 @@ try {
   check("signup form checks identity before continuing", appJs.includes("/api/auth/check-signup"));
   check("apply page blocks a pending player", appJs.includes("Application already received") && appJs.includes("hasPendingApplication"));
   check("signed-in users cannot open sign-up again", appJs.includes("You already have an account"));
+  check("signup ends with Messenger join requests", appJs.includes("JOINCOMMUNITY") && appJs.includes("Join the chats") && appJs.includes("data-act=\"join-link\""));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

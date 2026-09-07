@@ -65,6 +65,7 @@ try {
   check("league email on staff list", listed.data.leagueEmail === "thesocialhubinformation@gmail.com");
   check("support email on staff list", listed.data.supportEmail === "Support@tshdartsleague.com");
   check("league Discord invite on staff list", listed.data.discordInvite === "https://discord.gg/PjXMqRQCfS");
+  check("Messenger invites on staff list", Array.isArray(listed.data.messengerInvites) && listed.data.messengerInvites.length === 2);
   const founderCard = (listed.data.profiles || []).find((p) => p.userId === 1);
   check("founder owner profile is generated", Boolean(founderCard) && founderCard.name === "Gordon Rodman");
   check("one card per person", (listed.data.profiles || []).filter((p) => p.userId === 1).length === 1);
