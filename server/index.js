@@ -53,23 +53,35 @@ const JASON_JACKSON_EMAIL = "jasonjackson@tshdartsleague.com";
 const JASON_JACKSON_PASSWORD = "owner123";
 const LEAGUE_CONTACT_EMAIL = "thesocialhubinformation@gmail.com";
 const LEAGUE_SUPPORT_EMAIL = "Support@tshdartsleague.com";
-const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
 const LEAGUE_MESSENGER_INVITES = [
   {
-    id: "europe",
-    label: "TSH Europe Messenger",
-    shortLabel: "Europe Messenger",
+    id: "friendlies",
+    label: "General Chat / Friendlies",
+    shortLabel: "Friendlies",
     href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the Europe group and request to be added.",
+    blurb: "Open the general chat for friendlies and casual games.",
   },
   {
-    id: "americas",
-    label: "TSH Americas Messenger",
-    shortLabel: "Americas Messenger",
+    id: "tsh",
+    label: "TSH Messenger Group",
+    shortLabel: "TSH Messenger",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the Americas group and request to be added.",
+    blurb: "Request to be added to the TSH Messenger group.",
   },
 ];
+function messengerInvitesNeedUpdate(list) {
+  if (!Array.isArray(list) || list.length !== LEAGUE_MESSENGER_INVITES.length) return true;
+  return LEAGUE_MESSENGER_INVITES.some((want, i) => {
+    const have = list[i] || {};
+    return (
+      have.id !== want.id ||
+      have.label !== want.label ||
+      have.shortLabel !== want.shortLabel ||
+      have.href !== want.href ||
+      have.blurb !== want.blurb
+    );
+  });
+}
 const LEGACY_CONTACT_EMAIL = "worlddartsleagueinfo@gmail.com";
 const MOCK_EMAILS = new Set([
   "admin@tshdarts.com",
@@ -834,11 +846,11 @@ function migrate(db) {
       db.league.supportEmail = LEAGUE_SUPPORT_EMAIL;
       changed = true;
     }
-    if (!db.league.discordInvite) {
-      db.league.discordInvite = LEAGUE_DISCORD_INVITE;
+    if (db.league.discordInvite) {
+      delete db.league.discordInvite;
       changed = true;
     }
-    if (!Array.isArray(db.league.messengerInvites) || !db.league.messengerInvites.length) {
+    if (messengerInvitesNeedUpdate(db.league.messengerInvites)) {
       db.league.messengerInvites = LEAGUE_MESSENGER_INVITES;
       changed = true;
     }
@@ -1330,7 +1342,6 @@ async function handleApi(req, res, url) {
       ok: true,
       leagueEmail: db.league?.email || LEAGUE_CONTACT_EMAIL,
       supportEmail: db.league?.supportEmail || LEAGUE_SUPPORT_EMAIL,
-      discordInvite: db.league?.discordInvite || LEAGUE_DISCORD_INVITE,
       messengerInvites: Array.isArray(db.league?.messengerInvites) && db.league.messengerInvites.length ? db.league.messengerInvites : LEAGUE_MESSENGER_INVITES,
       profiles: publicStaffProfiles(db),
     });

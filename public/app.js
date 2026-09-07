@@ -3,21 +3,20 @@ import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, 
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
-const LEAGUE_DISCORD_INVITE = "https://discord.gg/PjXMqRQCfS";
 const LEAGUE_MESSENGER_INVITES = [
   {
-    id: "europe",
-    label: "TSH Europe Messenger",
-    shortLabel: "Europe Messenger",
+    id: "friendlies",
+    label: "General Chat / Friendlies",
+    shortLabel: "Friendlies",
     href: "https://m.me/j/vlpYxGLbrtubBKI6/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the Europe group and request to be added.",
+    blurb: "Open the general chat for friendlies and casual games.",
   },
   {
-    id: "americas",
-    label: "TSH Americas Messenger",
-    shortLabel: "Americas Messenger",
+    id: "tsh",
+    label: "TSH Messenger Group",
+    shortLabel: "TSH Messenger",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Open the Americas group and request to be added.",
+    blurb: "Request to be added to the TSH Messenger group.",
   },
 ];
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -46,6 +45,7 @@ const state = {
     clicked: {},
   },
   reset: { email: "", sent: false },
+  inviteCopied: false,
 };
 
 function token() {
@@ -142,11 +142,33 @@ function messengerInvites(league) {
   });
 }
 function communityNavLinks(league) {
-  const discord = (league && league.discordInvite) || LEAGUE_DISCORD_INVITE;
   const tone = "block px-5 py-3 text-sm font-semibold tracking-widest uppercase text-white/80 hover:text-primary";
   return `${messengerInvites(league)
     .map((m) => `<a href="${esc(m.href)}" class="${tone}" target="_blank" rel="noopener noreferrer" data-external="1">${esc(m.shortLabel)}</a>`)
-    .join("")}<a href="${esc(discord)}" class="${tone}" target="_blank" rel="noopener noreferrer" data-external="1">Discord</a>`;
+    .join("")}<a href="/invite" class="${tone}">Invite a player</a>`;
+}
+function tshMessengerGroup(league) {
+  const list = messengerInvites(league);
+  return list.find((m) => m.id === "tsh") || list[list.length - 1] || null;
+}
+function inviteUrl() {
+  try {
+    return `${location.origin}/invite`;
+  } catch {
+    return "/invite";
+  }
+}
+function inviteShareInner() {
+  const url = inviteUrl();
+  return `<h3 class="text-xl font-bold">Invite a player</h3>
+    <p class="mt-2 text-sm text-muted">Share this link with anyone you want in the league. They can sign up from it.</p>
+    <div class="invite-row mt-4">
+      <input class="invite-url" value="${esc(url)}" readonly aria-label="League invite link">
+      <button type="button" class="btn-gold" data-act="copy-invite">${state.inviteCopied ? "Copied" : "Copy link"}</button>
+    </div>`;
+}
+function inviteShareCard() {
+  return `<div class="invite-card community-card glass rounded-xl p-5 hover:border-primary sm:p-6 md:col-span-2">${inviteShareInner()}</div>`;
 }
 function userLeagueIds(u) {
   if (Array.isArray(u?.leagueIds)) {
@@ -888,11 +910,10 @@ function messengerCards(league) {
     )
     .join("");
 }
-function communityInviteButtons(league, discordLabel = "Join Discord Server") {
-  const discord = (league && league.discordInvite) || LEAGUE_DISCORD_INVITE;
+function communityInviteButtons(league) {
   return `<div class="mt-4 flex flex-col items-start gap-2">${messengerInvites(league)
     .map((m) => externalLink(m.href, `Join ${m.shortLabel}`))
-    .join("")}${externalLink(discord, discordLabel)}</div>`;
+    .join("")}<a class="discord-link" href="/invite">Invite a player to join</a></div>`;
 }
 function discordDisplay(url) {
   const href = discordHref(url);
@@ -968,7 +989,7 @@ function mysteryDetail(bounty, tiers, me) {
   }
   const targets = bounty.mysteryTargets || {};
   const rows = (tiers || []).map((t) => {
-    const text = String(targets[t.id] || "").trim() || "Posted in Discord when ready.";
+    const text = String(targets[t.id] || "").trim() || "Posted in Messenger when ready.";
     const mine = me?.tierId === t.id ? " yours" : "";
     return `<div class="mystery-row${mine}"><span>${esc(t.name)}</span><span>${esc(text)}</span></div>`;
   });
@@ -979,7 +1000,7 @@ function bountyAdminDesk(d) {
   const bounties = Array.isArray(d.bounties) ? d.bounties : [];
   return panel(
     `<h2 class="text-lg font-bold">PreSeason Bounty</h2>
-        <p class="mt-1 text-sm text-muted">Players submit proof in ${esc(d.discordChannel || "#Claim_PreSeason_Bounty")}. After you review the ticket, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
+        <p class="mt-1 text-sm text-muted">Players submit proof in the TSH Messenger group. After you review it, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
         <p class="mt-2"><a href="/preseason-bounty" class="text-sm font-bold tracking-widest gold">VIEW PLAYER PAGE →</a></p>
         <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="BOUNTYAWARD">
           <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
@@ -1178,14 +1199,7 @@ async function pageHome() {
             )
             .join("")}
           ${messengerCards(content.league)}
-          <a href="${esc(content.league?.discordInvite || LEAGUE_DISCORD_INVITE)}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6 md:col-span-2" target="_blank" rel="noopener noreferrer" data-external="1">
-            <div class="discord-mark" aria-hidden="true">D</div>
-            <div class="min-w-0">
-              <h3 class="text-xl font-bold">League Discord</h3>
-              <p class="mt-2 text-sm text-muted">Join the TSH Darts League server to talk with players and admins.</p>
-              <p class="mt-2 text-sm font-bold gold">Open Discord →</p>
-            </div>
-          </a>
+          ${inviteShareCard()}
         </div>
       </div>
     </section>
@@ -1454,12 +1468,20 @@ function pageJoinCommunity() {
   const cards = groups
     .map((m) => {
       const on = Boolean(clicked[m.id]);
+      const status =
+        m.id === "tsh"
+          ? on
+            ? "Opened — request to be added"
+            : "Click to request to be added"
+          : on
+            ? "Opened — general chat / friendlies"
+            : "Click to open for friendlies";
       return `<a class="join-link-card${on ? " clicked" : ""}" href="${esc(m.href)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="${esc(m.id)}">
         <div class="messenger-mark" aria-hidden="true">M</div>
         <div class="min-w-0">
           <h3>${esc(m.label)}</h3>
           <p>${esc(m.blurb)}</p>
-          <p class="join-link-status">${on ? "Opened — request to be added in Messenger" : "Click to open and request to be added"}</p>
+          <p class="join-link-status">${status}</p>
         </div>
       </a>`;
     })
@@ -1468,21 +1490,36 @@ function pageJoinCommunity() {
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
       <p class="page-kicker text-xs font-semibold gold">AFTER SIGN UP</p>
       <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
-      <p class="mt-2 text-sm text-muted">Your account is ready. Click both Messenger group links and request to be added. Discord is below if you also want the server.</p>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Open General Chat / Friendlies for casual games, then request to be added to the TSH Messenger group.</p>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <div class="mt-6 space-y-3">${cards}</div>
-      <a class="join-link-card join-link-discord mt-3${clicked.discord ? " clicked" : ""}" href="${esc(LEAGUE_DISCORD_INVITE)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="discord">
-        <div class="discord-mark" aria-hidden="true">D</div>
-        <div class="min-w-0">
-          <h3>League Discord</h3>
-          <p>Optional. Open the server and request to join if you use Discord.</p>
-          <p class="join-link-status">${clicked.discord ? "Opened" : "Open Discord"}</p>
-        </div>
-      </a>
       <form class="mt-6" data-form="JOINCOMMUNITY">
         <button class="btn-gold w-full py-3"${ready ? "" : " disabled"}>CONTINUE TO PLAYER HUB</button>
-        ${ready ? "" : `<p class="mt-3 text-center text-xs text-muted">Open both Messenger links and request to be added, then continue.</p>`}
+        ${ready ? "" : `<p class="mt-3 text-center text-xs text-muted">Open both Facebook Messenger links, then continue.</p>`}
       </form>
+    `)}</div>`,
+    { arena: true }
+  );
+}
+function pageInvite() {
+  if (state.user?.communityJoinPending) return pageJoinCommunity();
+  const signedIn = Boolean(state.user);
+  return layout(
+    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
+      <p class="page-kicker text-xs font-semibold gold">${signedIn ? "SHARE THE LEAGUE" : "YOU'RE INVITED"}</p>
+      <h1 class="mt-2 page-title font-extrabold">${signedIn ? "Invite a player" : "Join TSH Darts League"}</h1>
+      <p class="mt-2 text-sm text-muted">${
+        signedIn
+          ? "Copy this link and send it to anyone who should sign up."
+          : "Create your free account to join. You can also copy this link and invite someone else."
+      }</p>
+      ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
+      <div class="mt-6">${inviteShareInner()}</div>
+      <p class="mt-6">${
+        signedIn
+          ? `<a class="btn-gold" href="/dashboard">PLAYER HUB</a>`
+          : `<a class="btn-gold" href="/sign-up">SIGN UP TO JOIN</a>`
+      }</p>
     `)}</div>`,
     { arena: true }
   );
@@ -1673,6 +1710,7 @@ async function pageDashboard() {
         ${panel(`<div class="text-xs tracking-widest text-muted">AWAITING ADMIN</div><div class="mt-2 text-3xl font-extrabold gold">${d.fixtures.filter((f) => f.status === "submitted").length}</div>`)}
       </div>
       <a href="/my-matches" class="mt-6 inline-block text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>
+      ${panel(inviteShareInner(), "mt-6")}
       ${panel(
         `<div class="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1823,7 +1861,7 @@ async function pageBounty() {
         ${
           me?.joined
             ? `<p class="mt-2 text-sm text-white/80">Your eligible bounties are marked <span class="gold">Open</span>. Claimed cards show as Claimed. Other tiers stay visible so you can see the full hunt.</p>`
-            : `<p class="mt-2 text-sm text-white/80">Opt in to appear on the hunter board. Staff record claims from Admin after Discord review.</p>`
+            : `<p class="mt-2 text-sm text-white/80">Opt in to appear on the hunter board. Staff record claims from Admin after Messenger review.</p>`
         }`
       );
   const howCards = (d.claimSteps || [])
@@ -1885,9 +1923,9 @@ async function pageBounty() {
         <h2 class="text-2xl font-extrabold">How it works</h2>
         <div class="bounty-rules mt-4">${ruleCards}</div>
         <h3 class="mt-8 text-lg font-bold">How to claim</h3>
-        <p class="mt-1 text-sm text-muted">Claims are reviewed on Discord. Staff then award them from Admin so they show on your tracker.</p>
+        <p class="mt-1 text-sm text-muted">Claims are reviewed in the TSH Messenger group. Staff then award them from Admin so they show on your tracker.</p>
         <div class="bounty-steps mt-4">${howCards}</div>
-        <div class="mt-4">${externalLink(d.discordInvite || LEAGUE_DISCORD_INVITE, `Open Discord · ${d.discordChannel || "#Claim_PreSeason_Bounty"}`)}</div>
+        <div class="mt-4">${externalLink(d.claimGroupHref || tshMessengerGroup()?.href, `Open ${d.claimGroupLabel || "TSH Messenger Group"}`)}</div>
       </section>
       ${tierSections}
       <section class="bounty-tier mt-10" id="bounty-universal">
@@ -1930,7 +1968,7 @@ async function contactBlock() {
   const d = await api("/api/staff-profiles").catch(() => ({ profiles: [] }));
   const email = d.leagueEmail || "thesocialhubinformation@gmail.com";
   const supportEmail = d.supportEmail || "Support@tshdartsleague.com";
-  const discordInvite = d.discordInvite || LEAGUE_DISCORD_INVITE;
+  const tshGroup = tshMessengerGroup(d);
   const profiles = Array.isArray(d.profiles) ? d.profiles : [];
   const cards = profiles.length
     ? `<div class="mt-6 grid gap-4 sm:grid-cols-2">${profiles
@@ -1976,8 +2014,8 @@ async function contactBlock() {
             <div class="mt-2 flex flex-col items-start gap-2">${messengerInvites(d).map((m) => externalLink(m.href, `Join ${m.shortLabel}`)).join("")}</div>
           </div>
           <div>
-            <div class="text-[11px] font-bold tracking-widest gold">DISCORD SERVER</div>
-            <div class="mt-2">${externalLink(discordInvite, "Join Discord Server")}</div>
+            <div class="text-[11px] font-bold tracking-widest gold">INVITE A PLAYER</div>
+            <div class="mt-2">${inviteShareInner()}</div>
           </div>
           <div>
             <div class="text-[11px] font-bold tracking-widest gold">SUPPORT</div>
@@ -1990,7 +2028,7 @@ async function contactBlock() {
         </div>
       </div>`)}
       <h2 class="admin-team-title">Admin Team</h2>
-      <a class="discord-first" href="${esc(discordInvite)}" target="_blank" rel="noopener noreferrer" data-external="1">Discord First! E-mail if that Fails!</a>
+      <a class="discord-first" href="${esc(tshGroup?.href || "#")}" target="_blank" rel="noopener noreferrer" data-external="1">Messenger First! E-mail if that Fails!</a>
       ${cards}
     </section>`;
 }
@@ -2411,6 +2449,7 @@ function matchRoute(path) {
   if (q === "/apply") return ["apply"];
   if (q === "/sign-in") return ["signin"];
   if (q === "/sign-up") return ["signup"];
+  if (q === "/invite") return ["invite"];
   if (q === "/forgot-password") return ["forgot"];
   if (q === "/dashboard") return ["dashboard"];
   if (q === "/my-matches") return ["matches"];
@@ -2432,7 +2471,7 @@ async function render() {
       go("/sign-in");
       return;
     }
-    if (state.user?.communityJoinPending && route[0] !== "signup") {
+    if (state.user?.communityJoinPending && route[0] !== "signup" && route[0] !== "invite") {
       go("/sign-up");
       return;
     }
@@ -2450,6 +2489,7 @@ async function render() {
       apply: pageApply,
       signin: () => pageSignIn(),
       signup: () => pageSignUp(),
+      invite: () => pageInvite(),
       forgot: () => pageForgotPassword(),
       dashboard: pageDashboard,
       matches: pageMyMatches,
@@ -2540,6 +2580,28 @@ document.addEventListener("click", async (e) => {
       state.error = "";
       render();
     }
+    return;
+  }
+  const copyInvite = e.target.closest("[data-act=copy-invite]");
+  if (copyInvite) {
+    e.preventDefault();
+    const url = inviteUrl();
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const input = copyInvite.closest("div")?.querySelector(".invite-url") || document.querySelector(".invite-url");
+      if (input) {
+        input.focus();
+        input.select();
+        try {
+          document.execCommand("copy");
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    state.inviteCopied = true;
+    render();
     return;
   }
   const a = e.target.closest("a");
@@ -2738,7 +2800,7 @@ document.addEventListener("submit", async (e) => {
       const clicked = state.signup.clicked || {};
       const missing = messengerInvites().filter((m) => !clicked[m.id]);
       if (missing.length) {
-        state.error = "Click both Messenger links and request to be added, then continue.";
+        state.error = "Open General Chat / Friendlies and request to be added to the TSH Messenger group, then continue.";
         render();
         return;
       }
@@ -2949,7 +3011,7 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "BOUNTYJOIN") {
       const d = await api("/api/preseason-bounty/join", { method: "POST", body: "{}" });
       if (d.user) state.user = d.user;
-      state.notice = "You're in the PreSeason Bounty Hunt. Play, then claim on Discord.";
+      state.notice = "You're in the PreSeason Bounty Hunt. Play, then claim in the TSH Messenger group.";
       render();
     } else if (kind === "BOUNTYLEAVE") {
       const d = await api("/api/preseason-bounty/leave", { method: "POST", body: "{}" });
