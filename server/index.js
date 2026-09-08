@@ -20,6 +20,7 @@ import {
   revokeBounty,
   saveMysteryTargets,
 } from "./preseasonBounty.js";
+import { airtableConfigured, backupOverview, loadPostgresSnapshot, postgresConfigured, runOffsiteSync, scheduleOffsiteSync } from "./offsite.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -215,6 +216,7 @@ function readDb() {
 }
 function writeDb(db) {
   writeJson(dbPath, db);
+  scheduleOffsiteSync(() => readDb());
 }
 function publicUser(u, db) {
   const { password, avatarFile, passwordReset, ...rest } = u;
@@ -2134,6 +2136,30 @@ async function handleApi(req, res, url) {
     if (method === "GET" && p === "/api/admin/notifications/config") {
       return json(res, 200, { ok: true, ...emailConfigStatus() });
     }
+    if (method === "GET" && p === "/api/admin/backup") {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can view backups" });
+      return json(res, 200, { ok: true, ...(await backupOverview()) });
+    }
+    if (method === "POST" && p === "/api/admin/backup/run") {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can run a backup" });
+      const result = await runOffsiteSync(db, { source: "manual" });
+      const ok = Boolean(result.postgres || result.airtable);
+      return json(res, ok ? 200 : 400, { ok, ...result });
+    }
+    if (method === "POST" && p === "/api/admin/backup/restore") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can restore from Postgres" });
+      if (!postgresConfigured()) return json(res, 400, { ok: false, error: "DATABASE_URL is not set" });
+      try {
+        const snap = await loadPostgresSnapshot(body.id);
+        if (!snap?.payload) return json(res, 404, { ok: false, error: "Snapshot not found" });
+        writeJson(dbPath, snap.payload);
+        migrate(readDb());
+        const restored = readDb();
+        return json(res, 200, { ok: true, restoredId: snap.id, users: (restored.users || []).length });
+      } catch (err) {
+        return json(res, 400, { ok: false, error: String(err.message || err) });
+      }
+    }
     if (method === "POST" && p === "/api/admin/notifications/test") {
       const to = String(body.email || user.email || "").trim();
       if (!to) return json(res, 400, { ok: false, error: "No email address to send to" });
@@ -2254,6 +2280,9 @@ async function handleApi(req, res, url) {
         approvals: visibleApprovals,
         applications,
         leagueRequests: visibleLeagueRequests(db, user),
+        backup: canOverride(user)
+          ? { postgresConfigured: postgresConfigured(), airtableConfigured: airtableConfigured() }
+          : null,
         leagues,
         allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
         fixtures,
@@ -2739,6 +2768,10 @@ server.listen(port, host, () => {
     console.log("Email notifications: OFF — EMAIL_API_KEY not set; notifications are logged only, not emailed.");
   }
   if (emailCfg.warning) console.warn(`Email notifications WARNING: ${emailCfg.warning}`);
+  if (postgresConfigured()) console.log("Postgres backups: ON — snapshots go to DATABASE_URL after each save.");
+  else console.log("Postgres backups: OFF — add a Railway PostgreSQL plugin and set DATABASE_URL on this service.");
+  if (airtableConfigured()) console.log("Airtable sync: ON — Players, Standings, and Fixtures will update after each save.");
+  else console.log("Airtable sync: OFF — set AIRTABLE_TOKEN and AIRTABLE_BASE_ID to push the staff spreadsheet.");
   startNotificationLoop();
 });
 
