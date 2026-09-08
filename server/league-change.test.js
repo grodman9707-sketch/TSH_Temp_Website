@@ -82,12 +82,18 @@ try {
   const tok = registered.data.token;
   const playerId = registered.data.user.id;
 
-  const tooSoon = await api(port, "/api/account/league-request", {
+  const beforePlace = await api(port, "/api/auth/me", { token: tok });
+  check("second regional is offered on the profile before placement", beforePlace.data.user?.openJoinRegional?.id === 2);
+
+  const joinEarly = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
-    body: { kind: "join" },
+    body: { kind: "join", regionalId: 2, note: "Want Americas too" },
   });
-  check("cannot join a second league before being placed in one", tooSoon.status === 400);
+  check("join request ok before first placement", joinEarly.status === 200 && joinEarly.data.request?.kind === "join");
+  check("join switches them to both regionals", joinEarly.data.user?.regionalChoice === "both");
+  check("join is pending", joinEarly.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
+  check("join offer hides while pending", joinEarly.data.user?.openJoinRegional == null);
 
   const place = await api(port, "/api/admin/place-player", {
     method: "POST",
@@ -95,20 +101,10 @@ try {
     body: { userId: playerId, leagueId: 1 },
   });
   check("placed in Europe Division 1", place.status === 200 && place.data.user?.leagueIds?.includes(1));
-  check("second regional is offered after first placement", Boolean(place.data.user?.openJoinRegional?.id === 2));
+  check("join stays pending until the other regional is filled", place.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
 
   const mePlaced = await api(port, "/api/auth/me", { token: tok });
-  check("player hub sees join offer", mePlaced.data.user?.openJoinRegional?.name);
-
-  const join = await api(port, "/api/account/league-request", {
-    method: "POST",
-    token: tok,
-    body: { kind: "join", regionalId: 2, note: "Want Americas too" },
-  });
-  check("join request ok", join.status === 200 && join.data.request?.kind === "join");
-  check("join switches them to both regionals", join.data.user?.regionalChoice === "both");
-  check("join is pending", join.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
-  check("join offer hides while pending", join.data.user?.openJoinRegional == null);
+  check("player hub still shows the pending join", mePlaced.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
 
   const dupJoin = await api(port, "/api/account/league-request", {
     method: "POST",
@@ -148,7 +144,7 @@ try {
   check("duplicate drop is blocked", dupDrop.status === 400);
 
   const afterDrop = await api(port, "/api/admin/overview", { token: ownerTok });
-  const dropReq = (afterDrop.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop");
+  const dropReq = (afterDrop.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop" && r.leagueId === 1);
   check("admin sees the drop request", Boolean(dropReq?.id) && dropReq.leagueId === 1);
 
   const resolve = await api(port, "/api/admin/league-requests/resolve", {
@@ -159,6 +155,33 @@ try {
   check("owner can drop them", resolve.status === 200 && !resolve.data.user?.leagueIds?.includes(1));
   check("they keep the other regional", resolve.data.user?.leagueIds?.includes(5));
   check("drop request is gone", !(resolve.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "drop"));
+
+  const dropAll = await api(port, "/api/account/league-request", {
+    method: "POST",
+    token: tok,
+    body: { kind: "drop", scope: "all", note: "Stepping away" },
+  });
+  check("drop-all request ok", dropAll.status === 200 && dropAll.data.request?.scope === "all");
+  check("drop-all leaves them placed until admin acts", dropAll.data.user?.leagueIds?.includes(5));
+
+  const dupAll = await api(port, "/api/account/league-request", {
+    method: "POST",
+    token: tok,
+    body: { kind: "drop", scope: "all" },
+  });
+  check("duplicate drop-all is blocked", dupAll.status === 400);
+
+  const afterAll = await api(port, "/api/admin/overview", { token: ownerTok });
+  const allReq = (afterAll.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop" && r.scope === "all");
+  check("admin sees the withdraw-all request", Boolean(allReq?.id) && allReq.leagueTitle === "all leagues");
+
+  const resolveAll = await api(port, "/api/admin/league-requests/resolve", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: allReq.id, action: "done" },
+  });
+  check("owner can drop them from every league", resolveAll.status === 200 && !(resolveAll.data.user?.leagueIds || []).length);
+  check("drop-all request is gone", !(resolveAll.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "drop"));
 
   const cancelPlayer = await api(port, "/api/auth/register", {
     method: "POST",
@@ -191,8 +214,24 @@ try {
   check("player can cancel a pending request", cancelled.status === 200 && !(cancelled.data.user?.pendingLeagueRequests || []).length);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  check("player hub has league change buttons", appJs.includes("function leagueChangePanel") && appJs.includes("JOINLEAGUE") && appJs.includes("DROPLEAGUE"));
-  check("admin desk lists league change requests", appJs.includes("League change requests") && appJs.includes("LEAGUERESOLVE"));
+  const indexJs = fs.readFileSync(path.join(root, "server/index.js"), "utf8");
+  check(
+    "player profile has league change controls",
+    appJs.includes("function leagueChangeInner") &&
+      appJs.includes('id="player-profile"') &&
+      appJs.includes("JOINLEAGUE") &&
+      appJs.includes("DROPLEAGUE") &&
+      appJs.includes("ASK TO WITHDRAW") &&
+      appJs.includes("All leagues")
+  );
+  check("admin desk lists league change requests", appJs.includes("League change requests") && appJs.includes("LEAGUERESOLVE") && appJs.includes("DROP FROM ALL LEAGUES"));
+  check(
+    "every admin and owner is emailed",
+    indexJs.includes("function notifyStaffLeagueRequest") &&
+      indexJs.includes("isStaff(u)") &&
+      indexJs.includes('type: "league_request"') &&
+      indexJs.includes("withdraw from all leagues")
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
