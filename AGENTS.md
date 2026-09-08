@@ -34,9 +34,13 @@ persisted to a JSON file store (`data/db.json`).
 - There is only one service. Start it with `node server/index.js` (same as the
   `start` and `dev` scripts in `package.json`). It listens on `PORT` (default
   `5173`) and `HOST` (default `0.0.0.0`). Health check: `GET /health` → `{"ok":true}`.
-- No dependency install is required to run the app — `package.json` declares no
-  dependencies and the server imports only Node built-ins. `npm install` is a
-  harmless no-op (it only writes an empty `package-lock.json`).
+- Live league data still lives in `data/db.json` (or `$DATA_DIR/db.json` on Railway).
+  Optional off-site copies: Railway PostgreSQL (`DATABASE_URL`) stores restore
+  snapshots; Airtable (`AIRTABLE_TOKEN` + `AIRTABLE_BASE_ID`) is the staff
+  spreadsheet. Neither is required to run the site.
+- `pg` is the only npm dependency (Postgres client). `npm install` is required
+  after clone if you use Postgres backups; the app still boots without
+  `DATABASE_URL`.
 
 ### Non-obvious gotchas
 
@@ -60,6 +64,21 @@ persisted to a JSON file store (`data/db.json`).
   UI / `/api/*` endpoints.
 - `server/pdcTicker.js` fetches a PDC event ticker from Wikipedia but has built-in
   `FALLBACK_EVENTS`, so `/api/ticker` works even without outbound network access.
+
+### Off-site backup (Railway Postgres + Airtable)
+
+These are optional. After they are configured, Owner desk → **Off-site backup & spreadsheet** can run a sync and restore.
+
+**Postgres (restore backup)**
+1. Railway project → **New** → **Database** → **PostgreSQL**.
+2. On the **web** service → Variables → add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference the Postgres service). Redeploy.
+3. The site keeps writing `db.json`; it also stores the last 30 snapshots in `league_snapshots`. Passwords stay in Postgres so a restore can log people back in. Match screenshot files are not in the snapshot.
+
+**Airtable (staff spreadsheet)**
+1. Create a free Airtable base (empty is fine).
+2. [Create a personal access token](https://airtable.com/create/tokens) with scopes `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`, access to that base.
+3. On the Railway **web** service set `AIRTABLE_TOKEN` and `AIRTABLE_BASE_ID` (`app…` from the base URL). Redeploy.
+4. First sync creates **Players**, **Standings**, and **Fixtures**. Share the base with staff in Airtable. Never put the token in git. Player passwords are not sent to Airtable.
 
 ### Hello-world smoke test
 
