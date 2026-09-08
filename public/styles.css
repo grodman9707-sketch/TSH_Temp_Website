@@ -1301,4 +1301,8 @@ input, select, textarea {
   border: 1px solid rgba(232, 180, 37, 0.35);
   color: #e8b425;
 }
+.profile-leagues select,
+.profile-leagues input {
+  width: 100%;
+}
 

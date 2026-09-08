@@ -686,9 +686,13 @@ function pendingLeagueRequests(db, userId, kind) {
     (r) => r.status === "pending" && Number(r.userId) === Number(userId) && (!kind || r.kind === kind)
   );
 }
+function isDropAllRequest(r) {
+  return r?.kind === "drop" && (r.scope === "all" || r.leagueId == null || r.leagueId === "");
+}
 function publicLeagueRequest(r, db) {
   const player = db.users.find((x) => x.id === r.userId);
-  const league = r.leagueId ? db.leagues.find((l) => l.id === Number(r.leagueId)) : null;
+  const dropAll = isDropAllRequest(r);
+  const league = !dropAll && r.leagueId ? db.leagues.find((l) => l.id === Number(r.leagueId)) : null;
   const regional = r.regionalId ? db.regionals.find((x) => x.id === Number(r.regionalId)) : null;
   return {
     id: r.id,
@@ -698,8 +702,9 @@ function publicLeagueRequest(r, db) {
     playerAvg: player?.avg ?? "",
     regionalId: r.regionalId || null,
     regionalName: regional?.fullTitle || regional?.name || "",
-    leagueId: r.leagueId || null,
-    leagueTitle: league ? leagueTitle(db, league) : "",
+    leagueId: dropAll ? null : r.leagueId || null,
+    leagueTitle: dropAll ? "all leagues" : league ? leagueTitle(db, league) : "",
+    scope: dropAll ? "all" : r.kind === "drop" ? "one" : "",
     status: r.status,
     createdAt: r.createdAt,
     note: r.note || "",
@@ -709,10 +714,17 @@ function pendingLeagueRequestsForUser(db, userId) {
   return pendingLeagueRequests(db, userId).map((r) => publicLeagueRequest(r, db));
 }
 function openJoinRegional(db, u) {
-  const placed = new Set(placedRegionalIds(db, u));
-  if (placed.size !== 1) return null;
   if (pendingLeagueRequests(db, u.id, "join").length) return null;
-  const id = [1, 2].find((rid) => !placed.has(rid));
+  const placed = new Set(placedRegionalIds(db, u));
+  if (placed.size >= 2) return null;
+  let id = null;
+  if (placed.size === 1) {
+    id = [1, 2].find((rid) => !placed.has(rid)) || null;
+  } else {
+    const signed = new Set(userRegionalIds(u));
+    if (signed.size >= 2) return null;
+    id = [1, 2].find((rid) => !signed.has(rid)) || null;
+  }
   if (!id) return null;
   const regional = db.regionals.find((r) => r.id === id);
   return { id, name: regional?.fullTitle || regional?.name || (id === 2 ? "TSH Americas" : "TSH Europe") };
@@ -732,7 +744,7 @@ function resolveMatchingLeagueRequests(db, u) {
       r.resolvedAt = new Date().toISOString();
       changed = true;
     }
-    if (r.kind === "drop" && !leagues.has(Number(r.leagueId))) {
+    if (r.kind === "drop" && (isDropAllRequest(r) ? leagues.size === 0 : !leagues.has(Number(r.leagueId)))) {
       r.status = "done";
       r.resolvedAt = new Date().toISOString();
       changed = true;
@@ -747,7 +759,11 @@ function visibleLeagueRequests(db, user) {
   const regionals = new Set(leagues.map((l) => l.regionalId));
   const leagueIds = new Set(leagues.map((l) => l.id));
   return pending
-    .filter((r) => (r.kind === "join" ? regionals.has(Number(r.regionalId)) : leagueIds.has(Number(r.leagueId))))
+    .filter((r) => {
+      if (r.kind === "join") return regionals.has(Number(r.regionalId));
+      if (isDropAllRequest(r)) return true;
+      return leagueIds.has(Number(r.leagueId));
+    })
     .map((r) => publicLeagueRequest(r, db));
 }
 function leagueRequestEmail(staff, request, player) {
@@ -755,10 +771,14 @@ function leagueRequestEmail(staff, request, player) {
   const detail =
     request.kind === "join"
       ? `join a second league (${htmlEsc(request.regionalName || "the other regional")})`
-      : `drop from ${htmlEsc(request.leagueTitle || "a league")}`;
+      : request.scope === "all"
+        ? "withdraw from all leagues"
+        : `withdraw from ${htmlEsc(request.leagueTitle || "a league")}`;
   return {
     to: staff.email,
-    subject: `${player?.nickname || player?.name || "A player"} wants to ${request.kind === "join" ? "join a second league" : "drop from a league"}`,
+    subject: `${player?.nickname || player?.name || "A player"} wants to ${
+      request.kind === "join" ? "join a second league" : request.scope === "all" ? "withdraw from all leagues" : "withdraw from a league"
+    }`,
     html:
       `<p>Hi ${htmlEsc(staff.nickname || staff.name || "there")},</p>` +
       `<p><b>${name}</b> asked to ${detail}.</p>` +
@@ -1863,21 +1883,42 @@ async function handleApi(req, res, url) {
         createdAt: new Date().toISOString(),
       };
     } else {
-      const leagueId = Number(body.leagueId);
-      if (!userLeagueIds(u).includes(leagueId)) return json(res, 400, { ok: false, error: "You are not in that league" });
-      if (pendingLeagueRequests(db, u.id, "drop").some((r) => Number(r.leagueId) === leagueId)) {
-        return json(res, 400, { ok: false, error: "You already asked to drop from that league. An admin will review it." });
+      const placedIds = userLeagueIds(u);
+      if (!placedIds.length) return json(res, 400, { ok: false, error: "You are not in a league yet" });
+      const dropAll = body.scope === "all" || body.leagueId === "all" || body.leagueId === "" || body.leagueId == null;
+      if (dropAll) {
+        if (pendingLeagueRequests(db, u.id, "drop").some((r) => isDropAllRequest(r))) {
+          return json(res, 400, { ok: false, error: "You already asked to withdraw from all leagues. An admin will review it." });
+        }
+        request = {
+          id: nextId(db.leagueRequests),
+          userId: u.id,
+          kind: "drop",
+          regionalId: null,
+          leagueId: null,
+          scope: "all",
+          status: "pending",
+          note,
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+        const leagueId = Number(body.leagueId);
+        if (!placedIds.includes(leagueId)) return json(res, 400, { ok: false, error: "You are not in that league" });
+        if (pendingLeagueRequests(db, u.id, "drop").some((r) => Number(r.leagueId) === leagueId)) {
+          return json(res, 400, { ok: false, error: "You already asked to drop from that league. An admin will review it." });
+        }
+        request = {
+          id: nextId(db.leagueRequests),
+          userId: u.id,
+          kind: "drop",
+          regionalId: leagueRegionalId(db, leagueId),
+          leagueId,
+          scope: "one",
+          status: "pending",
+          note,
+          createdAt: new Date().toISOString(),
+        };
       }
-      request = {
-        id: nextId(db.leagueRequests),
-        userId: u.id,
-        kind: "drop",
-        regionalId: leagueRegionalId(db, leagueId),
-        leagueId,
-        status: "pending",
-        note,
-        createdAt: new Date().toISOString(),
-      };
     }
     db.leagueRequests.push(request);
     writeDb(db);
@@ -2350,8 +2391,12 @@ async function handleApi(req, res, url) {
       }
       if (request.kind === "drop") {
         if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can drop a player from a league" });
-        const leagueId = Number(request.leagueId);
-        if (userLeagueIds(u).includes(leagueId)) unplaceUserFromLeagues(u, leagueId);
+        if (isDropAllRequest(request)) {
+          unplaceUserFromLeagues(u);
+        } else {
+          const leagueId = Number(request.leagueId);
+          if (userLeagueIds(u).includes(leagueId)) unplaceUserFromLeagues(u, leagueId);
+        }
         for (const appn of db.applications.filter((a) => a.userId === u.id)) {
           appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
         }
