@@ -21,6 +21,19 @@ import {
   saveMysteryTargets,
 } from "./preseasonBounty.js";
 import { airtableConfigured, backupOverview, loadPostgresSnapshot, postgresConfigured, runOffsiteSync, scheduleOffsiteSync } from "./offsite.js";
+import {
+  EXPORT_CORS,
+  clearSheetsApiKey,
+  resolveSheetsTable,
+  setSheetsApiKey,
+  sheetsApiKeyFrom,
+  sheetsApiKeyValid,
+  sheetsCsv,
+  sheetsExportState,
+  sheetsExportUrls,
+  sheetsImportFormulas,
+  sheetsRows,
+} from "./sheetsExport.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -1462,12 +1475,35 @@ function huntView(user) {
   };
 }
 
+function requestOrigin(req) {
+  const forwarded = String(req?.headers?.["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const proto = forwarded || (cookieSecureFor(req) ? "https" : "http");
+  const host = String(req?.headers?.["x-forwarded-host"] || req?.headers?.host || "localhost").split(",")[0].trim();
+  return `${proto}://${host}`;
+}
+function sendExport(res, status, data, extraHeaders = {}) {
+  const headers = { ...EXPORT_CORS, ...extraHeaders };
+  if (typeof data === "string") {
+    res.writeHead(status, headers);
+    res.end(data);
+    return;
+  }
+  json(res, status, data, headers);
+}
+
 async function handleApi(req, res, url) {
   const db = readDb();
   const method = req.method;
   const p = url.pathname;
+  if (method === "OPTIONS" && p.startsWith("/api/export")) {
+    res.writeHead(204, EXPORT_CORS);
+    res.end();
+    return;
+  }
   const user = currentUser(req, db, url);
-  const body = method === "GET" || method === "HEAD" ? {} : await readBody(req);
+  const body = method === "GET" || method === "HEAD" || method === "OPTIONS" ? {} : await readBody(req);
 
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
   if (method === "GET" && p === "/api/rules") return json(res, 200, { ok: true, ...leagueRules });
@@ -1503,6 +1539,42 @@ async function handleApi(req, res, url) {
     });
   }
   if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
+  if ((method === "GET" || method === "HEAD") && (p === "/api/export" || p.startsWith("/api/export/"))) {
+    const provided = sheetsApiKeyFrom(req, url);
+    if (!sheetsExportState(db).configured) {
+      return sendExport(res, 401, { ok: false, error: "No Google Sheets API key is set. Generate one from Owner desk." });
+    }
+    if (!sheetsApiKeyValid(db, provided)) {
+      return sendExport(res, 401, { ok: false, error: "Invalid API key" });
+    }
+    const exportHeaders = { "Cache-Control": "no-store" };
+    if (p === "/api/export" || p === "/api/export/") {
+      const origin = requestOrigin(req);
+      const key = sheetsExportState(db).key;
+      return sendExport(res, 200, {
+        ok: true,
+        tables: ["players", "standings", "fixtures"],
+        formats: ["csv", "json"],
+        urls: sheetsExportUrls(origin, key),
+        formulas: sheetsImportFormulas(origin, key),
+      }, exportHeaders);
+    }
+    const exportMatch = /^\/api\/export\/([a-zA-Z]+)(?:\.(csv|json))?$/.exec(p);
+    if (!exportMatch || !resolveSheetsTable(exportMatch[1])) {
+      return sendExport(res, 404, { ok: false, error: "Unknown export table. Use players, standings, or fixtures." });
+    }
+    const table = exportMatch[1];
+    const format = (exportMatch[2] || url.searchParams.get("format") || "json").toLowerCase();
+    if (format === "csv") {
+      const csv = sheetsCsv(db, table);
+      return sendExport(res, 200, method === "HEAD" ? "" : csv, {
+        ...exportHeaders,
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `inline; filename="tsh-${table}.csv"`,
+      });
+    }
+    return sendExport(res, 200, { ok: true, table: resolveSheetsTable(table).id, rows: sheetsRows(db, table) }, exportHeaders);
+  }
 
   const regionalMatch = p.match(/^\/api\/regionals\/([^/]+)$/);
   if (method === "GET" && regionalMatch) {
@@ -2159,6 +2231,39 @@ async function handleApi(req, res, url) {
       } catch (err) {
         return json(res, 400, { ok: false, error: String(err.message || err) });
       }
+    }
+    if (method === "GET" && p === "/api/admin/export-key") {
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can manage the Google Sheets key" });
+      const origin = requestOrigin(req);
+      const state = sheetsExportState(db);
+      return json(res, 200, {
+        ok: true,
+        configured: state.configured,
+        key: state.key || "",
+        createdAt: state.createdAt || "",
+        urls: state.configured ? sheetsExportUrls(origin, state.key) : sheetsExportUrls(origin, "YOUR_KEY"),
+        formulas: state.configured ? sheetsImportFormulas(origin, state.key) : sheetsImportFormulas(origin, "YOUR_KEY"),
+      });
+    }
+    if (method === "POST" && p === "/api/admin/export-key") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can generate the Google Sheets key" });
+      const state = setSheetsApiKey(db, { userId: user.id });
+      persistDb(db);
+      const origin = requestOrigin(req);
+      return json(res, 200, {
+        ok: true,
+        configured: true,
+        key: state.key,
+        createdAt: state.createdAt,
+        urls: sheetsExportUrls(origin, state.key),
+        formulas: sheetsImportFormulas(origin, state.key),
+      });
+    }
+    if (method === "POST" && p === "/api/admin/export-key/revoke") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can revoke the Google Sheets key" });
+      clearSheetsApiKey(db);
+      persistDb(db);
+      return json(res, 200, { ok: true, configured: false, key: "", createdAt: "" });
     }
     if (method === "POST" && p === "/api/admin/notifications/test") {
       const to = String(body.email || user.email || "").trim();

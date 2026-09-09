@@ -46,6 +46,7 @@ const state = {
   },
   reset: { email: "", sent: false },
   inviteCopied: false,
+  copiedExport: "",
 };
 
 function token() {
@@ -2172,6 +2173,52 @@ async function pageAdmin() {
     api("/api/preseason-bounty").catch(() => ({})),
   ]);
   const backup = d.canOverride ? await api("/api/admin/backup").catch(() => ({ postgres: d.backup?.postgresConfigured ? { configured: true } : { configured: false }, airtable: { configured: Boolean(d.backup?.airtableConfigured) }, snapshots: [] })) : null;
+  const sheets = d.canOverride
+    ? await api("/api/admin/export-key").catch(() => ({ configured: false, key: "", formulas: {}, urls: {} }))
+    : null;
+  const sheetsPanel = (() => {
+    if (!sheets) return "";
+    const copyBtn = (id, text, label) =>
+      `<button type="button" class="btn-ghost" data-act="copy-text" data-copy-id="${esc(id)}" data-copy="${esc(text)}">${state.copiedExport === id ? "Copied" : label}</button>`;
+    const formulaRow = (id, label) => {
+      const formula = sheets.formulas?.[id] || "";
+      return `<div class="mt-3">
+        <div class="text-xs tracking-widest text-muted">${esc(label)}</div>
+        <div class="invite-row mt-1">
+          <input class="invite-url" value="${esc(formula)}" readonly aria-label="${esc(label)} IMPORTDATA formula">
+          ${copyBtn(`formula-${id}`, formula, "Copy formula")}
+        </div>
+      </div>`;
+    };
+    const body = sheets.configured
+      ? `<div class="invite-row mt-3">
+           <input class="invite-url" value="${esc(sheets.key)}" readonly aria-label="Google Sheets API key">
+           ${copyBtn("key", sheets.key, "Copy key")}
+         </div>
+         <p class="mt-4 text-xs tracking-widest gold">GOOGLE SHEETS FORMULAS</p>
+         <p class="mt-1 text-sm text-muted">In a Google Sheet, paste a formula into cell A1. It fills the sheet from the live site. Google refreshes IMPORTDATA on its own (often about an hour).</p>
+         ${formulaRow("standings", "STANDINGS")}
+         ${formulaRow("fixtures", "FIXTURES")}
+         ${formulaRow("players", "PLAYERS")}
+         ${
+           d.isOwner
+             ? `<div class="mt-4 flex flex-wrap gap-2">
+                  <form data-form="SHEETSKEYGEN"><button class="btn-gold">REGENERATE KEY</button></form>
+                  <form data-form="SHEETSKEYREVOKE"><button class="btn-ghost">REVOKE KEY</button></form>
+                </div>`
+             : ""
+         }`
+      : `<p class="mt-3 text-sm text-muted">${
+          d.isOwner ? "No key yet. Generate one, then paste a formula into Google Sheets." : "No key yet. An owner needs to generate one from this page."
+        }</p>
+         ${d.isOwner ? `<form class="mt-3" data-form="SHEETSKEYGEN"><button class="btn-gold">GENERATE KEY</button></form>` : ""}`;
+    return panel(
+      `<h2 class="text-lg font-bold">Google Sheets</h2>
+        <p class="mt-1 text-sm text-muted">Pull standings, fixtures, and players straight from the site. Treat the key like a password — anyone with it can read player emails. Passwords are never exported.</p>
+        ${body}`,
+      "mt-4"
+    );
+  })();
   const everyone = d.users;
   const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
@@ -2438,6 +2485,7 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
         <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
+      ${sheetsPanel}
       ${
         backup
           ? panel(
@@ -2747,6 +2795,28 @@ document.addEventListener("click", async (e) => {
       }
     }
     state.inviteCopied = true;
+    render();
+    return;
+  }
+  const copyText = e.target.closest("[data-act=copy-text]");
+  if (copyText) {
+    e.preventDefault();
+    const text = copyText.dataset.copy || "";
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const input = copyText.closest("div")?.querySelector("input[readonly]");
+        if (input) {
+          input.focus();
+          input.select();
+          document.execCommand("copy");
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    state.copiedExport = copyText.dataset.copyId || "ok";
     render();
     return;
   }
@@ -3186,6 +3256,18 @@ document.addEventListener("submit", async (e) => {
       if (res.airtable) bits.push("Airtable spreadsheet updated");
       if (res.errors?.length) bits.push(res.errors.join(" "));
       state.notice = bits.join(". ") || res.error || "Backup finished.";
+      render();
+    } else if (kind === "SHEETSKEYGEN") {
+      if (window.document.querySelector('input[aria-label="Google Sheets API key"]')) {
+        if (!window.confirm("Replace the current Google Sheets API key? Existing sheet formulas will stop working until you paste the new ones.")) return;
+      }
+      await api("/api/admin/export-key", { method: "POST", body: "{}" });
+      state.notice = "Google Sheets API key saved. Copy a formula below into cell A1 of your sheet.";
+      render();
+    } else if (kind === "SHEETSKEYREVOKE") {
+      if (!window.confirm("Revoke the Google Sheets API key? Connected sheets will stop updating until you generate a new key.")) return;
+      await api("/api/admin/export-key/revoke", { method: "POST", body: "{}" });
+      state.notice = "Google Sheets API key revoked.";
       render();
     } else if (kind === "OFFSITERESTORE") {
       if (!window.confirm("Replace the live league data with this Postgres snapshot? This cannot be undone except by restoring a later snapshot.")) return;
