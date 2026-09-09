@@ -71,6 +71,7 @@ export function snapshotPayload(db) {
       adminProfiles: db.adminProfiles || [],
       approvals: db.approvals || [],
       bounty: db.bounty || null,
+      sheetsExport: db.sheetsExport || { key: "", createdAt: "", createdById: null },
     })
   );
 }
