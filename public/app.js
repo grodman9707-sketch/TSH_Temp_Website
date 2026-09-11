@@ -46,7 +46,6 @@ const state = {
   },
   reset: { email: "", sent: false },
   inviteCopied: false,
-  copiedExport: "",
 };
 
 function token() {
@@ -2172,62 +2171,6 @@ async function pageAdmin() {
     api("/api/admin/overview"),
     api("/api/preseason-bounty").catch(() => ({})),
   ]);
-  const backup = d.canOverride ? await api("/api/admin/backup").catch(() => ({ postgres: d.backup?.postgresConfigured ? { configured: true } : { configured: false }, airtable: { configured: Boolean(d.backup?.airtableConfigured) }, snapshots: [] })) : null;
-  const sheets = d.canOverride
-    ? await api("/api/admin/export-key").catch(() => ({ configured: false, key: "", formulas: {}, urls: {} }))
-    : null;
-  const sheetsPanel = (() => {
-    if (!sheets) return "";
-    const copyBtn = (id, text, label) =>
-      `<button type="button" class="btn-ghost" data-act="copy-text" data-copy-id="${esc(id)}" data-copy="${esc(text)}">${state.copiedExport === id ? "Copied" : label}</button>`;
-    const formulaRow = (id, label) => {
-      const formula = sheets.formulas?.[id] || "";
-      return `<div class="mt-3">
-        <div class="text-xs tracking-widest text-muted">${esc(label)}</div>
-        <div class="invite-row mt-1">
-          <input class="invite-url" value="${esc(formula)}" readonly aria-label="${esc(label)} IMPORTDATA formula">
-          ${copyBtn(`formula-${id}`, formula, "Copy formula")}
-        </div>
-      </div>`;
-    };
-    const workbookUrl = sheets.workbook?.url || "https://docs.google.com/spreadsheets/d/1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY/edit";
-    const workbookLink = `<div class="invite-row mt-3">
-           <input class="invite-url" value="${esc(workbookUrl)}" readonly aria-label="Staff Google Sheet URL">
-           <a class="btn-gold" href="${esc(workbookUrl)}" target="_blank" rel="noopener">Open spreadsheet</a>
-         </div>`;
-    const body = sheets.configured
-      ? `${workbookLink}
-         <div class="invite-row mt-3">
-           <input class="invite-url" value="${esc(sheets.key)}" readonly aria-label="Google Sheets API key">
-           ${copyBtn("key", sheets.key, "Copy key")}
-         </div>
-         <p class="mt-4 text-xs tracking-widest gold">PASTE INTO YOUR SPREADSHEET</p>
-         <p class="mt-1 text-sm text-muted">Open the staff sheet. Name three tabs <span class="gold">Standings</span>, <span class="gold">Fixtures</span>, and <span class="gold">Players</span> (rename Sheet1 if needed). Paste each formula into cell A1 of the matching tab. Google refreshes IMPORTDATA on its own (often about an hour).</p>
-         ${formulaRow("standings", "STANDINGS → tab Standings, cell A1")}
-         ${formulaRow("fixtures", "FIXTURES → tab Fixtures, cell A1")}
-         ${formulaRow("players", "PLAYERS → tab Players, cell A1")}
-         ${
-           d.isOwner
-             ? `<div class="mt-4 flex flex-wrap gap-2">
-                  <form data-form="SHEETSKEYGEN"><button class="btn-gold">REGENERATE KEY</button></form>
-                  <form data-form="SHEETSKEYREVOKE"><button class="btn-ghost">REVOKE KEY</button></form>
-                </div>`
-             : ""
-         }`
-      : `${workbookLink}
-         <p class="mt-3 text-sm text-muted">${
-           d.isOwner
-             ? "Generate a key, then paste each formula into A1 of the matching tab in the staff spreadsheet."
-             : "No key yet. An owner needs to generate one from this page, then paste the formulas into the staff spreadsheet."
-         }</p>
-         ${d.isOwner ? `<form class="mt-3" data-form="SHEETSKEYGEN"><button class="btn-gold">GENERATE KEY</button></form>` : ""}`;
-    return panel(
-      `<h2 class="text-lg font-bold">Google Sheets</h2>
-        <p class="mt-1 text-sm text-muted">The staff spreadsheet pulls standings, fixtures, and players from the live site. Treat the key like a password — anyone with it can read player emails. Passwords are never exported.</p>
-        ${body}`,
-      "mt-4"
-    );
-  })();
   const everyone = d.users;
   const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
@@ -2494,46 +2437,6 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
         <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
-      ${sheetsPanel}
-      ${
-        backup
-          ? panel(
-              `<h2 class="text-lg font-bold">Off-site backup &amp; spreadsheet</h2>
-        <p class="mt-1 text-sm text-muted">The website still stores the live league in its JSON file. Postgres on Railway keeps restore snapshots. Airtable is the staff spreadsheet (no passwords).</p>
-        <div class="mt-4 grid gap-3 md:grid-cols-2 text-sm">
-          <div><div class="text-xs tracking-widest text-muted">POSTGRES</div><div class="mt-1">${
-            backup.postgres?.configured
-              ? `<span class="gold">Connected</span>${backup.postgres.at ? ` · last ${esc(String(backup.postgres.at).replace("T", " ").slice(0, 16))} UTC` : ""}${backup.postgres.error ? `<p class="mt-1 text-red-400">${esc(backup.postgres.error)}</p>` : ""}`
-              : `Not set. In Railway: New → Database → PostgreSQL, then on this web service add <span class="gold">DATABASE_URL=\${{Postgres.DATABASE_URL}}</span> and redeploy.`
-          }</div></div>
-          <div><div class="text-xs tracking-widest text-muted">AIRTABLE</div><div class="mt-1">${
-            backup.airtable?.configured
-              ? `<span class="gold">Connected</span>${backup.airtable.at ? ` · last ${esc(String(backup.airtable.at).replace("T", " ").slice(0, 16))} UTC` : ""}${backup.airtable.players != null ? ` · ${esc(backup.airtable.players)} players` : ""}${backup.airtable.error ? `<p class="mt-1 text-red-400">${esc(backup.airtable.error)}</p>` : ""}`
-              : `Not set. Create a free Airtable base, then a personal access token with <span class="gold">data.records:read/write</span> and <span class="gold">schema.bases:read/write</span>. Add <span class="gold">AIRTABLE_TOKEN</span> and <span class="gold">AIRTABLE_BASE_ID</span> (the appXXXXXXXX from the base URL) on Railway.`
-          }</div></div>
-        </div>
-        <form class="mt-4" data-form="OFFSITEBACKUP"><button class="btn-gold">BACKUP &amp; SYNC NOW</button></form>
-        ${
-          (backup.snapshots || []).length
-            ? `<h3 class="mt-6 text-sm font-bold tracking-widest gold">SNAPSHOTS</h3>
-               <div class="mt-2 space-y-2">${backup.snapshots
-                 .map(
-                   (s) =>
-                     `<form class="split-row border-b border-white/10 py-2 text-sm" data-form="OFFSITERESTORE"><input type="hidden" name="id" value="${s.id}">
-                        <span>${esc(String(s.createdAt || "").replace("T", " ").slice(0, 19))} UTC · ${esc(s.source)} · ${esc(s.usersCount)} players · ${esc(s.fixturesCount)} fixtures</span>
-                        ${d.isOwner ? `<button class="btn-ghost">RESTORE</button>` : ""}
-                      </form>`
-                 )
-                 .join("")}</div>
-               <p class="mt-2 text-xs text-muted">Restore replaces the live JSON store with that snapshot. Match screenshots on disk are not in Postgres.</p>`
-            : backup.postgres?.configured
-              ? `<p class="mt-4 text-sm text-muted">No snapshots yet. Click Backup &amp; sync now after Postgres is connected.</p>`
-              : ""
-        }`,
-              "mt-4"
-            )
-          : ""
-      }
       ${
         d.isOwner
           ? panel(`<h2 class="text-lg font-bold">Manage fixtures</h2>
@@ -2804,28 +2707,6 @@ document.addEventListener("click", async (e) => {
       }
     }
     state.inviteCopied = true;
-    render();
-    return;
-  }
-  const copyText = e.target.closest("[data-act=copy-text]");
-  if (copyText) {
-    e.preventDefault();
-    const text = copyText.dataset.copy || "";
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      try {
-        const input = copyText.closest("div")?.querySelector("input[readonly]");
-        if (input) {
-          input.focus();
-          input.select();
-          document.execCommand("copy");
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    state.copiedExport = copyText.dataset.copyId || "ok";
     render();
     return;
   }
@@ -3257,31 +3138,6 @@ document.addEventListener("submit", async (e) => {
       if (res.sent) state.notice = `Test email sent to ${res.to} via ${res.from}. Check your inbox (and spam).${res.warning ? ` Note: ${res.warning}` : ""}`;
       else if (res.dev) state.notice = "Email is NOT configured on the server (no EMAIL_API_KEY) — the message was only logged, not sent.";
       else state.notice = `Test email failed: ${res.error || "unknown error"} (from ${res.from}).${res.warning ? ` ${res.warning}` : ""}`;
-      render();
-    } else if (kind === "OFFSITEBACKUP") {
-      const res = await api("/api/admin/backup/run", { method: "POST", body: "{}" });
-      const bits = [];
-      if (res.postgres) bits.push(`Postgres snapshot #${res.postgres.id}`);
-      if (res.airtable) bits.push("Airtable spreadsheet updated");
-      if (res.errors?.length) bits.push(res.errors.join(" "));
-      state.notice = bits.join(". ") || res.error || "Backup finished.";
-      render();
-    } else if (kind === "SHEETSKEYGEN") {
-      if (window.document.querySelector('input[aria-label="Google Sheets API key"]')) {
-        if (!window.confirm("Replace the current Google Sheets API key? Existing sheet formulas will stop working until you paste the new ones.")) return;
-      }
-      await api("/api/admin/export-key", { method: "POST", body: "{}" });
-      state.notice = "Google Sheets API key saved. Open the staff spreadsheet and paste each formula into A1 of the matching tab.";
-      render();
-    } else if (kind === "SHEETSKEYREVOKE") {
-      if (!window.confirm("Revoke the Google Sheets API key? Connected sheets will stop updating until you generate a new key.")) return;
-      await api("/api/admin/export-key/revoke", { method: "POST", body: "{}" });
-      state.notice = "Google Sheets API key revoked.";
-      render();
-    } else if (kind === "OFFSITERESTORE") {
-      if (!window.confirm("Replace the live league data with this Postgres snapshot? This cannot be undone except by restoring a later snapshot.")) return;
-      const res = await api("/api/admin/backup/restore", { method: "POST", body: JSON.stringify({ id: fd.id }) });
-      state.notice = `Restored snapshot ${res.restoredId}. ${res.users} accounts are on the site now.`;
       render();
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });

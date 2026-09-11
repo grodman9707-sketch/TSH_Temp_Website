@@ -201,8 +201,8 @@ try {
   check("overview flags backup as unconfigured", overview.data.backup?.postgresConfigured === false && overview.data.backup?.airtableConfigured === false);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  check("owner desk has backup panel", appJs.includes("Off-site backup") && appJs.includes("OFFSITEBACKUP") && appJs.includes("AIRTABLE_BASE_ID"));
-  check("owner desk can restore snapshots", appJs.includes("OFFSITERESTORE"));
+  check("owner desk hides the backup box", !appJs.includes("Off-site backup") && !appJs.includes("OFFSITEBACKUP") && !appJs.includes("AIRTABLE_BASE_ID"));
+  check("owner desk hides snapshot restore", !appJs.includes("OFFSITERESTORE"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
