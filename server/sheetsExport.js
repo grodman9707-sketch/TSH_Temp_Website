@@ -123,6 +123,48 @@ export function sheetsImportFormulas(origin, key) {
   return out;
 }
 
+// Official staff Google Sheet. Override with GOOGLE_SHEETS_SPREADSHEET_ID if needed.
+export const DEFAULT_STAFF_SPREADSHEET_ID = "1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY";
+
+export function staffSpreadsheetId() {
+  return String(process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_STAFF_SPREADSHEET_ID).trim();
+}
+
+export function staffSpreadsheetUrl(id = staffSpreadsheetId()) {
+  const sheetId = String(id || "").trim();
+  return sheetId ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit` : "";
+}
+
+export function staffWorkbook(origin, key) {
+  const id = staffSpreadsheetId();
+  const formulas = sheetsImportFormulas(origin, key);
+  return {
+    id,
+    url: staffSpreadsheetUrl(id),
+    tabs: SHEETS_TABLES.map((t) => ({
+      id: t.id,
+      title: t.title,
+      cell: "A1",
+      formula: formulas[t.id] || "",
+    })),
+  };
+}
+
+export function sheetsKeyPayload(origin, state = {}) {
+  const configured = Boolean(state.configured);
+  const key = configured ? String(state.key || "").trim() : "";
+  const formulaKey = key || "YOUR_KEY";
+  return {
+    ok: true,
+    configured,
+    key,
+    createdAt: state.createdAt || "",
+    urls: sheetsExportUrls(origin, formulaKey),
+    formulas: sheetsImportFormulas(origin, formulaKey),
+    workbook: staffWorkbook(origin, formulaKey),
+  };
+}
+
 export const EXPORT_CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",

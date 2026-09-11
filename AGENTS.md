@@ -36,8 +36,10 @@ persisted to a JSON file store (`data/db.json`).
   `5173`) and `HOST` (default `0.0.0.0`). Health check: `GET /health` → `{"ok":true}`.
 - Live league data still lives in `data/db.json` (or `$DATA_DIR/db.json` on Railway).
   Optional off-site copies: Railway PostgreSQL (`DATABASE_URL`) stores restore
-  snapshots; Airtable (`AIRTABLE_TOKEN` + `AIRTABLE_BASE_ID`) is the staff
-  spreadsheet. Neither is required to run the site.
+  snapshots; Airtable (`AIRTABLE_TOKEN` + `AIRTABLE_BASE_ID`) is an optional
+  staff spreadsheet. Google Sheets pulls from `/api/export` via Owner desk
+  formulas into the official workbook (override with `GOOGLE_SHEETS_SPREADSHEET_ID`).
+  Neither Airtable nor Google credentials are required to run the site.
 - `pg` is the only npm dependency (Postgres client). `npm install` is required
   after clone if you use Postgres backups; the app still boots without
   `DATABASE_URL`.
@@ -74,7 +76,12 @@ These are optional. After they are configured, Owner desk → **Off-site backup 
 2. On the **web** service → Variables → add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference the Postgres service). Redeploy.
 3. The site keeps writing `db.json`; it also stores the last 30 snapshots in `league_snapshots`. Passwords stay in Postgres so a restore can log people back in. Match screenshot files are not in the snapshot.
 
-**Airtable (staff spreadsheet)**
+**Google Sheets (staff spreadsheet)**
+1. The official workbook is [this Google Sheet](https://docs.google.com/spreadsheets/d/1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY/edit) (`GOOGLE_SHEETS_SPREADSHEET_ID` if you switch files).
+2. Owner desk → **Google Sheets** → generate a key, then paste each `IMPORTDATA` formula into cell A1 of tabs named **Standings**, **Fixtures**, and **Players**.
+3. Google refreshes `IMPORTDATA` on its own (often about an hour). The key can read player emails; passwords are never exported.
+
+**Airtable (optional staff spreadsheet)**
 1. Create a free Airtable base (empty is fine).
 2. [Create a personal access token](https://airtable.com/create/tokens) with scopes `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`, access to that base.
 3. On the Railway **web** service set `AIRTABLE_TOKEN` and `AIRTABLE_BASE_ID` (`app…` from the base URL). Redeploy.
