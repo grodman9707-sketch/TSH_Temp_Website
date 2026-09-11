@@ -32,6 +32,7 @@ import {
   sheetsExportState,
   sheetsExportUrls,
   sheetsImportFormulas,
+  sheetsKeyPayload,
   sheetsRows,
 } from "./sheetsExport.js";
 
@@ -2234,30 +2235,13 @@ async function handleApi(req, res, url) {
     }
     if (method === "GET" && p === "/api/admin/export-key") {
       if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can manage the Google Sheets key" });
-      const origin = requestOrigin(req);
-      const state = sheetsExportState(db);
-      return json(res, 200, {
-        ok: true,
-        configured: state.configured,
-        key: state.key || "",
-        createdAt: state.createdAt || "",
-        urls: state.configured ? sheetsExportUrls(origin, state.key) : sheetsExportUrls(origin, "YOUR_KEY"),
-        formulas: state.configured ? sheetsImportFormulas(origin, state.key) : sheetsImportFormulas(origin, "YOUR_KEY"),
-      });
+      return json(res, 200, sheetsKeyPayload(requestOrigin(req), sheetsExportState(db)));
     }
     if (method === "POST" && p === "/api/admin/export-key") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can generate the Google Sheets key" });
       const state = setSheetsApiKey(db, { userId: user.id });
       persistDb(db);
-      const origin = requestOrigin(req);
-      return json(res, 200, {
-        ok: true,
-        configured: true,
-        key: state.key,
-        createdAt: state.createdAt,
-        urls: sheetsExportUrls(origin, state.key),
-        formulas: sheetsImportFormulas(origin, state.key),
-      });
+      return json(res, 200, sheetsKeyPayload(requestOrigin(req), state));
     }
     if (method === "POST" && p === "/api/admin/export-key/revoke") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can revoke the Google Sheets key" });

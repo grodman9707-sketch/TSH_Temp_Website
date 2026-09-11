@@ -7,12 +7,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { snapshotPayload } from "./postgresBackup.js";
 import {
+  DEFAULT_STAFF_SPREADSHEET_ID,
   generateSheetsApiKey,
   keysEqual,
   setSheetsApiKey,
   sheetsApiKeyValid,
   sheetsCsv,
+  sheetsKeyPayload,
   sheetsRows,
+  staffSpreadsheetUrl,
   toCsv,
 } from "./sheetsExport.js";
 
@@ -87,6 +90,18 @@ check("wrong key is rejected", sheetsApiKeyValid(db, "tsh_other") === false);
 check("empty key is rejected", sheetsApiKeyValid(db, "") === false);
 check("timing-safe equal rejects length mismatch", keysEqual("abc", "ab") === false);
 check("generated keys use the tsh_ prefix", generateSheetsApiKey().startsWith("tsh_"));
+check(
+  "official staff spreadsheet is the league workbook",
+  DEFAULT_STAFF_SPREADSHEET_ID === "1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY"
+);
+check(
+  "staff spreadsheet URL uses that id",
+  staffSpreadsheetUrl() === "https://docs.google.com/spreadsheets/d/1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY/edit"
+);
+const payload = sheetsKeyPayload("https://tshdartsleague.com", { configured: true, key: "tsh_testkey", createdAt: "2026-09-11" });
+check("admin payload includes the workbook url", payload.workbook?.url === staffSpreadsheetUrl());
+check("admin payload tabs are standings fixtures players", payload.workbook?.tabs?.map((t) => t.title).join(",") === "Players,Standings,Fixtures");
+check("standings formula targets the live export", payload.workbook?.tabs?.some((t) => t.title === "Standings" && t.cell === "A1" && t.formula.includes("/api/export/standings.csv?key=tsh_testkey")));
 
 const snap = snapshotPayload(db);
 check("postgres snapshot keeps the sheets API key", snap.sheetsExport?.key === "tsh_testkey");
@@ -172,10 +187,16 @@ try {
   const created = await api(port, "/api/admin/export-key", { method: "POST", token: ownerTok, body: {} });
   check("owner can generate a key", created.status === 200 && String(created.data.key || "").startsWith("tsh_"));
   check("owner response includes IMPORTDATA formulas", String(created.data.formulas?.standings || "").startsWith("=IMPORTDATA("));
+  check(
+    "owner response points at the staff spreadsheet",
+    created.data.workbook?.id === "1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY" &&
+      String(created.data.workbook?.url || "").includes("1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY")
+  );
   const key = created.data.key;
 
   const shown = await api(port, "/api/admin/export-key", { token: ownerTok });
   check("owner can copy the key later", shown.status === 200 && shown.data.key === key);
+  check("owner can reopen the staff spreadsheet url", shown.data.workbook?.url === created.data.workbook?.url);
 
   const wrong = await api(port, `/api/export/standings.csv?key=nope`);
   check("wrong query key is rejected", wrong.status === 401);
@@ -211,6 +232,7 @@ try {
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   check("owner desk has a Google Sheets panel", appJs.includes("Google Sheets") && appJs.includes("SHEETSKEYGEN") && appJs.includes("IMPORTDATA"));
   check("owner desk can revoke the sheets key", appJs.includes("SHEETSKEYREVOKE"));
+  check("owner desk links the official staff spreadsheet", appJs.includes("1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY") && appJs.includes("Open spreadsheet"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

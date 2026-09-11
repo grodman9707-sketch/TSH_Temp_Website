@@ -2190,16 +2190,22 @@ async function pageAdmin() {
         </div>
       </div>`;
     };
+    const workbookUrl = sheets.workbook?.url || "https://docs.google.com/spreadsheets/d/1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY/edit";
+    const workbookLink = `<div class="invite-row mt-3">
+           <input class="invite-url" value="${esc(workbookUrl)}" readonly aria-label="Staff Google Sheet URL">
+           <a class="btn-gold" href="${esc(workbookUrl)}" target="_blank" rel="noopener">Open spreadsheet</a>
+         </div>`;
     const body = sheets.configured
-      ? `<div class="invite-row mt-3">
+      ? `${workbookLink}
+         <div class="invite-row mt-3">
            <input class="invite-url" value="${esc(sheets.key)}" readonly aria-label="Google Sheets API key">
            ${copyBtn("key", sheets.key, "Copy key")}
          </div>
-         <p class="mt-4 text-xs tracking-widest gold">GOOGLE SHEETS FORMULAS</p>
-         <p class="mt-1 text-sm text-muted">In a Google Sheet, paste a formula into cell A1. It fills the sheet from the live site. Google refreshes IMPORTDATA on its own (often about an hour).</p>
-         ${formulaRow("standings", "STANDINGS")}
-         ${formulaRow("fixtures", "FIXTURES")}
-         ${formulaRow("players", "PLAYERS")}
+         <p class="mt-4 text-xs tracking-widest gold">PASTE INTO YOUR SPREADSHEET</p>
+         <p class="mt-1 text-sm text-muted">Open the staff sheet. Name three tabs <span class="gold">Standings</span>, <span class="gold">Fixtures</span>, and <span class="gold">Players</span> (rename Sheet1 if needed). Paste each formula into cell A1 of the matching tab. Google refreshes IMPORTDATA on its own (often about an hour).</p>
+         ${formulaRow("standings", "STANDINGS → tab Standings, cell A1")}
+         ${formulaRow("fixtures", "FIXTURES → tab Fixtures, cell A1")}
+         ${formulaRow("players", "PLAYERS → tab Players, cell A1")}
          ${
            d.isOwner
              ? `<div class="mt-4 flex flex-wrap gap-2">
@@ -2208,13 +2214,16 @@ async function pageAdmin() {
                 </div>`
              : ""
          }`
-      : `<p class="mt-3 text-sm text-muted">${
-          d.isOwner ? "No key yet. Generate one, then paste a formula into Google Sheets." : "No key yet. An owner needs to generate one from this page."
-        }</p>
+      : `${workbookLink}
+         <p class="mt-3 text-sm text-muted">${
+           d.isOwner
+             ? "Generate a key, then paste each formula into A1 of the matching tab in the staff spreadsheet."
+             : "No key yet. An owner needs to generate one from this page, then paste the formulas into the staff spreadsheet."
+         }</p>
          ${d.isOwner ? `<form class="mt-3" data-form="SHEETSKEYGEN"><button class="btn-gold">GENERATE KEY</button></form>` : ""}`;
     return panel(
       `<h2 class="text-lg font-bold">Google Sheets</h2>
-        <p class="mt-1 text-sm text-muted">Pull standings, fixtures, and players straight from the site. Treat the key like a password — anyone with it can read player emails. Passwords are never exported.</p>
+        <p class="mt-1 text-sm text-muted">The staff spreadsheet pulls standings, fixtures, and players from the live site. Treat the key like a password — anyone with it can read player emails. Passwords are never exported.</p>
         ${body}`,
       "mt-4"
     );
@@ -3262,7 +3271,7 @@ document.addEventListener("submit", async (e) => {
         if (!window.confirm("Replace the current Google Sheets API key? Existing sheet formulas will stop working until you paste the new ones.")) return;
       }
       await api("/api/admin/export-key", { method: "POST", body: "{}" });
-      state.notice = "Google Sheets API key saved. Copy a formula below into cell A1 of your sheet.";
+      state.notice = "Google Sheets API key saved. Open the staff spreadsheet and paste each formula into A1 of the matching tab.";
       render();
     } else if (kind === "SHEETSKEYREVOKE") {
       if (!window.confirm("Revoke the Google Sheets API key? Connected sheets will stop updating until you generate a new key.")) return;
