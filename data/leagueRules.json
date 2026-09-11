@@ -453,19 +453,15 @@
             },
             {
               "type": "p",
-              "text": "TSH Europe divisions, from highest to lowest:"
+              "text": "TSH Europe and TSH Americas each have four divisions, from highest to lowest:"
             },
             {
               "type": "ul",
               "items": [
-                "Premier",
-                "Championship",
                 "Division 1",
                 "Division 2",
                 "Division 3",
-                "Division 4",
-                "Foundation",
-                "Development"
+                "Division 4"
               ]
             },
             {
