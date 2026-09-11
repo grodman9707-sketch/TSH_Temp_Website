@@ -588,18 +588,34 @@ function divisionName(league) {
   const m = raw.match(/^League\s+(\d+)$/i);
   return m ? `Division ${m[1]}` : raw;
 }
-const EUROPE_DIVISION_LADDER = [
-  "Premier",
-  "Championship",
-  "Division 1",
-  "Division 2",
-  "Division 3",
-  "Division 4",
-  "Foundation",
-  "Development",
-];
+const EUROPE_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4"];
+const EUROPE_RETIRED_DIVISIONS = {
+  premier: "Division 1",
+  championship: "Division 1",
+  foundation: "Division 4",
+  development: "Division 4",
+};
 function europeRegional(db) {
   return (db.regionals || []).find((r) => r.slug === "europe" || Number(r.id) === 1) || null;
+}
+function remapLeagueIdList(list, fromId, toId) {
+  if (!Array.isArray(list)) return list;
+  return [...new Set(list.map(Number).map((id) => (id === Number(fromId) ? Number(toId) : id)).filter(Boolean))];
+}
+function remapRetiredEuropeLeague(db, fromId, toId) {
+  const from = Number(fromId);
+  const to = Number(toId);
+  if (!from || !to || from === to) return;
+  for (const u of db.users || []) {
+    if (Number(u.leagueId) === from) u.leagueId = to;
+    if (Array.isArray(u.leagueIds)) u.leagueIds = remapLeagueIdList(u.leagueIds, from, to);
+    if (Number(u.adminLeagueId) === from) u.adminLeagueId = to;
+    if (Array.isArray(u.adminLeagueIds)) u.adminLeagueIds = remapLeagueIdList(u.adminLeagueIds, from, to);
+    if (Array.isArray(u.adminLeagueIds)) syncAdminLeagues(u);
+  }
+  for (const row of [...(db.fixtures || []), ...(db.applications || []), ...(db.leagueRequests || []), ...(db.approvals || [])]) {
+    if (Number(row.leagueId) === from) row.leagueId = to;
+  }
 }
 function ensureEuropeDivisions(db) {
   if (!Array.isArray(db.leagues)) db.leagues = [];
@@ -631,6 +647,19 @@ function ensureEuropeDivisions(db) {
       changed = true;
     }
   });
+  const keepNames = new Set(EUROPE_DIVISION_LADDER.map((name) => name.toLowerCase()));
+  const extras = db.leagues.filter(
+    (l) => Number(l.regionalId) === Number(europe.id) && !keepNames.has(String(l.name || "").trim().toLowerCase())
+  );
+  for (const extra of extras) {
+    const targetName = EUROPE_RETIRED_DIVISIONS[String(extra.name || "").trim().toLowerCase()] || "Division 4";
+    const target = db.leagues.find(
+      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === targetName.toLowerCase()
+    );
+    if (target) remapRetiredEuropeLeague(db, extra.id, target.id);
+    db.leagues = db.leagues.filter((l) => l.id !== extra.id);
+    changed = true;
+  }
   return changed;
 }
 function leagueTitle(db, league) {
