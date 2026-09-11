@@ -35,11 +35,10 @@ persisted to a JSON file store (`data/db.json`).
   `start` and `dev` scripts in `package.json`). It listens on `PORT` (default
   `5173`) and `HOST` (default `0.0.0.0`). Health check: `GET /health` → `{"ok":true}`.
 - Live league data still lives in `data/db.json` (or `$DATA_DIR/db.json` on Railway).
-  Optional off-site copies: Railway PostgreSQL (`DATABASE_URL`) stores restore
-  snapshots; Airtable (`AIRTABLE_TOKEN` + `AIRTABLE_BASE_ID`) is an optional
-  staff spreadsheet. Google Sheets pulls from `/api/export` via Owner desk
-  formulas into the official workbook (override with `GOOGLE_SHEETS_SPREADSHEET_ID`).
-  Neither Airtable nor Google credentials are required to run the site.
+  Owner data review uses Google Sheets via `/api/export` (standings, fixtures,
+  players) into the official workbook (`GOOGLE_SHEETS_SPREADSHEET_ID`). Optional
+  Railway PostgreSQL (`DATABASE_URL`) can still store restore snapshots; Airtable
+  is unused. Neither is required to run the site.
 - `pg` is the only npm dependency (Postgres client). `npm install` is required
   after clone if you use Postgres backups; the app still boots without
   `DATABASE_URL`.
@@ -67,25 +66,20 @@ persisted to a JSON file store (`data/db.json`).
 - `server/pdcTicker.js` fetches a PDC event ticker from Wikipedia but has built-in
   `FALLBACK_EVENTS`, so `/api/ticker` works even without outbound network access.
 
-### Off-site backup (Railway Postgres + Airtable)
+### Off-site backup and Google Sheets
 
-These are optional. After they are configured, Owner desk → **Off-site backup & spreadsheet** can run a sync and restore.
+Owner desk no longer shows the Google Sheets or Airtable/backup boxes. Staff
+review the live league in Google Sheets.
 
-**Postgres (restore backup)**
-1. Railway project → **New** → **Database** → **PostgreSQL**.
-2. On the **web** service → Variables → add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference the Postgres service). Redeploy.
-3. The site keeps writing `db.json`; it also stores the last 30 snapshots in `league_snapshots`. Passwords stay in Postgres so a restore can log people back in. Match screenshot files are not in the snapshot.
-
-**Google Sheets (staff spreadsheet)**
+**Google Sheets (owner data review)**
 1. The official workbook is [this Google Sheet](https://docs.google.com/spreadsheets/d/1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY/edit) (`GOOGLE_SHEETS_SPREADSHEET_ID` if you switch files).
-2. Owner desk → **Google Sheets** → generate a key, then paste each `IMPORTDATA` formula into cell A1 of tabs named **Standings**, **Fixtures**, and **Players**.
+2. After an owner generates a `tsh_…` export key (`POST /api/admin/export-key`), paste each `IMPORTDATA` formula into cell A1 of tabs named **Standings**, **Fixtures**, and **Players**.
 3. Google refreshes `IMPORTDATA` on its own (often about an hour). The key can read player emails; passwords are never exported.
 
-**Airtable (optional staff spreadsheet)**
-1. Create a free Airtable base (empty is fine).
-2. [Create a personal access token](https://airtable.com/create/tokens) with scopes `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`, access to that base.
-3. On the Railway **web** service set `AIRTABLE_TOKEN` and `AIRTABLE_BASE_ID` (`app…` from the base URL). Redeploy.
-4. First sync creates **Players**, **Standings**, and **Fixtures**. Share the base with staff in Airtable. Never put the token in git. Player passwords are not sent to Airtable.
+**Postgres (optional restore backup)**
+1. Railway project → **New** → **Database** → **PostgreSQL**.
+2. On the **web** service → Variables → add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference the Postgres service). Redeploy.
+3. The site keeps writing `db.json`; it also stores the last 30 snapshots in `league_snapshots` when `/api/admin/backup/run` is called. Passwords stay in Postgres so a restore can log people back in. Match screenshot files are not in the snapshot.
 
 ### Hello-world smoke test
 

@@ -230,9 +230,7 @@ try {
   check("revoked key stops working", afterRevoke.status === 401);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  check("owner desk has a Google Sheets panel", appJs.includes("Google Sheets") && appJs.includes("SHEETSKEYGEN") && appJs.includes("IMPORTDATA"));
-  check("owner desk can revoke the sheets key", appJs.includes("SHEETSKEYREVOKE"));
-  check("owner desk links the official staff spreadsheet", appJs.includes("1Frq5HEWdD_Dld8bIOCq0_CqH7BaTY_ikgIHzqYMMmLY") && appJs.includes("Open spreadsheet"));
+  check("owner desk hides the Google Sheets box", !appJs.includes("SHEETSKEYGEN") && !appJs.includes("SHEETSKEYREVOKE") && !appJs.includes("Open spreadsheet"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
