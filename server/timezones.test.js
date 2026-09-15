@@ -35,6 +35,8 @@ check("isValidTimeZone accepts a real zone", isValidTimeZone("America/Los_Angele
 check("isValidTimeZone rejects junk", isValidTimeZone("Not/AZone") === false);
 check("defaultTimezoneForRegional maps americas -> New York", defaultTimezoneForRegional("americas") === "America/New_York");
 check("defaultTimezoneForRegional maps europe -> London", defaultTimezoneForRegional("europe") === "Europe/London");
+check("defaultTimezoneForRegional maps world -> UTC", defaultTimezoneForRegional("world") === "UTC");
+check("defaultTimezoneForRegional maps world-americas -> New York", defaultTimezoneForRegional("world-americas") === "America/New_York");
 
 // --- reminder uses the absolute startAt regardless of naive date/time ---
 const now = new Date("2026-08-20T12:00:00Z");

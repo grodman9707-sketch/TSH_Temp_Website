@@ -83,7 +83,7 @@ try {
       name: "Join Me",
       email: "join-me@test.com",
       password: "pass1234",
-      regional: "both",
+      regional: "world",
       dartcounterName: "JoinMeDC",
       avg: 44,
     },

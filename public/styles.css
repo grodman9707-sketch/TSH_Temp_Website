@@ -411,6 +411,17 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   border-color: #e8b425;
   box-shadow: 0 0 0 1px #e8b425;
 }
+.region-card-crests {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.region-card-crest {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+}
 .result-shot {
   width: 100%;
   max-height: 420px;

@@ -726,22 +726,31 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png",
-  europe: "/images/tsh-europe-crest.png",
-  americas: "/images/tsh-america-crest.png",
+  main: "/images/tsh-main-crest.png?v=45",
+  europe: "/images/tsh-europe-crest.png?v=45",
+  americas: "/images/tsh-america-crest.png?v=45",
+  world: "/images/tsh-world-crest.png?v=45",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
   return `<img src="${src}" alt="TSH" class="crest-img ${extraClass}" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
 }
 function regionalCrest(slug) {
+  if (slug === "world") return "world";
   if (slug === "europe") return "europe";
   if (slug === "americas" || slug === "america") return "americas";
   return "main";
 }
+function isWorldSlug(slug) {
+  return slug === "world";
+}
 function regionalMainTimezone(slug) {
+  if (slug === "world") return "UTC";
   if (slug === "americas" || slug === "america") return "US Eastern Time (ET)";
   return "UK time (GMT/BST)";
+}
+function competitionKindLabel(r) {
+  return isWorldSlug(r?.slug) ? "Worlds League" : "regional league";
 }
 function regionalTimezoneAck(r) {
   if (!r) return "";
@@ -1191,13 +1200,15 @@ async function pageHome() {
       <div class="mx-auto max-w-5xl text-center">
         <h2 class="page-title font-bold">Join Our Active Communities</h2>
         <p class="mt-3 text-muted">${esc(content.content.communities_description)}</p>
-        <div class="mt-10 grid gap-4 md:grid-cols-2">
+        <div class="mt-10 grid gap-4 md:grid-cols-3">
           ${regionals.regionals
             .map(
               (r) =>
                 `<a href="/regionals/${r.slug}" class="community-card glass rounded-xl p-5 hover:border-primary sm:p-6">${crest(96, regionalCrest(r.slug))}<div class="min-w-0"><h3 class="text-xl font-bold">${esc(r.fullTitle)}</h3><p class="mt-2 text-sm text-muted">${esc(r.region)} — climb the divisions weekly.</p></div></a>`
             )
             .join("")}
+        </div>
+        <div class="mt-4 grid gap-4 md:grid-cols-2">
           ${messengerCards(content.league)}
           ${inviteShareCard()}
         </div>
@@ -1242,7 +1253,7 @@ async function pageRegionals() {
   return layout(
     `<div class="mx-auto max-w-xl px-4 py-10">
       <a href="/" class="gold text-sm font-bold">← TSH</a>
-      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="page-title font-extrabold tracking-widest">REGIONALS</h1><p class="mt-2 text-sm text-muted">TSH Darts League → pick a region, then a division.</p></div>`)}
+      ${panel(`<div class="text-center"><div class="gold mx-auto mb-3 text-xl">◎</div><h1 class="page-title font-extrabold tracking-widest">LEAGUES</h1><p class="mt-2 text-sm text-muted">TSH Darts League → Worlds League and regionals, then a division.</p></div>`)}
       <div class="mt-4 space-y-3">
         ${(d.regionals || [])
           .map((r) => {
@@ -1255,7 +1266,7 @@ async function pageRegionals() {
             return `<div class="glass rounded-xl p-5">
               <a href="/regionals/${r.slug}" class="split-row text-left">
                 <div>
-                  <div class="text-[11px] font-bold tracking-widest gold">REGIONAL LEAGUE</div>
+                  <div class="text-[11px] font-bold tracking-widest gold">${isWorldSlug(r.slug) ? "WORLDS LEAGUE" : "REGIONAL LEAGUE"}</div>
                   <div class="mt-1 text-lg font-bold">${esc(r.name)}</div>
                   <div class="text-sm text-muted">${esc(r.fullTitle)}</div>
                 </div>
@@ -1278,7 +1289,7 @@ async function pageRegional(slug) {
     `<div class="mx-auto max-w-xl px-4 py-10">
       <a href="/regionals" class="gold">← TSH · Regionals</a>
       <div class="mt-2 text-xl font-bold">${esc(r.name)}</div>
-      <p class="text-sm text-muted">${esc(r.fullTitle)} regional league</p>
+      <p class="text-sm text-muted">${esc(r.fullTitle)} ${competitionKindLabel(r)}</p>
       ${panel(`<div class="text-center"><img src="${CRESTS[regionalCrest(r.slug)]}" alt="${esc(r.fullTitle)}" class="crest-regional mx-auto"><div class="mt-3 text-sm font-bold tracking-[0.3em] gold">${esc(r.name.toUpperCase())}</div></div>`, "mt-6")}
       ${regionalTimezoneAck(r)}
       <a href="/rules" class="glass mt-3 flex items-center justify-between gap-3 rounded-xl px-4 py-4 sm:px-5"><span class="min-w-0">📘 ${esc(r.fullTitle)} Rules</span><span class="shrink-0 text-sm text-muted">Read more ></span></a>
@@ -1540,7 +1551,7 @@ function pageSignUp() {
   const s = state.signup;
   const step = s.step || 1;
   const total = 5;
-  const labels = ["Account", "Regional", "DartCounter", "Nickname", "3DA"];
+  const labels = ["Account", "Leagues", "DartCounter", "Nickname", "3DA"];
   const dots = labels
     .map((label, i) => {
       const n = i + 1;
@@ -1562,18 +1573,23 @@ function pageSignUp() {
       <p class="text-xs text-muted">One account per player. If you already registered, <a class="gold" href="/sign-in">sign in</a> instead.</p>
     `;
   } else if (step === 2) {
-    const opt = (key, title, img, note) => `
+    const opt = (key, title, imgs, note) => {
+      const pics = (Array.isArray(imgs) ? imgs : [imgs])
+        .map((src) => `<img src="${src}" alt="" class="region-card-crest" width="96" height="96">`)
+        .join("");
+      return `
       <button type="button" class="region-card ${s.regional === key ? "selected" : ""}" data-act="signup-region" data-region="${key}">
-        <img src="${img}" alt="${title}" class="mx-auto" style="width:108px;height:108px;object-fit:contain">
+        <div class="region-card-crests">${pics}</div>
         <div class="mt-3 font-bold">${title}</div>
         <div class="mt-1 text-xs text-muted">${note}</div>
       </button>`;
+    };
     body = `
-      <p class="text-sm text-muted">Choose where you want to compete. Both lets you play in one Europe league and one Americas league.</p>
+      <p class="text-sm text-muted">Every player is in the Worlds League. You may also pick <b>one</b> regional — Europe or Americas — but you cannot play in both regionals. Two leagues max: Worlds + one regional.</p>
       <div class="grid gap-3">
-        ${opt("europe", "TSH Europe", CRESTS.europe, "United Kingdom & Europe")}
-        ${opt("americas", "TSH Americas", CRESTS.americas, "North & South America")}
-        ${opt("both", "Both", CRESTS.main, "One Europe league and one Americas league")}
+        ${opt("world", "Worlds League only", CRESTS.world, "TSH World · Divisions 1–5")}
+        ${opt("world-europe", "World + Europe", [CRESTS.world, CRESTS.europe], "Worlds League plus TSH Europe")}
+        ${opt("world-americas", "World + Americas", [CRESTS.world, CRESTS.americas], "Worlds League plus TSH Americas")}
       </div>
       ${!s.regional && state.error ? "" : ""}
     `;
@@ -1632,13 +1648,12 @@ async function pageApply() {
       `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
         <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
         <h1 class="mt-2 page-title font-extrabold">Already in the league</h1>
-        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Open Player Hub → Player profile to join a second regional or ask to withdraw from one or all leagues.</p>
+        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Open Player Hub → Player profile to add Worlds League or one regional, or ask to withdraw from one or all leagues.</p>
         <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
       `)}</div>`,
       { arena: true }
     );
   }
-  const d = await api("/api/regionals");
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
       <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
@@ -1647,7 +1662,11 @@ async function pageApply() {
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       <form class="mt-6 space-y-4" data-form="APPLY">
-        <select name="regionalId">${d.regionals.map((r) => `<option value="${r.id}">${esc(r.fullTitle)}</option>`).join("")}</select>
+        <select name="regional">
+          <option value="world">Worlds League only</option>
+          <option value="world-europe">World + Europe</option>
+          <option value="world-americas">World + Americas</option>
+        </select>
         <input name="dartcounterName" placeholder="DartCounter username">
         <input name="avg" type="number" step="0.1" placeholder="3-dart average" required>
         <button class="btn-gold w-full py-3">${state.user ? "SUBMIT APPLICATION" : "SIGN UP TO APPLY"}</button>
@@ -1664,7 +1683,7 @@ function leagueChangeInner(u) {
   const pendingDrops = pending.filter((r) => r.kind === "drop");
   const pendingDropAll = pendingDrops.find((r) => r.scope === "all" || r.leagueId == null);
   const dropPendingIds = new Set(pendingDrops.filter((r) => r.leagueId != null).map((r) => Number(r.leagueId)));
-  const open = u.openJoinRegional;
+  const opens = Array.isArray(u.openJoinRegionals) && u.openJoinRegionals.length ? u.openJoinRegionals : u.openJoinRegional ? [u.openJoinRegional] : [];
   const dropChoices = pendingDropAll ? [] : leagues.filter((l) => !dropPendingIds.has(Number(l.id)));
   const list =
     leagues.length
@@ -1672,19 +1691,27 @@ function leagueChangeInner(u) {
           .map((l) => `<li><b>${esc(l.title)}</b> <span class="text-muted">· ${esc(l.regionalName)}</span></li>`)
           .join("")}</ul>`
       : `<p class="mt-3 text-sm text-muted">You are not in a division yet. An admin will place you after you apply.</p>`;
+  const joinPicker =
+    opens.length === 1
+      ? `<input type="hidden" name="regionalId" value="${opens[0].id}">
+          <p class="text-sm text-muted">Add <b>${esc(opens[0].name)}</b> as a second league. Worlds League plus one regional is the maximum. This notifies every admin and owner, then they place you.</p>`
+      : `<select name="regionalId" required>
+            <option value="">Choose a league</option>
+            ${opens.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}
+          </select>
+          <p class="text-sm text-muted">Add Worlds League, or one regional if you already play World. You cannot play in both Europe and Americas.</p>`;
   const joinBlock = pendingJoin
     ? `<p class="mt-4 text-sm gold">Second-league request sent for ${esc(pendingJoin.regionalName)}. Every admin and owner has been notified. An admin will place you.</p>
        <form class="mt-3" data-form="CANCELLEAGUE"><input type="hidden" name="id" value="${pendingJoin.id}"><button class="btn-ghost">CANCEL REQUEST</button></form>`
-    : open
+    : opens.length
       ? `<form class="mt-4 space-y-3" data-form="JOINLEAGUE">
-          <input type="hidden" name="regionalId" value="${open.id}">
-          <p class="text-sm text-muted">Add <b>${esc(open.name)}</b> as a second regional. This notifies every admin and owner, then they place you in a division there.</p>
+          ${joinPicker}
           <input name="note" maxlength="300" placeholder="Optional note for admins">
-          <button class="btn-gold">JOIN ${esc(open.name).toUpperCase()}</button>
+          <button class="btn-gold">${opens.length === 1 ? `JOIN ${esc(opens[0].name).toUpperCase()}` : "REQUEST SECOND LEAGUE"}</button>
         </form>`
-      : leagues.length >= 2
-        ? `<p class="mt-4 text-sm text-muted">You already play in both regionals.</p>`
-        : `<p class="mt-4 text-sm text-muted">You already asked to play in both regionals. An admin will place you in each.</p>`;
+      : leagues.length >= 2 || (Array.isArray(u.regionalIds) && u.regionalIds.length >= 2)
+        ? `<p class="mt-4 text-sm text-muted">You already play in two leagues (Worlds plus one regional, or a legacy pair). You cannot add a third.</p>`
+        : `<p class="mt-4 text-sm text-muted">You already asked to play in a second league. An admin will place you.</p>`;
   const dropBlock = pendingDrops.length
     ? `<div class="mt-4 space-y-2">${pendingDrops
         .map(
@@ -1709,8 +1736,8 @@ function leagueChangeInner(u) {
       : !leagues.length
         ? `<p class="mt-4 text-sm text-muted">After you are placed, you can ask to withdraw from one or all of your leagues here.</p>`
         : "";
-  return `<h3 class="text-sm font-bold tracking-widest uppercase gold">Leagues &amp; regionals</h3>
-      <p class="mt-1 text-sm text-muted">Join a second regional, or tell every admin and owner you want to leave one or all of your leagues.</p>
+  return `<h3 class="text-sm font-bold tracking-widest uppercase gold">Leagues</h3>
+      <p class="mt-1 text-sm text-muted">You can play Worlds League only, or Worlds plus one regional. Ask to add the other allowed league, or to leave one or all of your leagues.</p>
       ${list}
       ${joinBlock}
       ${dropBlock}
@@ -2179,13 +2206,22 @@ async function pageAdmin() {
       .map((id) => leaguesById[id]?.title || leaguesById[id]?.name)
       .filter(Boolean);
     const where = names.length ? names.join(" · ") : "Unplaced";
-    const both = p.regionalChoice === "both" ? " · Both" : "";
+    const choiceLabel =
+      p.regionalChoice === "world"
+        ? " · World"
+        : p.regionalChoice === "world-europe"
+          ? " · World + Europe"
+          : p.regionalChoice === "world-americas"
+            ? " · World + Americas"
+            : p.regionalChoice === "both"
+              ? " · Both"
+              : "";
     const tags = [];
     if (hasRole(p, "owner")) tags.push("Owner");
     if (hasRole(p, "head_admin")) tags.push("Head Admin");
     if (hasRole(p, "admin")) tags.push("Division Admin");
     const tag = tags.length ? ` · ${tags.join(" · ")}` : "";
-    return `<option value="${p.id}">${esc(p.name)}${tag}${both} · ${esc(where)}</option>`;
+    return `<option value="${p.id}">${esc(p.name)}${tag}${choiceLabel} · ${esc(where)}</option>`;
   };
   const pending = d.applications;
   const review = d.fixtures.filter((f) => f.needsConfirm);
@@ -2350,7 +2386,7 @@ async function pageAdmin() {
           : `<p class="mt-3 text-muted">None yet.</p>`
       }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
-        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to join a second regional or to withdraw from one or all leagues. Every admin and owner is emailed. Place join requests with the form below. Owners and Head Admins can drop a player here.</p>
+        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to add Worlds League or one regional (two leagues max) or to withdraw from one or all leagues. Every admin and owner is emailed. Place join requests with the form below. Owners and Head Admins can drop a player here.</p>
         ${
           (d.leagueRequests || []).length
             ? `<div class="mt-3 space-y-3">${d.leagueRequests
@@ -2380,7 +2416,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Players who chose Both can be in one Europe league and one Americas league. Placing them in a second regional does not remove the first.</p>
+        <p class="mt-1 text-sm text-muted">Players may be in the Worlds League and one regional (Europe or Americas). They cannot play in both regionals. Placing them in a second allowed league does not remove the first.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
           <select name="userId" required><option value="">Player</option>${everyone.map(playerOption).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
@@ -2874,7 +2910,7 @@ document.addEventListener("submit", async (e) => {
         await api("/api/auth/check-signup", { method: "POST", body: JSON.stringify({ email: state.signup.email }) });
       }
       if (step === 2 && !state.signup.regional) {
-        state.error = "Choose TSH Europe, TSH Americas, or Both.";
+        state.error = "Choose Worlds League only, or Worlds League plus one regional.";
         render();
         return;
       }
@@ -3090,8 +3126,8 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/admin/place-player", { method: "POST", body: JSON.stringify(fd) });
       const titles = d.user?.leagueTitles || [];
       state.notice =
-        d.user?.regionalChoice === "both" && !d.fullyPlaced
-          ? `Placed in ${titles[titles.length - 1] || "that league"}. They can still be placed in the other regional.`
+        (d.user?.regionalIds || []).length > 1 && !d.fullyPlaced
+          ? `Placed in ${titles[titles.length - 1] || "that league"}. They can still be placed in their other league.`
           : "Player placed.";
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE" || (kind === "FIXTURES" && fd.mode === "individual")) {
