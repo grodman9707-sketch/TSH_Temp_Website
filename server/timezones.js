@@ -60,5 +60,8 @@ export function isValidTimeZone(tz) {
 
 // Fallback zone when a player's own timezone isn't known yet.
 export function defaultTimezoneForRegional(regionalChoice) {
-  return String(regionalChoice) === "americas" ? "America/New_York" : "Europe/London";
+  const choice = String(regionalChoice || "");
+  if (choice === "americas" || choice === "world-americas") return "America/New_York";
+  if (choice === "world") return "UTC";
+  return "Europe/London";
 }

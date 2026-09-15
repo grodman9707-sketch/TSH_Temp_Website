@@ -259,6 +259,7 @@ function publicUser(u, db) {
     fullyPlaced: db ? isFullyPlaced(db, u) : false,
     leagues: db ? userLeagueSummaries(db, u) : [],
     openJoinRegional: db ? openJoinRegional(db, u) : null,
+    openJoinRegionals: db ? openJoinRegionals(db, u) : [],
     pendingLeagueRequests: db ? pendingLeagueRequestsForUser(db, u.id) : [],
     bountyHunt: Boolean(u.bountyHunt),
     communityJoinPending: Boolean(u.communityJoinPending),
@@ -589,6 +590,11 @@ function divisionName(league) {
   return m ? `Division ${m[1]}` : raw;
 }
 const EUROPE_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4"];
+const AMERICAS_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4"];
+const WORLD_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
+const WORLD_REGIONAL_ID = 3;
+const SIGNUP_BOTH_ERROR =
+  "Choose Worlds League only, or Worlds League plus one regional. You cannot play in Europe and Americas together.";
 const EUROPE_RETIRED_DIVISIONS = {
   premier: "Division 1",
   championship: "Division 1",
@@ -597,6 +603,109 @@ const EUROPE_RETIRED_DIVISIONS = {
 };
 function europeRegional(db) {
   return (db.regionals || []).find((r) => r.slug === "europe" || Number(r.id) === 1) || null;
+}
+function americasRegional(db) {
+  return (db.regionals || []).find((r) => r.slug === "americas" || Number(r.id) === 2) || null;
+}
+function worldRegional(db) {
+  return (db.regionals || []).find((r) => r.slug === "world") || null;
+}
+function isWorldRegional(r) {
+  return Boolean(r && r.slug === "world");
+}
+function geographicRegionals(db) {
+  return (db.regionals || []).filter((r) => !isWorldRegional(r));
+}
+function sortedRegionals(db) {
+  return [...(db.regionals || [])].sort((a, b) => {
+    const ao = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : Number(a.id) || 0;
+    const bo = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : Number(b.id) || 0;
+    return ao - bo || (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+}
+function nextUnusedId(list, preferred) {
+  const used = new Set((list || []).map((row) => Number(row.id) || 0));
+  if (preferred && !used.has(Number(preferred))) return Number(preferred);
+  return Math.max(0, ...used) + 1;
+}
+function ensureDivisionLadder(db, regional, names) {
+  if (!regional || !Array.isArray(names) || !names.length) return false;
+  if (!Array.isArray(db.leagues)) db.leagues = [];
+  let changed = false;
+  let nextId = Math.max(0, ...db.leagues.map((l) => Number(l.id) || 0)) + 1;
+  for (const name of names) {
+    const existing = db.leagues.find(
+      (l) => Number(l.regionalId) === Number(regional.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
+    );
+    if (!existing) {
+      db.leagues.push({
+        id: nextId++,
+        regionalId: regional.id,
+        name,
+        format: "Best of 9",
+        sortOrder: 0,
+      });
+      changed = true;
+    }
+  }
+  names.forEach((name, i) => {
+    const league = db.leagues.find(
+      (l) => Number(l.regionalId) === Number(regional.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
+    );
+    if (league && league.sortOrder !== i) {
+      league.sortOrder = i;
+      changed = true;
+    }
+  });
+  return changed;
+}
+function ensureWorldLeague(db) {
+  if (!Array.isArray(db.regionals)) db.regionals = [];
+  let changed = false;
+  let world = worldRegional(db);
+  if (!world) {
+    world = {
+      id: nextUnusedId(db.regionals, WORLD_REGIONAL_ID),
+      slug: "world",
+      flag: "UN",
+      emoji: "🌍",
+      name: "World",
+      fullTitle: "TSH World",
+      region: "Global",
+      description: "The Worlds League of The Social Hub Darts League.",
+      active: true,
+      sortOrder: 0,
+    };
+    db.regionals.push(world);
+    changed = true;
+  } else {
+    if (world.slug !== "world") {
+      world.slug = "world";
+      changed = true;
+    }
+    if (!world.fullTitle) {
+      world.fullTitle = "TSH World";
+      changed = true;
+    }
+    if (world.sortOrder !== 0) {
+      world.sortOrder = 0;
+      changed = true;
+    }
+  }
+  const europe = europeRegional(db);
+  if (europe && (europe.sortOrder == null || Number(europe.sortOrder) === 0)) {
+    europe.sortOrder = 1;
+    changed = true;
+  }
+  const americas = americasRegional(db);
+  if (americas && (americas.sortOrder == null || Number(americas.sortOrder) <= 1) && Number(americas.sortOrder) !== 2) {
+    if (Number(americas.sortOrder) !== 2) {
+      americas.sortOrder = 2;
+      changed = true;
+    }
+  }
+  if (ensureDivisionLadder(db, world, WORLD_DIVISION_LADDER)) changed = true;
+  return changed;
 }
 function remapLeagueIdList(list, fromId, toId) {
   if (!Array.isArray(list)) return list;
@@ -690,8 +799,12 @@ function leaguesForRegional(db, regional) {
 }
 function userRegionalIds(u) {
   if (Array.isArray(u?.regionalIds) && u.regionalIds.length) return [...new Set(u.regionalIds.map(Number))];
-  if (u?.regionalChoice === "both") return [1, 2];
-  if (u?.regionalChoice === "americas" || Number(u?.regionalId) === 2) return [2];
+  const choice = String(u?.regionalChoice || "");
+  if (choice === "world") return [WORLD_REGIONAL_ID];
+  if (choice === "world-europe") return [WORLD_REGIONAL_ID, 1];
+  if (choice === "world-americas") return [WORLD_REGIONAL_ID, 2];
+  if (choice === "both") return [1, 2];
+  if (choice === "americas") return [2];
   return [1];
 }
 function userLeagueIds(u) {
@@ -713,6 +826,64 @@ function placedRegionalIds(db, u) {
 function isFullyPlaced(db, u) {
   const have = new Set(placedRegionalIds(db, u));
   return userRegionalIds(u).every((id) => have.has(id));
+}
+function choiceFromRegionalIds(db, ids) {
+  const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
+  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
+  const europeId = europeRegional(db)?.id || 1;
+  const americasId = americasRegional(db)?.id || 2;
+  const hasWorld = unique.includes(worldId);
+  const geos = unique.filter((id) => id !== worldId);
+  if (hasWorld && geos.length === 0) return "world";
+  if (hasWorld && geos.includes(europeId) && geos.length === 1) return "world-europe";
+  if (hasWorld && geos.includes(americasId) && geos.length === 1) return "world-americas";
+  if (geos.includes(europeId) && geos.includes(americasId)) return "both";
+  if (geos.length === 1 && geos[0] === americasId) return "americas";
+  if (geos.length === 1 && geos[0] === europeId) return "europe";
+  if (hasWorld) return "world";
+  return "europe";
+}
+function applyRegionalIds(db, u, ids) {
+  const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
+  u.regionalIds = unique;
+  u.regionalChoice = choiceFromRegionalIds(db, unique);
+  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
+  u.regionalId = unique.find((id) => id !== worldId) || unique[0] || worldId;
+}
+function leagueSelectionError(db, ids) {
+  const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
+  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
+  const geos = unique.filter((id) => id !== worldId);
+  if (geos.length > 1) return SIGNUP_BOTH_ERROR;
+  if (unique.length > 2) return "Two leagues max: Worlds League and one regional.";
+  return null;
+}
+function resolveSignupSelection(db, body = {}) {
+  const raw = String(body.regional || "").trim().toLowerCase();
+  if (raw === "both") return { error: SIGNUP_BOTH_ERROR };
+  const world = worldRegional(db);
+  const europe = europeRegional(db);
+  const americas = americasRegional(db);
+  const worldId = world?.id || WORLD_REGIONAL_ID;
+  const europeId = europe?.id || 1;
+  const americasId = americas?.id || 2;
+  const map = {
+    world: { choice: "world", ids: [worldId], primary: worldId },
+    "world-europe": { choice: "world-europe", ids: [worldId, europeId], primary: worldId },
+    "world-americas": { choice: "world-americas", ids: [worldId, americasId], primary: worldId },
+    europe: { choice: "europe", ids: [europeId], primary: europeId },
+    americas: { choice: "americas", ids: [americasId], primary: americasId },
+  };
+  if (raw && map[raw]) return map[raw];
+  const rid = Number(body.regionalId);
+  if (rid) {
+    const regional = (db.regionals || []).find((r) => Number(r.id) === rid);
+    if (regional) {
+      const ids = [rid];
+      return { choice: choiceFromRegionalIds(db, ids), ids, primary: rid };
+    }
+  }
+  return map.world;
 }
 function userLeagueSummaries(db, u) {
   return userLeagueIds(u).map((id) => {
@@ -758,25 +929,35 @@ function publicLeagueRequest(r, db) {
 function pendingLeagueRequestsForUser(db, userId) {
   return pendingLeagueRequests(db, userId).map((r) => publicLeagueRequest(r, db));
 }
-function openJoinRegional(db, u) {
-  if (pendingLeagueRequests(db, u.id, "join").length) return null;
-  const placed = new Set(placedRegionalIds(db, u));
-  if (placed.size >= 2) return null;
-  let id = null;
-  if (placed.size === 1) {
-    id = [1, 2].find((rid) => !placed.has(rid)) || null;
-  } else {
-    const signed = new Set(userRegionalIds(u));
-    if (signed.size >= 2) return null;
-    id = [1, 2].find((rid) => !signed.has(rid)) || null;
-  }
-  if (!id) return null;
-  const regional = db.regionals.find((r) => r.id === id);
-  return { id, name: regional?.fullTitle || regional?.name || (id === 2 ? "TSH Americas" : "TSH Europe") };
+function openJoinRegionals(db, u) {
+  if (pendingLeagueRequests(db, u.id, "join").length) return [];
+  const world = worldRegional(db);
+  const geos = geographicRegionals(db);
+  const worldId = world?.id;
+  const have = new Set([...userRegionalIds(u), ...placedRegionalIds(db, u)]);
+  const haveWorld = worldId ? have.has(worldId) : false;
+  const haveGeos = geos.filter((r) => have.has(r.id));
+  const options = [];
+  if (world && !haveWorld && haveGeos.length <= 1) options.push(world);
+  if (haveWorld && haveGeos.length === 0) options.push(...geos);
+  return options.map((r) => ({
+    id: r.id,
+    name: r.fullTitle || r.name || "",
+    slug: r.slug,
+  }));
 }
-function enableBothRegionals(u) {
-  u.regionalChoice = "both";
-  u.regionalIds = [1, 2];
+function openJoinRegional(db, u) {
+  const options = openJoinRegionals(db, u);
+  return options.length === 1 ? options[0] : null;
+}
+function addCompetitionToUser(db, u, regionalId) {
+  const next = [...userRegionalIds(u)];
+  const id = Number(regionalId);
+  if (!next.includes(id)) next.push(id);
+  const err = leagueSelectionError(db, next);
+  if (err) return err;
+  applyRegionalIds(db, u, next);
+  return null;
 }
 function resolveMatchingLeagueRequests(db, u) {
   let changed = false;
@@ -1051,6 +1232,8 @@ function migrate(db) {
     }
   }
   if (ensureEuropeDivisions(db)) changed = true;
+  if (ensureWorldLeague(db)) changed = true;
+  if (ensureDivisionLadder(db, americasRegional(db), AMERICAS_DIVISION_LADDER)) changed = true;
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
       const beforeA = item.a;
@@ -1557,7 +1740,7 @@ async function handleApi(req, res, url) {
   }
   if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
   if (method === "GET" && p === "/api/regionals") {
-    const regionals = db.regionals.map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
+    const regionals = sortedRegionals(db).map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
     return json(res, 200, { ok: true, regionals });
   }
   if (method === "GET" && p === "/api/announcements") {
@@ -1683,6 +1866,8 @@ async function handleApi(req, res, url) {
     if (!name || !email || !password) return json(res, 400, { ok: false, error: "Name, email and password are required" });
     const conflict = identityConflict(db, { email, username, dartcounterName });
     if (conflict) return json(res, 400, { ok: false, error: conflict });
+    const selection = resolveSignupSelection(db, body);
+    if (selection.error) return json(res, 400, { ok: false, error: selection.error });
     const created = {
       id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
       name,
@@ -1695,9 +1880,9 @@ async function handleApi(req, res, url) {
       leagueIds: [],
       adminLeagueId: null,
       adminLeagueIds: [],
-      regionalChoice: body.regional || "europe",
-      regionalIds: body.regional === "americas" ? [2] : body.regional === "both" ? [1, 2] : [1],
-      regionalId: body.regional === "americas" ? 2 : 1,
+      regionalChoice: selection.choice,
+      regionalIds: selection.ids,
+      regionalId: selection.primary,
       dartcounterName,
       nickname: String(body.nickname || "").trim(),
       avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
@@ -1705,7 +1890,7 @@ async function handleApi(req, res, url) {
       avatarFile: null,
       avatarUpdatedAt: null,
       notifyPrefs: { email: true },
-      timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(body.regional),
+      timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(selection.choice),
       bountyHunt: false,
       communityJoinPending: true,
     };
@@ -1951,24 +2136,30 @@ async function handleApi(req, res, url) {
     if (kind !== "join" && kind !== "drop") return json(res, 400, { ok: false, error: "Choose join or drop" });
     let request;
     if (kind === "join") {
-      const open = openJoinRegional(db, u);
-      if (!open) return json(res, 400, { ok: false, error: "You already play in two regionals, or a second-league request is already pending." });
-      const regionalId = Number(body.regionalId || open.id);
-      if (regionalId !== open.id) return json(res, 400, { ok: false, error: "That regional is not available as a second league" });
-      enableBothRegionals(u);
+      const open = openJoinRegionals(db, u);
+      if (!open.length) {
+        return json(res, 400, { ok: false, error: "You already play in two leagues, or a second-league request is already pending." });
+      }
+      const regionalId = Number(body.regionalId || (open.length === 1 ? open[0].id : 0));
+      if (!open.some((r) => r.id === regionalId)) {
+        return json(res, 400, { ok: false, error: "That league is not available as a second league. You can add Worlds League or one regional, not both regionals." });
+      }
+      const addError = addCompetitionToUser(db, u, regionalId);
+      if (addError) return json(res, 400, { ok: false, error: addError });
       const pendingApp = (db.applications || []).find((a) => Number(a.userId) === Number(u.id) && a.status === "pending");
       if (pendingApp) {
-        pendingApp.regionalChoice = "both";
-        pendingApp.regionalIds = [1, 2];
+        pendingApp.regionalChoice = u.regionalChoice;
+        pendingApp.regionalIds = u.regionalIds;
+        pendingApp.regionalId = regionalId;
       } else {
         db.applications.push({
           id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
           userId: u.id,
           name: u.name,
           email: u.email,
-          regionalChoice: "both",
+          regionalChoice: u.regionalChoice,
           regionalId,
-          regionalIds: [1, 2],
+          regionalIds: u.regionalIds,
           avg: Number(u.avg) || 0,
           dartcounterName: u.dartcounterName || u.name,
           nickname: u.nickname || "",
@@ -2036,8 +2227,18 @@ async function handleApi(req, res, url) {
     if (!request || request.status !== "pending") return json(res, 404, { ok: false, error: "Request not found" });
     request.status = "cancelled";
     request.resolvedAt = new Date().toISOString();
-    writeDb(db);
     const u = db.users.find((x) => x.id === user.id);
+    if (u && request.kind === "join") {
+      const rid = Number(request.regionalId);
+      if (rid && !placedRegionalIds(db, u).includes(rid)) {
+        applyRegionalIds(
+          db,
+          u,
+          userRegionalIds(u).filter((id) => id !== rid)
+        );
+      }
+    }
+    writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
   if (method === "POST" && p === "/api/apply") {
@@ -2047,14 +2248,16 @@ async function handleApi(req, res, url) {
     const dartcounterName = String(body.dartcounterName || "").trim() || user.name;
     const dcConflict = identityConflict(db, { dartcounterName }, user.id);
     if (dcConflict) return json(res, 400, { ok: false, error: dcConflict });
+    const selection = resolveSignupSelection(db, body);
+    if (selection.error) return json(res, 400, { ok: false, error: selection.error });
     const application = {
       id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
       userId: user.id,
       name: user.name,
       email: user.email,
-      regionalChoice: body.regional || (Number(body.regionalId) === 2 ? "americas" : "europe"),
-      regionalId: body.regional === "americas" ? 2 : Number(body.regionalId) || 1,
-      regionalIds: body.regional === "both" ? [1, 2] : body.regional === "americas" ? [2] : [Number(body.regionalId) || 1],
+      regionalChoice: selection.choice,
+      regionalId: selection.primary,
+      regionalIds: selection.ids,
       avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
       dartcounterName,
       nickname: String(body.nickname || "").trim(),
@@ -2703,6 +2906,7 @@ async function handleApi(req, res, url) {
       const conflict = identityConflict(db, { email, username, dartcounterName });
       if (conflict) return json(res, 400, { ok: false, error: conflict });
       const league = body.leagueId ? db.leagues.find((l) => l.id === Number(body.leagueId)) : null;
+      const world = worldRegional(db);
       const created = {
         id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
         name,
@@ -2715,9 +2919,9 @@ async function handleApi(req, res, url) {
         leagueIds: league ? [league.id] : [],
         adminLeagueId: null,
         adminLeagueIds: [],
-        regionalChoice: league ? (league.regionalId === 2 ? "americas" : "europe") : "europe",
-        regionalIds: league ? [league.regionalId] : [1],
-        regionalId: league ? league.regionalId : 1,
+        regionalChoice: league ? choiceFromRegionalIds(db, [league.regionalId]) : "world",
+        regionalIds: league ? [league.regionalId] : world ? [world.id] : [WORLD_REGIONAL_ID],
+        regionalId: league ? league.regionalId : world?.id || WORLD_REGIONAL_ID,
         dartcounterName,
         nickname: String(body.nickname || "").trim(),
         avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,

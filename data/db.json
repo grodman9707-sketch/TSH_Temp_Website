@@ -51,6 +51,18 @@
   },
   "regionals": [
     {
+      "id": 3,
+      "slug": "world",
+      "flag": "UN",
+      "emoji": "🌍",
+      "name": "World",
+      "fullTitle": "TSH World",
+      "region": "Global",
+      "description": "The Worlds League of The Social Hub Darts League.",
+      "active": true,
+      "sortOrder": 0
+    },
+    {
       "id": 1,
       "slug": "europe",
       "flag": "EU",
@@ -60,7 +72,7 @@
       "region": "United Kingdom",
       "description": "The European regional of The Social Hub Darts League.",
       "active": true,
-      "sortOrder": 0
+      "sortOrder": 1
     },
     {
       "id": 2,
@@ -72,7 +84,7 @@
       "region": "Americas",
       "description": "The Americas regional of The Social Hub Darts League.",
       "active": true,
-      "sortOrder": 1
+      "sortOrder": 2
     }
   ],
   "leagues": [
@@ -131,6 +143,41 @@
       "name": "Division 4",
       "format": "Best of 9",
       "sortOrder": 3
+    },
+    {
+      "id": 9,
+      "regionalId": 3,
+      "name": "Division 1",
+      "format": "Best of 9",
+      "sortOrder": 0
+    },
+    {
+      "id": 10,
+      "regionalId": 3,
+      "name": "Division 2",
+      "format": "Best of 9",
+      "sortOrder": 1
+    },
+    {
+      "id": 11,
+      "regionalId": 3,
+      "name": "Division 3",
+      "format": "Best of 9",
+      "sortOrder": 2
+    },
+    {
+      "id": 12,
+      "regionalId": 3,
+      "name": "Division 4",
+      "format": "Best of 9",
+      "sortOrder": 3
+    },
+    {
+      "id": 13,
+      "regionalId": 3,
+      "name": "Division 5",
+      "format": "Best of 9",
+      "sortOrder": 4
     }
   ],
   "users": [

@@ -52,17 +52,23 @@ try {
   check("regionals API ok", res.ok && data.ok);
   const europe = (data.regionals || []).find((r) => r.slug === "europe");
   const americas = (data.regionals || []).find((r) => r.slug === "americas");
-  check("Europe and Americas regions are present", Boolean(europe && americas));
+  const world = (data.regionals || []).find((r) => r.slug === "world");
+  check("Europe, Americas, and World are present", Boolean(europe && americas && world));
+  check("World is listed first", (data.regionals || [])[0]?.slug === "world");
   const europeLadder = ["Division 1", "Division 2", "Division 3", "Division 4"];
+  const worldLadder = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
   check("Europe has four divisions", Array.isArray(europe?.leagues) && europe.leagues.length === 4);
   check("Americas has four divisions", Array.isArray(americas?.leagues) && americas.leagues.length === 4);
+  check("World has five divisions", Array.isArray(world?.leagues) && world.leagues.length === 5);
   check(
     "Europe ladder is Division 1–4",
     (europe?.leagues || []).every((l, i) => l.displayName === europeLadder[i])
   );
   check("Americas divisions stay Division 1–4", (americas?.leagues || []).every((l, i) => l.displayName === `Division ${i + 1}`));
+  check("World ladder is Division 1–5", (world?.leagues || []).every((l, i) => l.displayName === worldLadder[i]));
   check("Europe matches Americas division names", JSON.stringify((europe?.leagues || []).map((l) => l.displayName)) === JSON.stringify((americas?.leagues || []).map((l) => l.displayName)));
   check("division links jump to the table", europe?.leagues?.[0]?.href === `/regionals/europe/leagues/${europe?.leagues?.[0]?.id}`);
+  check("World division links jump to the table", world?.leagues?.[0]?.href === `/regionals/world/leagues/${world?.leagues?.[0]?.id}`);
 
   const league = await (await fetch(`http://127.0.0.1:${port}/api/leagues/1`)).json();
   check("league payload uses Division in the title", /Division 1/.test(league.league?.title || "") && league.league?.displayName === "Division 1");
@@ -78,8 +84,9 @@ try {
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
   check("each region has its own divisions dropdown", appJs.includes("class=\"nav-sub\"") && appJs.includes("nav-subsub"));
-  check("regionals page lists divisions without extra hops", appJs.includes("REGIONAL LEAGUE") && appJs.includes("DIVISIONS"));
+  check("regionals page lists divisions without extra hops", appJs.includes("REGIONAL LEAGUE") && appJs.includes("WORLDS LEAGUE") && appJs.includes("DIVISIONS"));
   check("Europe and Americas overviews carry a timezone acknowledgement", appJs.includes("regionalTimezoneAck") && appJs.includes("Timezone warning") && appJs.includes("UK time (GMT/BST)") && appJs.includes("US Eastern Time (ET)"));
+  check("World overview uses UTC", appJs.includes('slug === "world"') && appJs.includes("UTC"));
   check("timezone ack says a time difference is not a legitimate excuse", appJs.includes("not a legitimate excuse") && appJs.includes("as though you were in this regional"));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
@@ -125,8 +132,10 @@ const migrated = spawn(process.execPath, [path.join(root, "server/index.js")], {
 try {
   await waitHealth(migratePort, migrated);
   const renamed = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals`)).json();
-  const migratedEurope = renamed.regionals?.[0];
+  const migratedEurope = (renamed.regionals || []).find((r) => r.slug === "europe");
+  const migratedWorld = (renamed.regionals || []).find((r) => r.slug === "world");
   const migratedNames = (migratedEurope?.leagues || []).map((l) => l.displayName);
+  check("migrate creates Worlds League", Boolean(migratedWorld) && (migratedWorld.leagues || []).length === 5);
   check("migrate renames League 1 to Division 1", migratedNames.includes("Division 1"));
   check("migrate fills Division 2–4", ["Division 2", "Division 3", "Division 4"].every((name) => migratedNames.includes(name)));
   check("migrate does not add retired Europe rungs", !["Premier", "Championship", "Foundation", "Development"].some((name) => migratedNames.includes(name)));

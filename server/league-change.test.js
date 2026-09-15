@@ -83,17 +83,18 @@ try {
   const playerId = registered.data.user.id;
 
   const beforePlace = await api(port, "/api/auth/me", { token: tok });
-  check("second regional is offered on the profile before placement", beforePlace.data.user?.openJoinRegional?.id === 2);
+  check("Worlds League is offered on the profile before placement", beforePlace.data.user?.openJoinRegional?.slug === "world" || beforePlace.data.user?.openJoinRegional?.id === 3);
+  check("Americas is not offered as a second regional", !(beforePlace.data.user?.openJoinRegionals || []).some((r) => r.slug === "americas"));
 
   const joinEarly = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
-    body: { kind: "join", regionalId: 2, note: "Want Americas too" },
+    body: { kind: "join", regionalId: 3, note: "Want World too" },
   });
   check("join request ok before first placement", joinEarly.status === 200 && joinEarly.data.request?.kind === "join");
-  check("join switches them to both regionals", joinEarly.data.user?.regionalChoice === "both");
+  check("join adds Worlds League", joinEarly.data.user?.regionalChoice === "world-europe");
   check("join is pending", joinEarly.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
-  check("join offer hides while pending", joinEarly.data.user?.openJoinRegional == null);
+  check("join offer hides while pending", joinEarly.data.user?.openJoinRegional == null && !(joinEarly.data.user?.openJoinRegionals || []).length);
 
   const place = await api(port, "/api/admin/place-player", {
     method: "POST",
@@ -101,7 +102,7 @@ try {
     body: { userId: playerId, leagueId: 1 },
   });
   check("placed in Europe Division 1", place.status === 200 && place.data.user?.leagueIds?.includes(1));
-  check("join stays pending until the other regional is filled", place.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
+  check("join stays pending until World is filled", place.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
 
   const mePlaced = await api(port, "/api/auth/me", { token: tok });
   check("player hub still shows the pending join", mePlaced.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
@@ -116,17 +117,24 @@ try {
   const overview = await api(port, "/api/admin/overview", { token: ownerTok });
   check(
     "admin sees the join request",
-    (overview.data.leagueRequests || []).some((r) => r.userId === playerId && r.kind === "join" && r.note === "Want Americas too")
+    (overview.data.leagueRequests || []).some((r) => r.userId === playerId && r.kind === "join" && r.note === "Want World too")
   );
 
   const placeSecond = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: playerId, leagueId: 5 },
+    body: { userId: playerId, leagueId: 9 },
   });
-  check("placed in Americas", placeSecond.status === 200 && placeSecond.data.user?.leagueIds?.includes(5));
-  check("join request clears after second placement", !(placeSecond.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "join"));
-  check("no join offer when already in both", placeSecond.data.user?.openJoinRegional == null);
+  check("placed in World", placeSecond.status === 200 && placeSecond.data.user?.leagueIds?.includes(9));
+  check("join request clears after World placement", !(placeSecond.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "join"));
+  check("no join offer when already in World + Europe", placeSecond.data.user?.openJoinRegional == null && !(placeSecond.data.user?.openJoinRegionals || []).length);
+
+  const blockedAmericas = await api(port, "/api/account/league-request", {
+    method: "POST",
+    token: tok,
+    body: { kind: "join", regionalId: 2 },
+  });
+  check("cannot add Americas as a third league", blockedAmericas.status === 400);
 
   const drop = await api(port, "/api/account/league-request", {
     method: "POST",
@@ -153,7 +161,7 @@ try {
     body: { id: dropReq.id, action: "done" },
   });
   check("owner can drop them", resolve.status === 200 && !resolve.data.user?.leagueIds?.includes(1));
-  check("they keep the other regional", resolve.data.user?.leagueIds?.includes(5));
+  check("they keep the other league", resolve.data.user?.leagueIds?.includes(9));
   check("drop request is gone", !(resolve.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "drop"));
 
   const dropAll = await api(port, "/api/account/league-request", {
@@ -162,7 +170,7 @@ try {
     body: { kind: "drop", scope: "all", note: "Stepping away" },
   });
   check("drop-all request ok", dropAll.status === 200 && dropAll.data.request?.scope === "all");
-  check("drop-all leaves them placed until admin acts", dropAll.data.user?.leagueIds?.includes(5));
+  check("drop-all leaves them placed until admin acts", dropAll.data.user?.leagueIds?.includes(9));
 
   const dupAll = await api(port, "/api/account/league-request", {
     method: "POST",
@@ -203,7 +211,7 @@ try {
   const asked = await api(port, "/api/account/league-request", {
     method: "POST",
     token: cancelTok,
-    body: { kind: "join", regionalId: 1 },
+    body: { kind: "join", regionalId: 3 },
   });
   const reqId = asked.data.request?.id;
   const cancelled = await api(port, "/api/account/league-request/cancel", {

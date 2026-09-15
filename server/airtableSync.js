@@ -138,7 +138,17 @@ export function airtablePlayerRecords(db) {
         DartCounter: u.dartcounterName || "",
         "3DA": num(u.avg),
         Role: roleLabel(u),
-        Regionals: regionals.join(" · ") || (u.regionalChoice === "both" ? "TSH Europe · TSH Americas" : u.regionalChoice === "americas" ? "TSH Americas" : "TSH Europe"),
+        Regionals: regionals.join(" · ") || (u.regionalChoice === "world"
+          ? "TSH World"
+          : u.regionalChoice === "world-europe"
+            ? "TSH World · TSH Europe"
+            : u.regionalChoice === "world-americas"
+              ? "TSH World · TSH Americas"
+              : u.regionalChoice === "both"
+                ? "TSH Europe · TSH Americas"
+                : u.regionalChoice === "americas"
+                  ? "TSH Americas"
+                  : "TSH Europe"),
         Divisions: leagues.map((l) => leagueTitle(db, l)).join(" · ") || "Unplaced",
         Status: leagues.length ? "Placed" : "Unplaced",
       },
