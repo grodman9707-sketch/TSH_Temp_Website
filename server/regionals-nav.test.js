@@ -196,7 +196,14 @@ try {
   const foldedDb = JSON.parse(fs.readFileSync(path.join(foldDir, "db.json"), "utf8"));
   const foldedNames = (foldedDb.leagues || []).map((l) => l.name);
   check("folding drops Premier and Development", !foldedNames.includes("Premier") && !foldedNames.includes("Development"));
-  check("folding keeps four Europe divisions", foldedNames.filter((n) => /^Division [1-4]$/.test(n)).length === 4);
+  check(
+    "folding keeps four Europe divisions",
+    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 1 && /^Division [1-4]$/.test(l.name)).length === 4
+  );
+  check(
+    "folding also creates Worlds League divisions",
+    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 3 && /^Division [1-5]$/.test(l.name)).length === 5
+  );
   const pat = (foldedDb.users || []).find((u) => u.id === 3);
   const dev = (foldedDb.users || []).find((u) => u.id === 4);
   check("Premier player moves into Division 1", Array.isArray(pat?.leagueIds) && pat.leagueIds.includes(1) && !pat.leagueIds.includes(9));
