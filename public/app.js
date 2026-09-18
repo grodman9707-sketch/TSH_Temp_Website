@@ -726,10 +726,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=46",
-  europe: "/images/tsh-europe-crest.png?v=46",
-  americas: "/images/tsh-america-crest.png?v=46",
-  world: "/images/tsh-world-crest.png?v=46",
+  main: "/images/tsh-main-crest.png?v=49",
+  europe: "/images/tsh-europe-crest.png?v=49",
+  americas: "/images/tsh-america-crest.png?v=49",
+  world: "/images/tsh-world-crest.png?v=49",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -820,9 +820,7 @@ function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
     ["/regionals", "Regionals"],
-    ["/apply", "Apply"],
     ["/announcements", "News"],
-    ["/preseason-bounty", "PreSeason Bounty"],
     ["/rules", "Rules"],
     ["/about", "About Us"],
   ];
@@ -882,36 +880,18 @@ function esc(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-function discordHref(value) {
+function httpHref(value) {
   const s = String(value || "").trim();
   if (!s) return "";
-  let href = "";
-  if (/^https?:\/\//i.test(s)) href = s;
-  else if (/^(www\.)?(discord\.gg|discord\.com|discordapp\.com)\//i.test(s)) href = `https://${s.replace(/^www\./i, "")}`;
-  else if (/^\d{17,20}$/.test(s)) href = `https://discord.com/users/${s}`;
-  if (!href) return "";
+  if (!/^https?:\/\//i.test(s)) return "";
   try {
-    const u = new URL(href);
-    u.hash = "";
-    u.pathname = (u.pathname || "/").replace(/\/+$/, "") || "/";
-    return u.toString();
+    return new URL(s).toString();
   } catch {
-    return href;
+    return "";
   }
 }
-function discordLinkLabel(href) {
-  try {
-    const u = new URL(href);
-    const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-    const path = (u.pathname || "").replace(/\/+$/, "");
-    if (host === "discord.gg") return `discord.gg${path}`;
-    return `${host}${path}${u.search || ""}`;
-  } catch {
-    return href;
-  }
-}
-function externalLink(href, label, className = "discord-link") {
-  const url = discordHref(href) || String(href || "").trim();
+function externalLink(href, label, className = "community-link") {
+  const url = httpHref(href) || String(href || "").trim();
   if (!url) return `<span class="text-muted">Not listed yet</span>`;
   return `<a class="${className}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-external="1">${label}</a>`;
 }
@@ -933,14 +913,7 @@ function messengerCards(league) {
 function communityInviteButtons(league) {
   return `<div class="mt-4 flex flex-col items-start gap-2">${messengerInvites(league)
     .map((m) => externalLink(m.href, `Join ${m.shortLabel}`))
-    .join("")}<a class="discord-link" href="/invite">Invite a player to join</a></div>`;
-}
-function discordDisplay(url) {
-  const href = discordHref(url);
-  const raw = String(url || "").trim();
-  if (!href && !raw) return `<span class="text-muted">Not listed yet</span>`;
-  if (!href) return `<span class="break-all">${esc(raw)}</span>`;
-  return `<a class="discord-profile-link" href="${esc(href)}" rel="noopener noreferrer" data-external="1">${esc(discordLinkLabel(href))}</a>`;
+    .join("")}<a class="community-link" href="/invite">Invite a player to join</a></div>`;
 }
 function staffDisplayName(p) {
   const nick = String(p?.nickname || "").trim();
@@ -981,129 +954,6 @@ function renderRuleSection(section) {
 }
 function panel(html, extra = "") {
   return `<div class="glass rounded-xl p-5 ${extra}">${html}</div>`;
-}
-function bountyDateLabel(iso) {
-  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return "";
-  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const day = Number(m[3]);
-  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
-  return `${months[Number(m[2]) - 1]} ${day}${suffix}`;
-}
-function bountyStatus(bounty, me) {
-  if (bounty.claimed) return "claimed";
-  if (bounty.mystery && !bounty.mysteryRevealed) return "locked";
-  if (me && bounty.kind === "tier" && bounty.tierId !== me.tierId) return "other";
-  return "open";
-}
-function bountyStatusLabel(status) {
-  if (status === "claimed") return "Claimed";
-  if (status === "locked") return "Locked";
-  if (status === "other") return "Other tier";
-  return "Open";
-}
-function mysteryDetail(bounty, tiers, me) {
-  if (!bounty.mystery) return "";
-  if (!bounty.mysteryRevealed) {
-    return `<p class="bounty-note">Revealed 7 days before season start (${esc(bountyDateLabel("2026-09-07") || "September 7th")}).</p>`;
-  }
-  const targets = bounty.mysteryTargets || {};
-  const rows = (tiers || []).map((t) => {
-    const text = String(targets[t.id] || "").trim() || "Posted in Messenger when ready.";
-    const mine = me?.tierId === t.id ? " yours" : "";
-    return `<div class="mystery-row${mine}"><span>${esc(t.name)}</span><span>${esc(text)}</span></div>`;
-  });
-  return `<div class="mystery-rows">${rows.join("")}</div>`;
-}
-function bountyAdminDesk(d) {
-  if (!d?.canAward) return "";
-  const bounties = Array.isArray(d.bounties) ? d.bounties : [];
-  return panel(
-    `<h2 class="text-lg font-bold">PreSeason Bounty</h2>
-        <p class="mt-1 text-sm text-muted">Players submit proof in TSH General Chat. After you review it, award the bounty here so it shows on their tracker. Season starts ${esc(d.seasonStartLabel || "September 14th")}.</p>
-        <p class="mt-2"><a href="/preseason-bounty" class="text-sm font-bold tracking-widest gold">VIEW PLAYER PAGE →</a></p>
-        <form class="mt-4 grid gap-3 md:grid-cols-3" data-form="BOUNTYAWARD">
-          <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
-            .map((p) => `<option value="${p.id}">${esc(p.displayName)} · ${esc(p.tierName)} · ${esc(p.avg)}</option>`)
-            .join("")}</select>
-          <select name="bountyId" required><option value="">Bounty</option>${bounties
-            .map((b) => `<option value="${esc(b.id)}">${esc(b.name)} (${b.points} pt)</option>`)
-            .join("")}</select>
-          <button class="btn-gold">AWARD BOUNTY</button>
-        </form>
-        ${
-          (d.claims || []).length
-            ? `<div class="mt-5 space-y-2">${d.claims
-                .map(
-                  (c) =>
-                    `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="BOUNTYREVOKE" data-user="${c.userId}" data-bounty="${esc(c.bountyId)}">
-                      <span><b>${esc(c.playerName)}</b> · ${esc(c.bountyName)} · ${c.points} pt</span>
-                      <button class="btn-ghost">REVOKE</button>
-                    </form>`
-                )
-                .join("")}</div>`
-            : `<p class="mt-4 text-sm text-muted">No claims recorded yet.</p>`
-        }
-        ${
-          d.canAwardBonus
-            ? `<form class="mt-8 grid gap-3 md:grid-cols-4" data-form="BONUSAWARD">
-                <h3 class="md:col-span-4 text-sm font-bold tracking-widest uppercase text-muted">Bonus points outside bounties</h3>
-                <p class="md:col-span-4 text-xs text-muted">Owners and Head Admins can add extra bonus points that are not tied to a bounty. They show on the hunter board and count in league tables.</p>
-                <select name="userId" required><option value="">Player</option>${(d.awardPlayers || [])
-                  .map((p) => `<option value="${p.id}">${esc(p.displayName)} · ${esc(p.tierName)} · ${esc(p.avg)}</option>`)
-                  .join("")}</select>
-                <input name="points" type="number" min="1" max="50" step="1" placeholder="Points" required>
-                <input name="reason" maxlength="200" placeholder="Reason (optional)">
-                <button class="btn-gold">AWARD BONUS</button>
-              </form>
-              ${
-                (d.bonusAwards || []).length
-                  ? `<div class="mt-4 space-y-2">${d.bonusAwards
-                      .map(
-                        (a) =>
-                          `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="BONUSREVOKE" data-id="${a.id}">
-                            <span><b>${esc(a.playerName)}</b> · +${a.points} pt${a.reason ? ` · ${esc(a.reason)}` : ""}</span>
-                            <button class="btn-ghost">REVOKE</button>
-                          </form>`
-                      )
-                      .join("")}</div>`
-                  : `<p class="mt-4 text-sm text-muted">No extra bonus points awarded yet.</p>`
-              }`
-            : ""
-        }
-        ${
-          d.canEditMystery
-            ? `<form class="mt-6 space-y-3" data-form="BOUNTYMYSTERY">
-                <h3 class="text-sm font-bold tracking-widest uppercase text-muted">Mystery targets</h3>
-                <p class="text-xs text-muted">Players see these after ${esc(d.mysteryRevealLabel || "September 7th")} (7 days before season start), or sooner if you tick Reveal now.</p>
-                ${(d.tiers || [])
-                  .map(
-                    (t) =>
-                      `<label class="block text-xs font-semibold uppercase tracking-widest text-muted">${esc(t.name)} (${esc(t.avgLabel)})</label>
-                       <input name="${esc(t.id)}" value="${esc((d.mysteryTargets || {})[t.id] || "")}" placeholder="Target for ${esc(t.name)}">`
-                  )
-                  .join("")}
-                <label class="check-row"><input type="checkbox" name="revealed" value="1"${d.mysteryForced ? " checked" : ""}> Reveal mystery targets now</label>
-                <button class="btn-gold">SAVE MYSTERY TARGETS</button>
-              </form>`
-            : ""
-        }`,
-    "mt-4"
-  );
-}
-function bountyCard(bounty, { me, tiers } = {}) {
-  const status = bountyStatus(bounty, me);
-  const pts = bounty.points === 1 ? "1 pt" : `${bounty.points} pts`;
-  return `<article class="bounty-card ${status}">
-    <div class="bounty-card-top">
-      <span class="bounty-points">${esc(pts)}</span>
-      <span class="bounty-flag">${esc(bountyStatusLabel(status))}</span>
-    </div>
-    <h3>${esc(bounty.name)}</h3>
-    <p>${esc(bounty.how)}</p>
-    ${bounty.note ? `<p class="bounty-note">${esc(bounty.note)}</p>` : ""}
-    ${mysteryDetail(bounty, tiers, me)}
-  </article>`;
 }
 function refreshNewsPreview(form) {
   const ta = form?.querySelector("textarea[name=body]");
@@ -1253,7 +1103,7 @@ async function pageHome() {
         <div>
           <h3 class="text-lg font-bold">Join the league</h3>
           <p class="mt-3 text-sm text-muted">Free to enter. Create an account and we will place you by your DartCounter average.</p>
-          <div class="mt-4 flex flex-wrap gap-3"><a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/preseason-bounty" class="btn-ghost">PreSeason Bounty</a><a href="/rules" class="btn-ghost">Rules</a></div>
+          <div class="mt-4 flex flex-wrap gap-3"><a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/rules" class="btn-ghost">Rules</a></div>
         </div>
       </div>
       <p class="mx-auto mt-10 max-w-5xl text-xs text-muted">© 2026 The Social Hub Darts League. All rights reserved.</p>
@@ -1369,7 +1219,7 @@ async function pageLeague(slug, id) {
         <span class="text-muted">/</span>
         <a href="/regionals/${slug}" class="gold inline-flex items-center gap-2">${crest(28, regionalCrest(slug))} ${esc(d.regional?.name || d.regional?.fullTitle || "")}</a>
       </div>
-      ${panel(`<div class="text-center"><h1 class="page-title font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win${(d.standings || []).some((row) => Number(row.bonusPoints) > 0) ? " · extra staff bonus included in Pts" : ""}</p></div>`, "mt-4")}
+      ${panel(`<div class="text-center"><h1 class="page-title font-extrabold tracking-widest">${esc((d.league.displayName || d.league.name || "").toUpperCase())}</h1><p class="mt-2 text-sm text-muted">${esc(d.league.format)} · 1 point per leg won + 2 for the match win</p></div>`, "mt-4")}
       ${panel(
         (d.divisionAdmins || []).length
           ? `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div>
@@ -1658,49 +1508,6 @@ function pageSignUp() {
     { arena: true }
   );
 }
-async function pageApply() {
-  const u = state.user;
-  if (u?.hasPendingApplication) {
-    return layout(
-      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 page-title font-extrabold">Application already received</h1>
-        <p class="mt-2 text-sm text-muted">You already have a pending application. Each player may only sign up once. An admin will place you in a division.</p>
-        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
-      `)}</div>`,
-      { arena: true }
-    );
-  }
-  if (u?.fullyPlaced) {
-    return layout(
-      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 page-title font-extrabold">Already in the league</h1>
-        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Open Player Hub → Player profile to ask to withdraw from a league.</p>
-        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
-      `)}</div>`,
-      { arena: true }
-    );
-  }
-  return layout(
-    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-      <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-      <h1 class="mt-2 page-title font-extrabold">Apply to TSH</h1>
-      <p class="mt-2 text-sm text-muted">Free to enter. We place you by DartCounter average.</p>
-      ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
-      ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
-      <form class="mt-6 space-y-4" data-form="APPLY">
-        <select name="regional">
-          <option value="international">International League</option>
-        </select>
-        <input name="dartcounterName" placeholder="DartCounter username">
-        <input name="avg" type="number" step="0.1" placeholder="3-dart average" required>
-        <button class="btn-gold w-full py-3">${state.user ? "SUBMIT APPLICATION" : "SIGN UP TO APPLY"}</button>
-      </form>
-    `)}</div>`,
-    { arena: true }
-  );
-}
 function leagueChangeInner(u) {
   if (!u) return "";
   const leagues = Array.isArray(u.leagues) && u.leagues.length ? u.leagues : [];
@@ -1783,17 +1590,14 @@ async function pageDashboard() {
   const mineCard = mine[0];
   const staffContactPanel = mineCard
     ? `<div class="mt-10">${panel(`<h2 class="text-lg font-bold">Contact card</h2>
-        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
+        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Email is listed if Messenger fails. It is removed if you lose every staff role.</p>
         <form class="mt-4 space-y-3" data-form="STAFFPROFILE">
           <div class="text-xs font-bold tracking-widest gold">ROLE</div>
           <div class="font-semibold">${esc(mineCard.roleLabel || mineCard.statusLabel || "")}${
             mineCard.leagueTitle ? ` · ${esc(mineCard.leagueTitle)}` : ""
           }</div>
-          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Discord profile link</label>
-          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/123456789012345678" inputmode="url" autocomplete="url">
-          <p class="text-xs text-muted">In Discord, copy your profile link (right-click your name → Copy Profile Link) and paste it here. The About Us card will show that URL.</p>
-          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Fallback email</label>
-          <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="If Discord fails">
+          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Contact email</label>
+          <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="Shown on About Us">
           <button class="btn-gold">SAVE CONTACT CARD</button>
         </form>`)}</div>`
     : "";
@@ -1828,17 +1632,6 @@ async function pageDashboard() {
       </div>
       <a href="/my-matches" class="mt-6 inline-block text-sm font-bold tracking-widest gold">OPEN MY MATCHES →</a>
       ${panel(inviteShareInner(), "mt-6")}
-      ${panel(
-        `<div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div class="text-xs tracking-widest text-muted">PRESEASON BOUNTY</div>
-            <div class="mt-2 font-semibold">${u.bountyHunt ? "You're in the hunt. Track claimed bonuses on the bounty page." : "Join the hunt — you don't need to be placed in a division."}</div>
-          </div>
-          <a href="/preseason-bounty" class="btn-gold">${u.bountyHunt ? "TRACK BOUNTIES" : "OPEN THE HUNT"}</a>
-        </div>`,
-        "mt-6"
-      )}
-
       ${staffContactPanel}
 
       <div class="mt-10 grid gap-4 md:grid-cols-2">
@@ -1947,133 +1740,6 @@ async function pagePlayer(id) {
     { arena: true }
   );
 }
-async function pageBounty() {
-  const d = await api("/api/preseason-bounty");
-  const me = d.me;
-  const tiers = Array.isArray(d.tiers) ? d.tiers : [];
-  const bounties = Array.isArray(d.bounties) ? d.bounties : [];
-  const hunters = Array.isArray(d.hunters) ? d.hunters : [];
-  const byTier = (id) => bounties.filter((b) => b.tierId === id);
-  const universal = bounties.filter((b) => b.kind === "universal");
-  const joinPanel = !state.user
-    ? panel(
-        `<p class="text-xs font-semibold tracking-[0.3em] gold">YOUR HUNT</p>
-        <h2 class="mt-2 text-2xl font-extrabold">Sign up to join and track bounties</h2>
-        <p class="mt-2 text-sm text-muted">You do not need to be placed in a division. Create an account, opt in, then hunt.</p>
-        <div class="mt-4 flex flex-wrap gap-2">
-          <a href="/sign-up" class="btn-gold">SIGN UP</a>
-          <a href="/sign-in" class="btn-ghost">SIGN IN</a>
-        </div>`
-      )
-    : panel(
-        `<p class="text-xs font-semibold tracking-[0.3em] gold">YOUR HUNT</p>
-        <div class="mt-2 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="text-2xl font-extrabold">${esc(me?.displayName || state.user.nickname || state.user.name)}</h2>
-            <p class="mt-1 text-sm text-muted">${esc(me?.tierName || "")} · ${esc(me?.avgLabel || "")} · 3DA ${esc(me?.avg ?? state.user.avg ?? "—")}${me?.joined ? "" : " · not opted in yet"}</p>
-          </div>
-          ${
-            me?.joined
-              ? `<form data-form="BOUNTYLEAVE"><button class="btn-ghost">LEAVE THE HUNT</button></form>`
-              : `<form data-form="BOUNTYJOIN"><button class="btn-gold">JOIN THE HUNT</button></form>`
-          }
-        </div>
-        <div class="bounty-progress mt-5">
-          <div class="bounty-stat"><div class="bounty-stat-n gold">${me?.points || 0}</div><div class="bounty-stat-l">Bonus points</div></div>
-          <div class="bounty-stat"><div class="bounty-stat-n">${me?.tierClaimed || 0}/${me?.tierTotal || 4}</div><div class="bounty-stat-l">Your tier</div></div>
-          <div class="bounty-stat"><div class="bounty-stat-n">${me?.universalClaimed || 0}/${me?.universalTotal || 4}</div><div class="bounty-stat-l">Universal</div></div>
-          <div class="bounty-stat"><div class="bounty-stat-n">${me?.claimedCount || 0}/${bounties.length}</div><div class="bounty-stat-l">All bounties</div></div>
-        </div>
-        <p class="mt-3 text-xs text-muted">Tier bounties are 2 points each. Universal bounties are 1 point each. Each bounty can be claimed once. Max ${esc(me?.maxPoints || 12)} from bounties.${me?.bonusPoints ? ` Extra staff bonus: +${esc(me.bonusPoints)}.` : " Owners and Head Admins can add extra bonus points outside the hunt."}</p>
-        ${
-          me?.joined
-            ? `<p class="mt-2 text-sm text-white/80">Your eligible bounties are marked <span class="gold">Open</span>. Claimed cards show as Claimed. Other tiers stay visible so you can see the full hunt.</p>`
-            : `<p class="mt-2 text-sm text-white/80">Opt in to appear on the hunter board. Staff record claims from Admin after Messenger review.</p>`
-        }`
-      );
-  const howCards = (d.claimSteps || [])
-    .map((step, i) => `<div class="bounty-step"><div class="bounty-step-n">${i + 1}</div><p>${esc(step)}</p></div>`)
-    .join("");
-  const ruleCards = (d.rules || []).map((r) => `<div class="bounty-rule"><h3>${esc(r.title)}</h3><p>${esc(r.text)}</p></div>`).join("");
-  const tierSections = tiers
-    .map((t) => {
-      const yours = me?.tierId === t.id;
-      return `<section class="bounty-tier" id="bounty-${esc(t.id)}">
-        <div class="bounty-tier-head">
-          <div>
-            <p class="text-xs font-semibold tracking-[0.3em] gold">${esc(t.avgLabel)}${yours ? " · YOUR TIER" : ""}</p>
-            <h2 class="mt-1 text-2xl font-extrabold">${esc(t.name)}</h2>
-            <p class="mt-1 text-sm text-muted">${esc(t.blurb)} 2 bonus points each. Once per player.</p>
-          </div>
-        </div>
-        <div class="bounty-grid mt-4">${byTier(t.id)
-          .map((b) => bountyCard(b, { me, tiers }))
-          .join("")}</div>
-      </section>`;
-    })
-    .join("");
-  const board =
-    hunters.length === 0
-      ? `<p class="mt-3 text-sm text-muted">No hunters on the board yet. Join to be listed.</p>`
-      : `<div class="bounty-board mt-4">${hunters
-          .map((h, i) => {
-            const mine = me && h.userId === me.userId;
-            const claimedNames = bounties.filter((b) => (h.claimedIds || []).includes(b.id)).map((b) => b.name);
-            return `<div class="bounty-hunter${mine ? " mine" : ""}">
-              <div class="bounty-hunter-rank">${i + 1}</div>
-              <div class="bounty-hunter-body">
-                <div class="font-semibold">${esc(h.displayName)}${mine ? " · you" : ""}</div>
-                <div class="text-xs text-muted">${esc(h.tierName)} · 3DA ${esc(h.avg)} · ${h.claimedCount} claimed</div>
-                ${claimedNames.length ? `<div class="bounty-chips">${claimedNames.map((n) => `<span>${esc(n)}</span>`).join("")}${h.bonusPoints ? `<span>Staff bonus +${esc(h.bonusPoints)}</span>` : ""}</div>` : h.bonusPoints ? `<div class="bounty-chips"><span>Staff bonus +${esc(h.bonusPoints)}</span></div>` : `<div class="text-xs text-muted mt-1">No bounties claimed yet</div>`}
-              </div>
-              <div class="bounty-hunter-pts gold">${h.points}<span>pts</span></div>
-            </div>`;
-          })
-          .join("")}</div>`;
-  return layout(
-    `<div class="mx-auto max-w-5xl px-4 py-10 bounty-page">
-      <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
-      <h1 class="page-title mt-2 font-extrabold">${esc(d.title || "PreSeason Bounty")}</h1>
-      <p class="mt-4 max-w-3xl text-sm leading-relaxed text-white/80">${esc(d.intro || "")} Season starts ${esc(d.seasonStartLabel || bountyDateLabel(d.seasonStart) || "September 14th")}.</p>
-      <nav class="bounty-toc mt-6" aria-label="Bounty hunt sections">
-        <a href="/preseason-bounty#bounty-how">How to claim</a>
-        <a href="/preseason-bounty#bounty-t1">Tier 1</a>
-        <a href="/preseason-bounty#bounty-t2">Tier 2</a>
-        <a href="/preseason-bounty#bounty-t3">Tier 3</a>
-        <a href="/preseason-bounty#bounty-universal">Universal</a>
-        <a href="/preseason-bounty#bounty-board">Hunter board</a>
-      </nav>
-      <div class="mt-6">${joinPanel}</div>
-      ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
-      ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
-      <section id="bounty-how" class="mt-10">
-        <h2 class="text-2xl font-extrabold">How it works</h2>
-        <div class="bounty-rules mt-4">${ruleCards}</div>
-        <h3 class="mt-8 text-lg font-bold">How to claim</h3>
-        <p class="mt-1 text-sm text-muted">Claims are reviewed in TSH General Chat. Staff then award them from Admin so they show on your tracker.</p>
-        <div class="bounty-steps mt-4">${howCards}</div>
-        <div class="mt-4">${externalLink(d.claimGroupHref || tshMessengerGroup()?.href, `Open ${d.claimGroupLabel || "TSH General Chat"}`)}</div>
-      </section>
-      ${tierSections}
-      <section class="bounty-tier mt-10" id="bounty-universal">
-        <div class="bounty-tier-head">
-          <div>
-            <p class="text-xs font-semibold tracking-[0.3em] gold">ALL AVERAGES</p>
-            <h2 class="mt-1 text-2xl font-extrabold">Universal bounties</h2>
-            <p class="mt-1 text-sm text-muted">Any signed-up player, any match against another TSH league player. 1 bonus point each. Once per player.</p>
-          </div>
-        </div>
-        <div class="bounty-grid mt-4">${universal.map((b) => bountyCard(b, { me, tiers })).join("")}</div>
-      </section>
-      <section class="mt-10" id="bounty-board">
-        <h2 class="text-2xl font-extrabold">Hunter board</h2>
-        <p class="mt-1 text-sm text-muted">Players who opted in, ranked by bonus points earned.</p>
-        ${board}
-      </section>
-    </div>`,
-    { arena: true }
-  );
-}
 async function pageRules() {
   const d = await api("/api/rules");
   const sections = Array.isArray(d.sections) ? d.sections : [];
@@ -2119,8 +1785,6 @@ async function contactBlock() {
                    <div class="mt-1 text-sm">${esc(leagues.join(" · "))}</div>`
                 : ""
             }
-            <div class="mt-4 text-[11px] font-bold tracking-widest gold">DISCORD</div>
-            <div class="mt-1 text-sm">${discordDisplay(p.discordUrl)}</div>
             <div class="mt-4 text-[11px] font-bold tracking-widest gold">EMAIL</div>
             <div class="mt-1 text-sm">${
               p.contactEmail
@@ -2155,7 +1819,7 @@ async function contactBlock() {
         </div>
       </div>`)}
       <h2 class="admin-team-title">Admin Team</h2>
-      <a class="discord-first" href="${esc(tshGroup?.href || "#")}" target="_blank" rel="noopener noreferrer" data-external="1">Messenger First! E-mail if that Fails!</a>
+      <a class="messenger-first" href="${esc(tshGroup?.href || "#")}" target="_blank" rel="noopener noreferrer" data-external="1">Messenger First! E-mail if that Fails!</a>
       ${cards}
     </section>`;
 }
@@ -2218,10 +1882,7 @@ function newsComposeTools() {
     </div>`;
 }
 async function pageAdmin() {
-  const [d, bounty] = await Promise.all([
-    api("/api/admin/overview"),
-    api("/api/preseason-bounty").catch(() => ({})),
-  ]);
+  const d = await api("/api/admin/overview");
   const everyone = d.users;
   const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
@@ -2376,13 +2037,12 @@ async function pageAdmin() {
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
-        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub. The cards appear on About Us.</p>
+        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit the contact email from the Player Hub. The cards appear on About Us.</p>
         <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
-      ${bountyAdminDesk(bounty)}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
-          [pending.length, "PENDING APPS"],
+          [pending.length, "PENDING SIGN-UPS"],
           [review.length, "TO CONFIRM"],
           [d.fixtures.filter((f) => f.status === "scheduled").length, "OPEN FIXTURES"],
         ]
@@ -2395,7 +2055,7 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Verify match stats</h2>
         <p class="mt-1 text-sm text-muted">Pick a match. Screenshots are on the left. If the site read numbers from those shots they are pre-filled — check them, then save. Nothing is added to the table until you verify.</p>
         ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "VERIFY & SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
-      ${panel(`<h2 class="text-lg font-bold">Pending applications</h2>${
+      ${panel(`<h2 class="text-lg font-bold">Pending sign-ups</h2>${
         pending.length
           ? pending
               .map(
@@ -2608,15 +2268,13 @@ function matchRoute(path) {
   if (m) return ["regional", m[1]];
   m = q.match(/^\/regionals\/([^/]+)\/leagues\/(\d+)$/);
   if (m) return ["league", m[1], m[2]];
-  if (q === "/apply") return ["apply"];
   if (q === "/sign-in") return ["signin"];
-  if (q === "/sign-up") return ["signup"];
+  if (q === "/apply" || q === "/sign-up") return ["signup"];
   if (q === "/invite") return ["invite"];
   if (q === "/forgot-password") return ["forgot"];
   if (q === "/dashboard") return ["dashboard"];
   if (q === "/my-matches") return ["matches"];
   if (q === "/rules") return ["rules"];
-  if (q === "/preseason-bounty") return ["bounty"];
   if (q === "/about" || q === "/contact") return ["about"];
   if (q === "/announcements") return ["news"];
   if (q === "/admin") return ["admin"];
@@ -2629,6 +2287,10 @@ async function render() {
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
+    if ((state.path.split("?")[0] || "/") === "/apply") {
+      go("/sign-up");
+      return;
+    }
     if (["dashboard", "matches", "admin"].includes(route[0]) && !state.user) {
       go("/sign-in");
       return;
@@ -2648,7 +2310,6 @@ async function render() {
       regionals: pageRegionals,
       regional: () => pageRegional(route[1]),
       league: () => pageLeague(route[1], route[2]),
-      apply: pageApply,
       signin: () => pageSignIn(),
       signup: () => pageSignUp(),
       invite: () => pageInvite(),
@@ -2656,7 +2317,6 @@ async function render() {
       dashboard: pageDashboard,
       matches: pageMyMatches,
       player: () => pagePlayer(route[1]),
-      bounty: pageBounty,
       rules: pageRules,
       about: () => pageAbout(),
       news: pageNews,
@@ -2973,11 +2633,6 @@ document.addEventListener("submit", async (e) => {
       storeToken(d.token, true);
       state.user = d.user;
       go(afterAuthPath(d.user));
-    } else if (kind === "APPLY" || kind === "SUBMIT APPLICATION" || kind === "SIGN UP TO APPLY") {
-      if (!state.user) return go("/sign-up");
-      await api("/api/apply", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Application received. An admin will place you in a division.";
-      render();
     } else if (kind === "UPLOADBOTH" || kind === "UPLOAD") {
       const id = form.dataset.id;
       const draft = state.shotDrafts?.[id] || {};
@@ -3201,43 +2856,6 @@ document.addEventListener("submit", async (e) => {
       if (!window.confirm("Delete this announcement? This cannot be undone.")) return;
       await api(`/api/admin/announcements/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
       state.notice = "Announcement deleted.";
-      render();
-    } else if (kind === "BOUNTYJOIN") {
-      const d = await api("/api/preseason-bounty/join", { method: "POST", body: "{}" });
-      if (d.user) state.user = d.user;
-      state.notice = "You're in the PreSeason Bounty Hunt. Play, then claim in TSH General Chat.";
-      render();
-    } else if (kind === "BOUNTYLEAVE") {
-      const d = await api("/api/preseason-bounty/leave", { method: "POST", body: "{}" });
-      if (d.user) state.user = d.user;
-      state.notice = "You left the hunt. Claimed bounties stay on your record.";
-      render();
-    } else if (kind === "BOUNTYAWARD") {
-      await api("/api/admin/preseason-bounty/award", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Bounty awarded. It now shows on that player's tracker.";
-      render();
-    } else if (kind === "BOUNTYREVOKE") {
-      await api("/api/admin/preseason-bounty/revoke", {
-        method: "POST",
-        body: JSON.stringify({ userId: form.dataset.user, bountyId: form.dataset.bounty }),
-      });
-      state.notice = "Bounty claim removed.";
-      render();
-    } else if (kind === "BOUNTYMYSTERY") {
-      const revealed = form.querySelector('input[name="revealed"]')?.checked === true;
-      await api("/api/admin/preseason-bounty/mystery", { method: "POST", body: JSON.stringify({ ...fd, revealed }) });
-      state.notice = revealed ? "Mystery targets saved and revealed." : "Mystery targets saved.";
-      render();
-    } else if (kind === "BONUSAWARD") {
-      await api("/api/admin/preseason-bounty/bonus", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Bonus points awarded.";
-      render();
-    } else if (kind === "BONUSREVOKE") {
-      await api("/api/admin/preseason-bounty/bonus-revoke", {
-        method: "POST",
-        body: JSON.stringify({ awardId: form.dataset.id }),
-      });
-      state.notice = "Bonus award removed.";
       render();
     }
   } catch (err) {

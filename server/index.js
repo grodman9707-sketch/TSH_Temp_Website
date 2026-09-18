@@ -8,18 +8,6 @@ import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
-import {
-  awardBonusPoints,
-  awardBounty,
-  ensureBountyState,
-  extraBonusPoints,
-  joinHunt,
-  leaveHunt,
-  publicHunt,
-  revokeBonusAward,
-  revokeBounty,
-  saveMysteryTargets,
-} from "./preseasonBounty.js";
 import { airtableConfigured, backupOverview, loadPostgresSnapshot, postgresConfigured, runOffsiteSync, scheduleOffsiteSync } from "./offsite.js";
 import {
   EXPORT_CORS,
@@ -261,7 +249,6 @@ function publicUser(u, db) {
     openJoinRegional: db ? openJoinRegional(db, u) : null,
     openJoinRegionals: db ? openJoinRegionals(db, u) : [],
     pendingLeagueRequests: db ? pendingLeagueRequestsForUser(db, u.id) : [],
-    bountyHunt: Boolean(u.bountyHunt),
     communityJoinPending: Boolean(u.communityJoinPending),
   };
 }
@@ -290,16 +277,6 @@ function identityConflict(db, { email, username, dartcounterName } = {}, exclude
 }
 function userHasPendingApplication(db, userId) {
   return (db.applications || []).some((a) => Number(a.userId) === Number(userId) && a.status === "pending");
-}
-function applicationConflict(db, user) {
-  if (!user) return "Login required";
-  if (userHasPendingApplication(db, user.id)) {
-    return "You already have a pending application. An admin will place you in a division.";
-  }
-  if (isFullyPlaced(db, user)) {
-    return "You are already placed in the league. Contact an admin if you need a change.";
-  }
-  return null;
 }
 function publicApproval(a, db) {
   const target = db.users.find((u) => u.id === a.targetUserId);
@@ -424,7 +401,6 @@ function ensureAdminProfiles(db) {
     const slots = desiredStaffSlots(u);
     const existingForUser = db.adminProfiles.filter((p) => Number(p.userId) === Number(u.id));
     const template = {
-      discordUrl: existingForUser.find((p) => p.discordUrl)?.discordUrl || "",
       contactEmail: existingForUser.find((p) => p.contactEmail)?.contactEmail || u.email || "",
     };
     for (const slot of slots) {
@@ -436,7 +412,6 @@ function ensureAdminProfiles(db) {
           userId: u.id,
           status: slot.status,
           leagueId: slot.leagueId,
-          discordUrl: template.discordUrl,
           contactEmail: template.contactEmail,
           createdAt: new Date().toISOString(),
         };
@@ -472,7 +447,6 @@ function publicStaffProfile(p, db) {
     statusLabel: staffStatusLabel(p.status),
     leagueId: p.leagueId || null,
     leagueTitle: league ? leagueTitle(db, league) : "",
-    discordUrl: p.discordUrl || "",
     contactEmail: p.contactEmail || "",
   };
 }
@@ -492,7 +466,6 @@ function publicStaffProfiles(db) {
         avatarUrl: row.avatarUrl,
         roleKeys: [],
         leagues: [],
-        discordUrl: row.discordUrl || "",
         contactEmail: row.contactEmail || "",
       };
       grouped.set(row.userId, card);
@@ -501,7 +474,6 @@ function publicStaffProfiles(db) {
     if (row.leagueId && !card.leagues.some((l) => l.id === row.leagueId)) {
       card.leagues.push({ id: row.leagueId, title: row.leagueTitle });
     }
-    if (row.discordUrl) card.discordUrl = row.discordUrl;
     if (row.contactEmail) card.contactEmail = row.contactEmail;
   }
   return [...grouped.values()]
@@ -535,39 +507,6 @@ function normalizeStaffEmail(value) {
   if (!s) return "";
   if (s.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) {
     const err = new Error("Enter a valid contact email");
-    err.status = 400;
-    throw err;
-  }
-  return s;
-}
-function normalizeDiscordUrl(value) {
-  const s = String(value || "").trim();
-  if (!s) return "";
-  if (s.length > 300) {
-    const err = new Error("Discord link is too long");
-    err.status = 400;
-    throw err;
-  }
-  const asUrl = /^https?:\/\//i.test(s) ? s : /^(discord\.gg|discord\.com|discordapp\.com)\//i.test(s) ? `https://${s}` : "";
-  if (asUrl) {
-    let url;
-    try {
-      url = new URL(asUrl);
-    } catch {
-      const err = new Error("Enter a valid Discord profile link");
-      err.status = 400;
-      throw err;
-    }
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    if (!["discord.com", "discordapp.com", "discord.gg"].includes(host)) {
-      const err = new Error("Discord link must be a discord.com or discord.gg URL");
-      err.status = 400;
-      throw err;
-    }
-    return url.toString();
-  }
-  if (!/^@?[a-zA-Z0-9._-]{2,32}$/.test(s) && !/^.{2,32}#\d{4}$/.test(s)) {
-    const err = new Error("Enter a Discord profile URL or username");
     err.status = 400;
     throw err;
   }
@@ -1106,7 +1045,6 @@ function ensureJasonJacksonOwner(db) {
       avatarUpdatedAt: null,
       notifyPrefs: { email: true },
       timezone: defaultTimezoneForRegional("both"),
-      bountyHunt: false,
     };
     db.users.push(jason);
     return true;
@@ -1132,7 +1070,6 @@ function migrate(db) {
     db.leagueRequests = [];
     changed = true;
   }
-  if (ensureBountyState(db)) changed = true;
   for (const u of db.users) {
     if (!("adminLeagueId" in u)) {
       u.adminLeagueId = null;
@@ -1231,6 +1168,12 @@ function migrate(db) {
     if (db.league.discordInvite) {
       delete db.league.discordInvite;
       changed = true;
+    }
+    for (const p of db.adminProfiles || []) {
+      if ("discordUrl" in p) {
+        delete p.discordUrl;
+        changed = true;
+      }
     }
     if (messengerInvitesNeedUpdate(db.league.messengerInvites)) {
       db.league.messengerInvites = LEAGUE_MESSENGER_INVITES;
@@ -1332,13 +1275,25 @@ function migrate(db) {
     }
   }
   if (ensureAdminProfiles(db)) changed = true;
+  if (db.preseasonBounty || db.bountyClaims || db.bonusAwards || db.bounty) {
+    delete db.preseasonBounty;
+    delete db.bountyClaims;
+    delete db.bonusAwards;
+    delete db.bounty;
+    changed = true;
+  }
+  for (const u of db.users || []) {
+    if ("bountyHunt" in u) {
+      delete u.bountyHunt;
+      changed = true;
+    }
+  }
   if (changed) writeDb(db);
 }
 
 function standingsForLeague(db, leagueId) {
   const players = db.users.filter((u) => inLeague(u, leagueId));
   const rows = players.map((p) => {
-    const bonus = extraBonusPoints(db, p.id);
     return {
       playerId: p.id,
       name: p.name,
@@ -1350,8 +1305,7 @@ function standingsForLeague(db, leagueId) {
       lost: 0,
       legsFor: 0,
       legsAgainst: 0,
-      bonusPoints: bonus,
-      points: bonus,
+      points: 0,
       oneEighties: 0,
       matchAvgSum: 0,
       matchAvgCount: 0,
@@ -1694,15 +1648,6 @@ function scopedFixtures(db, user) {
   const ids = new Set(adminLeagueIds(user));
   return db.fixtures.filter((f) => ids.has(f.leagueId));
 }
-function huntView(user) {
-  return {
-    user,
-    canAward: Boolean(user && isStaff(user)),
-    canEditMystery: Boolean(user && canOverride(user)),
-    canAwardBonus: Boolean(user && canOverride(user)),
-  };
-}
-
 function requestOrigin(req) {
   const forwarded = String(req?.headers?.["x-forwarded-proto"] || "")
     .split(",")[0]
@@ -1736,13 +1681,6 @@ async function handleApi(req, res, url) {
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
   if (method === "GET" && p === "/api/rules") return json(res, 200, { ok: true, ...leagueRules });
   if (method === "GET" && p === "/api/about") return json(res, 200, { ok: true, ...aboutContent });
-  if (method === "GET" && p === "/api/preseason-bounty") {
-    if (ensureBountyState(db)) persistDb(db);
-    return json(res, 200, {
-      ok: true,
-      ...publicHunt(db, huntView(user)),
-    });
-  }
   if (method === "GET" && p === "/api/staff-profiles") {
     if (ensureAdminProfiles(db)) writeDb(db);
     return json(res, 200, {
@@ -1906,7 +1844,6 @@ async function handleApi(req, res, url) {
       avatarUpdatedAt: null,
       notifyPrefs: { email: true },
       timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(selection.choice),
-      bountyHunt: false,
       communityJoinPending: true,
     };
     db.users.push(created);
@@ -1988,8 +1925,8 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about", "/api/preseason-bounty"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
-    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account", "/api/preseason-bounty"].some((x) => p === x || p.startsWith(x))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+    if (["/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
   }
@@ -2008,21 +1945,6 @@ async function handleApi(req, res, url) {
     sessions.delete(tokenFrom(req, url));
     saveSessions();
     return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true, req }) });
-  }
-
-  if (method === "POST" && p === "/api/preseason-bounty/join") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const result = joinHunt(db, user);
-    if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-    persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
-  }
-  if (method === "POST" && p === "/api/preseason-bounty/leave") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const result = leaveHunt(db, user);
-    if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-    persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
   }
 
   const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);
@@ -2067,10 +1989,8 @@ async function handleApi(req, res, url) {
   if (method === "POST" && p === "/api/account/staff-profile") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Only league staff can edit a contact profile" });
-    let discordUrl;
     let contactEmail;
     try {
-      discordUrl = normalizeDiscordUrl(body.discordUrl);
       contactEmail = normalizeStaffEmail(body.contactEmail);
     } catch (err) {
       return json(res, err.status || 400, { ok: false, error: err.message });
@@ -2081,8 +2001,8 @@ async function handleApi(req, res, url) {
     const targets = profileId ? mine.filter((p) => p.id === profileId) : mine;
     if (profileId && !targets.length) return json(res, 404, { ok: false, error: "Profile not found" });
     for (const p of targets) {
-      p.discordUrl = discordUrl;
       p.contactEmail = contactEmail;
+      delete p.discordUrl;
     }
     persistDb(db);
     return json(res, 200, { ok: true, user: publicUser(user, db), staffProfiles: ownStaffProfiles(db, user) });
@@ -2255,40 +2175,6 @@ async function handleApi(req, res, url) {
     }
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
-  }
-  if (method === "POST" && p === "/api/apply") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const blocked = applicationConflict(db, user);
-    if (blocked) return json(res, 400, { ok: false, error: blocked });
-    const dartcounterName = String(body.dartcounterName || "").trim() || user.name;
-    const dcConflict = identityConflict(db, { dartcounterName }, user.id);
-    if (dcConflict) return json(res, 400, { ok: false, error: dcConflict });
-    const selection = resolveSignupSelection(db, body);
-    if (selection.error) return json(res, 400, { ok: false, error: selection.error });
-    const application = {
-      id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      regionalChoice: selection.choice,
-      regionalId: selection.primary,
-      regionalIds: selection.ids,
-      avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
-      dartcounterName,
-      nickname: String(body.nickname || "").trim(),
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    db.applications.push(application);
-    const u = db.users.find((x) => x.id === user.id);
-    u.avg = application.avg;
-    u.regionalId = application.regionalId;
-    u.regionalIds = application.regionalIds;
-    u.regionalChoice = application.regionalChoice;
-    u.dartcounterName = application.dartcounterName;
-    u.nickname = application.nickname;
-    writeDb(db);
-    return json(res, 200, { ok: true, application });
   }
   if (method === "GET" && p === "/api/my-fixtures") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
@@ -2511,41 +2397,6 @@ async function handleApi(req, res, url) {
       } catch (err) {
         return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
       }
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/award") {
-      const result = awardBounty(db, { staff: user, userId: body.userId, bountyId: body.bountyId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, claim: result.claim, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/revoke") {
-      const result = revokeBounty(db, { userId: body.userId, bountyId: body.bountyId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can award bonus points" });
-      const result = awardBonusPoints(db, { staff: user, userId: body.userId, points: body.points, reason: body.reason });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, award: result.award, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus-revoke") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can revoke bonus points" });
-      const result = revokeBonusAward(db, { awardId: body.awardId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/mystery") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can set mystery targets" });
-      saveMysteryTargets(db, {
-        ...body,
-        revealed: body.revealed === true || body.revealed === "1" || body.revealed === "on",
-      });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
     }
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));
@@ -2947,7 +2798,6 @@ async function handleApi(req, res, url) {
         country: "",
         avatarFile: null,
         avatarUpdatedAt: null,
-        bountyHunt: false,
       };
       db.users.push(created);
       writeDb(db);
@@ -2982,7 +2832,6 @@ async function handleApi(req, res, url) {
       db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
       db.applications = db.applications.filter((a) => a.userId !== u.id);
       db.adminProfiles = (db.adminProfiles || []).filter((p) => Number(p.userId) !== Number(u.id));
-      db.bountyClaims = (db.bountyClaims || []).filter((c) => Number(c.userId) !== Number(u.id));
       db.users = db.users.filter((x) => x.id !== u.id);
       persistDb(db);
       return json(res, 200, { ok: true });

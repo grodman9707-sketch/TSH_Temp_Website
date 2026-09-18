@@ -1,4 +1,4 @@
-// Sign-up redundancy: one account per player, unique email / username / DartCounter, no duplicate applications.
+// Sign-up redundancy: one account per player, unique email / username / DartCounter.
 // Run: `node server/signup-redundancy.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -128,7 +128,7 @@ try {
     token: patTok,
     body: { regionalId: 1, dartcounterName: "PatDC2", avg: 51 },
   });
-  check("second application while pending is rejected", secondApply.status === 400 && /pending application/i.test(secondApply.data.error || ""));
+  check("apply endpoint is gone", secondApply.status === 404);
 
   const owner = await api(port, "/api/auth/login", {
     method: "POST",
@@ -149,7 +149,7 @@ try {
     token: patTok,
     body: { regionalId: 1, dartcounterName: "PatDC2", avg: 51 },
   });
-  check("application after placement is rejected", applyAfterPlace.status === 400 && /already placed/i.test(applyAfterPlace.data.error || ""));
+  check("apply stays gone after placement", applyAfterPlace.status === 404);
 
   const second = await api(port, "/api/auth/register", {
     method: "POST",
@@ -214,7 +214,9 @@ try {
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("signup form checks identity before continuing", appJs.includes("/api/auth/check-signup"));
-  check("apply page blocks a pending player", appJs.includes("Application already received") && appJs.includes("hasPendingApplication"));
+  check("nav has no Apply link", !appJs.includes('["/apply", "Apply"]') && !appJs.includes("pageApply"));
+  check("old apply URLs send people to sign-up", appJs.includes('"/apply"') && appJs.includes('go("/sign-up")'));
+  check("client never posts to /api/apply", !appJs.includes("/api/apply"));
   check("signed-in users cannot open sign-up again", appJs.includes("You already have an account"));
   check("signup ends with Messenger join requests", appJs.includes("JOINCOMMUNITY") && appJs.includes("Join the chats") && appJs.includes("data-act=\"join-link\""));
 } catch (err) {

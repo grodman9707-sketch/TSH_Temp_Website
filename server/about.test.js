@@ -72,7 +72,7 @@ try {
   check("/contact still routes to About Us", appJs.includes('q === "/about" || q === "/contact"'));
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("about styles are served", css.includes(".about-kicker") && css.includes(".rules-note"));
-  check("header auth and Discord links are sized for phones", css.includes(".header-auth") && css.includes(".discord-link"));
+  check("header auth and community links are sized for phones", css.includes(".header-auth") && css.includes(".community-link"));
 } finally {
   if (child.exitCode == null) {
     child.kill("SIGTERM");

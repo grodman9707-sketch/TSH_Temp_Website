@@ -85,15 +85,14 @@ try {
     method: "POST",
     token: ownerTok,
     body: {
-      discordUrl: "https://discord.com/users/111",
       contactEmail: "owner-fallback@example.com",
     },
   });
   check("owner can fill contact card", fillOwner.status === 200 && fillOwner.data.ok);
   const afterFill = await api(port, "/api/staff-profiles");
   const ownerPublic = (afterFill.data.profiles || []).find((p) => p.userId === 1);
-  check("public listing shows Discord", ownerPublic?.discordUrl === "https://discord.com/users/111");
-  check("public listing shows fallback email", ownerPublic?.contactEmail === "owner-fallback@example.com");
+  check("public listing has no Discord field", !("discordUrl" in (ownerPublic || {})));
+  check("public listing shows contact email", ownerPublic?.contactEmail === "owner-fallback@example.com");
 
   const player = await api(port, "/api/auth/register", {
     method: "POST",
@@ -113,7 +112,7 @@ try {
   const denied = await api(port, "/api/account/staff-profile", {
     method: "POST",
     token: playerTok,
-    body: { discordUrl: "https://discord.com/users/222", contactEmail: "nope@test.com" },
+    body: { contactEmail: "nope@test.com" },
   });
   check("players cannot edit staff profiles", denied.status === 403);
 
@@ -141,7 +140,7 @@ try {
     "owner card lists Owner and Admin together",
     ownerPlusAdmin?.roles?.includes("Owner") && ownerPlusAdmin?.roles?.includes("Admin") && ownerPlusAdmin?.roleLabel === "Owner · Admin"
   );
-  check("owner card still shows Discord once", ownerPlusAdmin?.discordUrl === "https://discord.com/users/111");
+  check("owner card still shows email once", ownerPlusAdmin?.contactEmail === "owner-fallback@example.com" && !("discordUrl" in (ownerPlusAdmin || {})));
 
   const assignHead = await api(port, "/api/admin/assign-head-admin", {
     method: "POST",
@@ -158,22 +157,23 @@ try {
     method: "POST",
     token: playerTok,
     body: {
-      discordUrl: "https://discord.com/users/333",
       contactEmail: "alex-league@test.com",
     },
   });
   check("division admin fills their card", fillAdmin.status === 200);
   const filledPublic = await api(port, "/api/staff-profiles");
   const filledAdmin = (filledPublic.data.profiles || []).find((p) => p.userId === playerId);
-  check("filled Discord is public", filledAdmin?.discordUrl === "https://discord.com/users/333");
+  check("filled card has no Discord field", !("discordUrl" in (filledAdmin || {})));
   check("filled email is public", filledAdmin?.contactEmail === "alex-league@test.com");
 
-  const badDiscord = await api(port, "/api/account/staff-profile", {
+  const leftoverDiscord = await api(port, "/api/account/staff-profile", {
     method: "POST",
     token: playerTok,
-    body: { discordUrl: "https://example.com/not-discord", contactEmail: "alex-league@test.com" },
+    body: { discordUrl: "https://discord.com/users/333", contactEmail: "alex-league@test.com" },
   });
-  check("rejects non-Discord URLs", badDiscord.status === 400);
+  check("posted Discord URLs are ignored", leftoverDiscord.status === 200);
+  const afterIgnore = (await api(port, "/api/staff-profiles")).data.profiles.find((p) => p.userId === playerId);
+  check("ignored Discord URL is not stored", !("discordUrl" in (afterIgnore || {})));
 
   const revokeAdmin = await api(port, "/api/admin/revoke-admin", {
     method: "POST",
@@ -295,11 +295,11 @@ try {
   check("contact page uses Role, not Status", appJs.includes(">ROLE<") && !appJs.includes(">STATUS<"));
   check("contact page lists support email", appJs.includes("Support@tshdartsleague.com"));
   check("contact page uses official Admin Team heading", appJs.includes("admin-team-title") && appJs.includes("Admin Team"));
-  check("contact page highlights Messenger First callout", appJs.includes("discord-first") && appJs.includes("Messenger First! E-mail if that Fails!"));
-  check("Messenger First callout is the TSH group link", appJs.includes("discord-first") && appJs.includes("tshMessengerGroup") && appJs.includes('data-external="1"'));
-  check("admin Discord shows the profile URL, not Open Discord", appJs.includes("function discordDisplay") && appJs.includes("discord-profile-link") && appJs.includes("discordLinkLabel") && !appJs.includes("Players tap Open Discord"));
+  check("contact page highlights Messenger First callout", appJs.includes("messenger-first") && appJs.includes("Messenger First! E-mail if that Fails!"));
+  check("Messenger First callout is the TSH group link", appJs.includes("messenger-first") && appJs.includes("tshMessengerGroup") && appJs.includes('data-external="1"'));
+  check("staff cards list email, not Discord", appJs.includes(">EMAIL<") && !appJs.includes(">DISCORD<") && !appJs.includes("discordUrl"));
   check("header shows Sign In next to Sign Up on all devices", appJs.includes('class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a>') && !appJs.includes("hidden sm:inline-flex"));
-  check("sidebar has no league Discord server", !appJs.includes("discord.gg/PjXMqRQCfS") && !appJs.includes(">Discord</a>"));
+  check("served app has no Discord copy", !/discord/i.test(appJs));
 } finally {
   child.kill("SIGTERM");
 }
