@@ -278,16 +278,6 @@ function identityConflict(db, { email, username, dartcounterName } = {}, exclude
 function userHasPendingApplication(db, userId) {
   return (db.applications || []).some((a) => Number(a.userId) === Number(userId) && a.status === "pending");
 }
-function applicationConflict(db, user) {
-  if (!user) return "Login required";
-  if (userHasPendingApplication(db, user.id)) {
-    return "You already have a pending application. An admin will place you in a division.";
-  }
-  if (isFullyPlaced(db, user)) {
-    return "You are already placed in the league. Contact an admin if you need a change.";
-  }
-  return null;
-}
 function publicApproval(a, db) {
   const target = db.users.find((u) => u.id === a.targetUserId);
   const requester = db.users.find((u) => u.id === a.requestedById);
@@ -1968,7 +1958,7 @@ async function handleApi(req, res, url) {
   }
 
   if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
-    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
+    if (["/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
   }
@@ -2219,40 +2209,6 @@ async function handleApi(req, res, url) {
     }
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
-  }
-  if (method === "POST" && p === "/api/apply") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const blocked = applicationConflict(db, user);
-    if (blocked) return json(res, 400, { ok: false, error: blocked });
-    const dartcounterName = String(body.dartcounterName || "").trim() || user.name;
-    const dcConflict = identityConflict(db, { dartcounterName }, user.id);
-    if (dcConflict) return json(res, 400, { ok: false, error: dcConflict });
-    const selection = resolveSignupSelection(db, body);
-    if (selection.error) return json(res, 400, { ok: false, error: selection.error });
-    const application = {
-      id: Math.max(0, ...db.applications.map((a) => a.id)) + 1,
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      regionalChoice: selection.choice,
-      regionalId: selection.primary,
-      regionalIds: selection.ids,
-      avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,
-      dartcounterName,
-      nickname: String(body.nickname || "").trim(),
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    db.applications.push(application);
-    const u = db.users.find((x) => x.id === user.id);
-    u.avg = application.avg;
-    u.regionalId = application.regionalId;
-    u.regionalIds = application.regionalIds;
-    u.regionalChoice = application.regionalChoice;
-    u.dartcounterName = application.dartcounterName;
-    u.nickname = application.nickname;
-    writeDb(db);
-    return json(res, 200, { ok: true, application });
   }
   if (method === "GET" && p === "/api/my-fixtures") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
