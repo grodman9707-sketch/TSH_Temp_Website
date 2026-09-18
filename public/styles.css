@@ -79,7 +79,7 @@ video, canvas, svg {
   margin: 0.85rem auto 0;
   background: #e8b425;
 }
-.discord-first {
+.messenger-first {
   display: block;
   width: fit-content;
   max-width: 100%;
@@ -95,11 +95,11 @@ video, canvas, svg {
   box-shadow: 0 0 0 3px rgba(232, 180, 37, 0.22);
   min-height: 2.75rem;
 }
-.discord-first:hover {
+.messenger-first:hover {
   color: #0b1018;
   filter: brightness(1.05);
 }
-.discord-link {
+.community-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -115,39 +115,9 @@ video, canvas, svg {
   word-break: break-word;
   touch-action: manipulation;
 }
-.discord-link:hover {
+.community-link:hover {
   background: rgba(232, 180, 37, 0.12);
   color: #fff;
-}
-.discord-profile-link {
-  display: inline-block;
-  max-width: 100%;
-  min-height: 2.5rem;
-  padding: 0.35rem 0;
-  color: #e8b425;
-  font-weight: 700;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  word-break: break-all;
-  text-decoration: underline;
-  text-underline-offset: 0.18em;
-  touch-action: manipulation;
-}
-.discord-profile-link:hover {
-  color: #fff;
-}
-.discord-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3.5rem;
-  height: 3.5rem;
-  flex-shrink: 0;
-  border-radius: 0.75rem;
-  background: #5865f2;
-  color: #fff;
-  font-size: 1.5rem;
-  font-weight: 800;
 }
 .messenger-mark {
   display: flex;
@@ -1061,7 +1031,6 @@ input, select, textarea {
     align-items: center;
   }
   .community-card .crest-img,
-  .community-card .discord-mark,
   .community-card .messenger-mark {
     width: 72px;
     height: 72px;

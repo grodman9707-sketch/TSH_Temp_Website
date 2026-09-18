@@ -726,10 +726,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=48",
-  europe: "/images/tsh-europe-crest.png?v=48",
-  americas: "/images/tsh-america-crest.png?v=48",
-  world: "/images/tsh-world-crest.png?v=48",
+  main: "/images/tsh-main-crest.png?v=49",
+  europe: "/images/tsh-europe-crest.png?v=49",
+  americas: "/images/tsh-america-crest.png?v=49",
+  world: "/images/tsh-world-crest.png?v=49",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -880,36 +880,18 @@ function esc(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-function discordHref(value) {
+function httpHref(value) {
   const s = String(value || "").trim();
   if (!s) return "";
-  let href = "";
-  if (/^https?:\/\//i.test(s)) href = s;
-  else if (/^(www\.)?(discord\.gg|discord\.com|discordapp\.com)\//i.test(s)) href = `https://${s.replace(/^www\./i, "")}`;
-  else if (/^\d{17,20}$/.test(s)) href = `https://discord.com/users/${s}`;
-  if (!href) return "";
+  if (!/^https?:\/\//i.test(s)) return "";
   try {
-    const u = new URL(href);
-    u.hash = "";
-    u.pathname = (u.pathname || "/").replace(/\/+$/, "") || "/";
-    return u.toString();
+    return new URL(s).toString();
   } catch {
-    return href;
+    return "";
   }
 }
-function discordLinkLabel(href) {
-  try {
-    const u = new URL(href);
-    const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-    const path = (u.pathname || "").replace(/\/+$/, "");
-    if (host === "discord.gg") return `discord.gg${path}`;
-    return `${host}${path}${u.search || ""}`;
-  } catch {
-    return href;
-  }
-}
-function externalLink(href, label, className = "discord-link") {
-  const url = discordHref(href) || String(href || "").trim();
+function externalLink(href, label, className = "community-link") {
+  const url = httpHref(href) || String(href || "").trim();
   if (!url) return `<span class="text-muted">Not listed yet</span>`;
   return `<a class="${className}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-external="1">${label}</a>`;
 }
@@ -931,14 +913,7 @@ function messengerCards(league) {
 function communityInviteButtons(league) {
   return `<div class="mt-4 flex flex-col items-start gap-2">${messengerInvites(league)
     .map((m) => externalLink(m.href, `Join ${m.shortLabel}`))
-    .join("")}<a class="discord-link" href="/invite">Invite a player to join</a></div>`;
-}
-function discordDisplay(url) {
-  const href = discordHref(url);
-  const raw = String(url || "").trim();
-  if (!href && !raw) return `<span class="text-muted">Not listed yet</span>`;
-  if (!href) return `<span class="break-all">${esc(raw)}</span>`;
-  return `<a class="discord-profile-link" href="${esc(href)}" rel="noopener noreferrer" data-external="1">${esc(discordLinkLabel(href))}</a>`;
+    .join("")}<a class="community-link" href="/invite">Invite a player to join</a></div>`;
 }
 function staffDisplayName(p) {
   const nick = String(p?.nickname || "").trim();
@@ -1615,17 +1590,14 @@ async function pageDashboard() {
   const mineCard = mine[0];
   const staffContactPanel = mineCard
     ? `<div class="mt-10">${panel(`<h2 class="text-lg font-bold">Contact card</h2>
-        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Discord first; email if Discord fails. It is removed if you lose every staff role.</p>
+        <p class="mt-1 text-sm text-muted">This is your card on the About Us page. Email is listed if Messenger fails. It is removed if you lose every staff role.</p>
         <form class="mt-4 space-y-3" data-form="STAFFPROFILE">
           <div class="text-xs font-bold tracking-widest gold">ROLE</div>
           <div class="font-semibold">${esc(mineCard.roleLabel || mineCard.statusLabel || "")}${
             mineCard.leagueTitle ? ` · ${esc(mineCard.leagueTitle)}` : ""
           }</div>
-          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Discord profile link</label>
-          <input name="discordUrl" value="${esc(mineCard.discordUrl || "")}" placeholder="https://discord.com/users/123456789012345678" inputmode="url" autocomplete="url">
-          <p class="text-xs text-muted">In Discord, copy your profile link (right-click your name → Copy Profile Link) and paste it here. The About Us card will show that URL.</p>
-          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Fallback email</label>
-          <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="If Discord fails">
+          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Contact email</label>
+          <input name="contactEmail" type="email" value="${esc(mineCard.contactEmail || "")}" placeholder="Shown on About Us">
           <button class="btn-gold">SAVE CONTACT CARD</button>
         </form>`)}</div>`
     : "";
@@ -1813,8 +1785,6 @@ async function contactBlock() {
                    <div class="mt-1 text-sm">${esc(leagues.join(" · "))}</div>`
                 : ""
             }
-            <div class="mt-4 text-[11px] font-bold tracking-widest gold">DISCORD</div>
-            <div class="mt-1 text-sm">${discordDisplay(p.discordUrl)}</div>
             <div class="mt-4 text-[11px] font-bold tracking-widest gold">EMAIL</div>
             <div class="mt-1 text-sm">${
               p.contactEmail
@@ -1849,7 +1819,7 @@ async function contactBlock() {
         </div>
       </div>`)}
       <h2 class="admin-team-title">Admin Team</h2>
-      <a class="discord-first" href="${esc(tshGroup?.href || "#")}" target="_blank" rel="noopener noreferrer" data-external="1">Messenger First! E-mail if that Fails!</a>
+      <a class="messenger-first" href="${esc(tshGroup?.href || "#")}" target="_blank" rel="noopener noreferrer" data-external="1">Messenger First! E-mail if that Fails!</a>
       ${cards}
     </section>`;
 }
@@ -2067,7 +2037,7 @@ async function pageAdmin() {
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
-        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit Discord and fallback email from the Player Hub. The cards appear on About Us.</p>
+        <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit the contact email from the Player Hub. The cards appear on About Us.</p>
         <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
