@@ -47,7 +47,7 @@ check(
     !html.includes("user-scalable=no")
 );
 check("mobile browser chrome matches the dark theme", html.includes('name="theme-color"') && html.includes("#090b11"));
-check("cache-busted CSS and JS stay in lockstep", html.includes("styles.css?v=48") && html.includes("app.js?v=48"));
+check("cache-busted CSS and JS stay in lockstep", html.includes("styles.css?v=49") && html.includes("app.js?v=49"));
 
 check("html/body clip horizontal overflow", css.includes("overflow-x: clip") && css.includes("max-width: 100%"));
 check("notched phones get safe-area padding", css.includes("env(safe-area-inset-top") && css.includes("env(safe-area-inset-left") && css.includes(".site-nav"));
@@ -66,7 +66,7 @@ check("sidebar never wider than the screen", css.includes("min(18rem, 100%)"));
 check("form controls stay 16px so iOS does not zoom on focus", /input, select, textarea \{\s*font-size: 1rem;/.test(css));
 
 check("home page uses the fluid hero title", appJs.includes("hero-title") && appJs.includes("page-kicker") && appJs.includes("THE SOCIAL HUB PRESENTS"));
-check("community and Discord cards share the stacking layout", appJs.includes("community-card") && (appJs.match(/community-card/g) || []).length >= 2);
+check("community cards share the stacking layout", appJs.includes("community-card") && (appJs.match(/community-card/g) || []).length >= 2);
 check("FAQ questions wrap instead of overflowing", appJs.includes("faq-q") && appJs.includes("faq-q-text"));
 check("signup steps use a shrinking track", appJs.includes("signup-steps") && appJs.includes("step-label"));
 check("match and admin rows wrap", appJs.includes("split-row") && appJs.includes("header-user-name") && appJs.includes("header-crest"));

@@ -401,7 +401,6 @@ function ensureAdminProfiles(db) {
     const slots = desiredStaffSlots(u);
     const existingForUser = db.adminProfiles.filter((p) => Number(p.userId) === Number(u.id));
     const template = {
-      discordUrl: existingForUser.find((p) => p.discordUrl)?.discordUrl || "",
       contactEmail: existingForUser.find((p) => p.contactEmail)?.contactEmail || u.email || "",
     };
     for (const slot of slots) {
@@ -413,7 +412,6 @@ function ensureAdminProfiles(db) {
           userId: u.id,
           status: slot.status,
           leagueId: slot.leagueId,
-          discordUrl: template.discordUrl,
           contactEmail: template.contactEmail,
           createdAt: new Date().toISOString(),
         };
@@ -449,7 +447,6 @@ function publicStaffProfile(p, db) {
     statusLabel: staffStatusLabel(p.status),
     leagueId: p.leagueId || null,
     leagueTitle: league ? leagueTitle(db, league) : "",
-    discordUrl: p.discordUrl || "",
     contactEmail: p.contactEmail || "",
   };
 }
@@ -469,7 +466,6 @@ function publicStaffProfiles(db) {
         avatarUrl: row.avatarUrl,
         roleKeys: [],
         leagues: [],
-        discordUrl: row.discordUrl || "",
         contactEmail: row.contactEmail || "",
       };
       grouped.set(row.userId, card);
@@ -478,7 +474,6 @@ function publicStaffProfiles(db) {
     if (row.leagueId && !card.leagues.some((l) => l.id === row.leagueId)) {
       card.leagues.push({ id: row.leagueId, title: row.leagueTitle });
     }
-    if (row.discordUrl) card.discordUrl = row.discordUrl;
     if (row.contactEmail) card.contactEmail = row.contactEmail;
   }
   return [...grouped.values()]
@@ -512,39 +507,6 @@ function normalizeStaffEmail(value) {
   if (!s) return "";
   if (s.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) {
     const err = new Error("Enter a valid contact email");
-    err.status = 400;
-    throw err;
-  }
-  return s;
-}
-function normalizeDiscordUrl(value) {
-  const s = String(value || "").trim();
-  if (!s) return "";
-  if (s.length > 300) {
-    const err = new Error("Discord link is too long");
-    err.status = 400;
-    throw err;
-  }
-  const asUrl = /^https?:\/\//i.test(s) ? s : /^(discord\.gg|discord\.com|discordapp\.com)\//i.test(s) ? `https://${s}` : "";
-  if (asUrl) {
-    let url;
-    try {
-      url = new URL(asUrl);
-    } catch {
-      const err = new Error("Enter a valid Discord profile link");
-      err.status = 400;
-      throw err;
-    }
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    if (!["discord.com", "discordapp.com", "discord.gg"].includes(host)) {
-      const err = new Error("Discord link must be a discord.com or discord.gg URL");
-      err.status = 400;
-      throw err;
-    }
-    return url.toString();
-  }
-  if (!/^@?[a-zA-Z0-9._-]{2,32}$/.test(s) && !/^.{2,32}#\d{4}$/.test(s)) {
-    const err = new Error("Enter a Discord profile URL or username");
     err.status = 400;
     throw err;
   }
@@ -1206,6 +1168,12 @@ function migrate(db) {
     if (db.league.discordInvite) {
       delete db.league.discordInvite;
       changed = true;
+    }
+    for (const p of db.adminProfiles || []) {
+      if ("discordUrl" in p) {
+        delete p.discordUrl;
+        changed = true;
+      }
     }
     if (messengerInvitesNeedUpdate(db.league.messengerInvites)) {
       db.league.messengerInvites = LEAGUE_MESSENGER_INVITES;
@@ -2021,10 +1989,8 @@ async function handleApi(req, res, url) {
   if (method === "POST" && p === "/api/account/staff-profile") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Only league staff can edit a contact profile" });
-    let discordUrl;
     let contactEmail;
     try {
-      discordUrl = normalizeDiscordUrl(body.discordUrl);
       contactEmail = normalizeStaffEmail(body.contactEmail);
     } catch (err) {
       return json(res, err.status || 400, { ok: false, error: err.message });
@@ -2035,8 +2001,8 @@ async function handleApi(req, res, url) {
     const targets = profileId ? mine.filter((p) => p.id === profileId) : mine;
     if (profileId && !targets.length) return json(res, 404, { ok: false, error: "Profile not found" });
     for (const p of targets) {
-      p.discordUrl = discordUrl;
       p.contactEmail = contactEmail;
+      delete p.discordUrl;
     }
     persistDb(db);
     return json(res, 200, { ok: true, user: publicUser(user, db), staffProfiles: ownStaffProfiles(db, user) });
