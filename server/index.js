@@ -8,18 +8,6 @@ import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
-import {
-  awardBonusPoints,
-  awardBounty,
-  ensureBountyState,
-  extraBonusPoints,
-  joinHunt,
-  leaveHunt,
-  publicHunt,
-  revokeBonusAward,
-  revokeBounty,
-  saveMysteryTargets,
-} from "./preseasonBounty.js";
 import { airtableConfigured, backupOverview, loadPostgresSnapshot, postgresConfigured, runOffsiteSync, scheduleOffsiteSync } from "./offsite.js";
 import {
   EXPORT_CORS,
@@ -261,7 +249,6 @@ function publicUser(u, db) {
     openJoinRegional: db ? openJoinRegional(db, u) : null,
     openJoinRegionals: db ? openJoinRegionals(db, u) : [],
     pendingLeagueRequests: db ? pendingLeagueRequestsForUser(db, u.id) : [],
-    bountyHunt: Boolean(u.bountyHunt),
     communityJoinPending: Boolean(u.communityJoinPending),
   };
 }
@@ -1106,7 +1093,6 @@ function ensureJasonJacksonOwner(db) {
       avatarUpdatedAt: null,
       notifyPrefs: { email: true },
       timezone: defaultTimezoneForRegional("both"),
-      bountyHunt: false,
     };
     db.users.push(jason);
     return true;
@@ -1132,7 +1118,6 @@ function migrate(db) {
     db.leagueRequests = [];
     changed = true;
   }
-  if (ensureBountyState(db)) changed = true;
   for (const u of db.users) {
     if (!("adminLeagueId" in u)) {
       u.adminLeagueId = null;
@@ -1332,13 +1317,25 @@ function migrate(db) {
     }
   }
   if (ensureAdminProfiles(db)) changed = true;
+  if (db.preseasonBounty || db.bountyClaims || db.bonusAwards || db.bounty) {
+    delete db.preseasonBounty;
+    delete db.bountyClaims;
+    delete db.bonusAwards;
+    delete db.bounty;
+    changed = true;
+  }
+  for (const u of db.users || []) {
+    if ("bountyHunt" in u) {
+      delete u.bountyHunt;
+      changed = true;
+    }
+  }
   if (changed) writeDb(db);
 }
 
 function standingsForLeague(db, leagueId) {
   const players = db.users.filter((u) => inLeague(u, leagueId));
   const rows = players.map((p) => {
-    const bonus = extraBonusPoints(db, p.id);
     return {
       playerId: p.id,
       name: p.name,
@@ -1350,8 +1347,7 @@ function standingsForLeague(db, leagueId) {
       lost: 0,
       legsFor: 0,
       legsAgainst: 0,
-      bonusPoints: bonus,
-      points: bonus,
+      points: 0,
       oneEighties: 0,
       matchAvgSum: 0,
       matchAvgCount: 0,
@@ -1694,15 +1690,6 @@ function scopedFixtures(db, user) {
   const ids = new Set(adminLeagueIds(user));
   return db.fixtures.filter((f) => ids.has(f.leagueId));
 }
-function huntView(user) {
-  return {
-    user,
-    canAward: Boolean(user && isStaff(user)),
-    canEditMystery: Boolean(user && canOverride(user)),
-    canAwardBonus: Boolean(user && canOverride(user)),
-  };
-}
-
 function requestOrigin(req) {
   const forwarded = String(req?.headers?.["x-forwarded-proto"] || "")
     .split(",")[0]
@@ -1736,13 +1723,6 @@ async function handleApi(req, res, url) {
   if (method === "GET" && p === "/api/content") return json(res, 200, { ok: true, content: db.content, league: db.league });
   if (method === "GET" && p === "/api/rules") return json(res, 200, { ok: true, ...leagueRules });
   if (method === "GET" && p === "/api/about") return json(res, 200, { ok: true, ...aboutContent });
-  if (method === "GET" && p === "/api/preseason-bounty") {
-    if (ensureBountyState(db)) persistDb(db);
-    return json(res, 200, {
-      ok: true,
-      ...publicHunt(db, huntView(user)),
-    });
-  }
   if (method === "GET" && p === "/api/staff-profiles") {
     if (ensureAdminProfiles(db)) writeDb(db);
     return json(res, 200, {
@@ -1906,7 +1886,6 @@ async function handleApi(req, res, url) {
       avatarUpdatedAt: null,
       notifyPrefs: { email: true },
       timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(selection.choice),
-      bountyHunt: false,
       communityJoinPending: true,
     };
     db.users.push(created);
@@ -1988,8 +1967,8 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about", "/api/preseason-bounty"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
-    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account", "/api/preseason-bounty"].some((x) => p === x || p.startsWith(x))) {
+  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+    if (["/api/apply", "/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
   }
@@ -2008,21 +1987,6 @@ async function handleApi(req, res, url) {
     sessions.delete(tokenFrom(req, url));
     saveSessions();
     return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", { clear: true, req }) });
-  }
-
-  if (method === "POST" && p === "/api/preseason-bounty/join") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const result = joinHunt(db, user);
-    if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-    persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
-  }
-  if (method === "POST" && p === "/api/preseason-bounty/leave") {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const result = leaveHunt(db, user);
-    if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-    persistDb(db);
-    return json(res, 200, { ok: true, user: publicUser(user, db), ...publicHunt(db, huntView(user)) });
   }
 
   const avatarGet = p.match(/^\/api\/users\/(\d+)\/avatar$/);
@@ -2512,41 +2476,6 @@ async function handleApi(req, res, url) {
         return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
       }
     }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/award") {
-      const result = awardBounty(db, { staff: user, userId: body.userId, bountyId: body.bountyId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, claim: result.claim, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/revoke") {
-      const result = revokeBounty(db, { userId: body.userId, bountyId: body.bountyId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can award bonus points" });
-      const result = awardBonusPoints(db, { staff: user, userId: body.userId, points: body.points, reason: body.reason });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, award: result.award, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/bonus-revoke") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can revoke bonus points" });
-      const result = revokeBonusAward(db, { awardId: body.awardId });
-      if (!result.ok) return json(res, result.status || 400, { ok: false, error: result.error });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
-    }
-    if (method === "POST" && p === "/api/admin/preseason-bounty/mystery") {
-      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can set mystery targets" });
-      saveMysteryTargets(db, {
-        ...body,
-        revealed: body.revealed === true || body.revealed === "1" || body.revealed === "on",
-      });
-      persistDb(db);
-      return json(res, 200, { ok: true, ...publicHunt(db, huntView(user)) });
-    }
     if (method === "GET" && p === "/api/admin/overview") {
       const leagues = scopedLeagues(db, user).map((l) => ({ ...l, title: leagueTitle(db, l) }));
       const fixtures = scopedFixtures(db, user).map((f) => withNames(db, f));
@@ -2947,7 +2876,6 @@ async function handleApi(req, res, url) {
         country: "",
         avatarFile: null,
         avatarUpdatedAt: null,
-        bountyHunt: false,
       };
       db.users.push(created);
       writeDb(db);
@@ -2982,7 +2910,6 @@ async function handleApi(req, res, url) {
       db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
       db.applications = db.applications.filter((a) => a.userId !== u.id);
       db.adminProfiles = (db.adminProfiles || []).filter((p) => Number(p.userId) !== Number(u.id));
-      db.bountyClaims = (db.bountyClaims || []).filter((c) => Number(c.userId) !== Number(u.id));
       db.users = db.users.filter((x) => x.id !== u.id);
       persistDb(db);
       return json(res, 200, { ok: true });
