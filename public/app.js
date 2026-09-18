@@ -726,10 +726,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=47",
-  europe: "/images/tsh-europe-crest.png?v=47",
-  americas: "/images/tsh-america-crest.png?v=47",
-  world: "/images/tsh-world-crest.png?v=47",
+  main: "/images/tsh-main-crest.png?v=48",
+  europe: "/images/tsh-europe-crest.png?v=48",
+  americas: "/images/tsh-america-crest.png?v=48",
+  world: "/images/tsh-world-crest.png?v=48",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -820,7 +820,6 @@ function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
     ["/regionals", "Regionals"],
-    ["/apply", "Apply"],
     ["/announcements", "News"],
     ["/rules", "Rules"],
     ["/about", "About Us"],
@@ -1534,49 +1533,6 @@ function pageSignUp() {
     { arena: true }
   );
 }
-async function pageApply() {
-  const u = state.user;
-  if (u?.hasPendingApplication) {
-    return layout(
-      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 page-title font-extrabold">Application already received</h1>
-        <p class="mt-2 text-sm text-muted">You already have a pending application. Each player may only sign up once. An admin will place you in a division.</p>
-        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
-      `)}</div>`,
-      { arena: true }
-    );
-  }
-  if (u?.fullyPlaced) {
-    return layout(
-      `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-        <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-        <h1 class="mt-2 page-title font-extrabold">Already in the league</h1>
-        <p class="mt-2 text-sm text-muted">You are already placed. Duplicate sign-ups are not allowed. Open Player Hub → Player profile to ask to withdraw from a league.</p>
-        <p class="mt-4"><a class="btn-gold" href="/dashboard">OPEN PLAYER HUB</a></p>
-      `)}</div>`,
-      { arena: true }
-    );
-  }
-  return layout(
-    `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-      <p class="page-kicker text-xs font-semibold gold">JOIN THE LEAGUE</p>
-      <h1 class="mt-2 page-title font-extrabold">Apply to TSH</h1>
-      <p class="mt-2 text-sm text-muted">Free to enter. We place you by DartCounter average.</p>
-      ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
-      ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
-      <form class="mt-6 space-y-4" data-form="APPLY">
-        <select name="regional">
-          <option value="international">International League</option>
-        </select>
-        <input name="dartcounterName" placeholder="DartCounter username">
-        <input name="avg" type="number" step="0.1" placeholder="3-dart average" required>
-        <button class="btn-gold w-full py-3">${state.user ? "SUBMIT APPLICATION" : "SIGN UP TO APPLY"}</button>
-      </form>
-    `)}</div>`,
-    { arena: true }
-  );
-}
 function leagueChangeInner(u) {
   if (!u) return "";
   const leagues = Array.isArray(u.leagues) && u.leagues.length ? u.leagues : [];
@@ -2116,7 +2072,7 @@ async function pageAdmin() {
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
-          [pending.length, "PENDING APPS"],
+          [pending.length, "PENDING SIGN-UPS"],
           [review.length, "TO CONFIRM"],
           [d.fixtures.filter((f) => f.status === "scheduled").length, "OPEN FIXTURES"],
         ]
@@ -2129,7 +2085,7 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Verify match stats</h2>
         <p class="mt-1 text-sm text-muted">Pick a match. Screenshots are on the left. If the site read numbers from those shots they are pre-filled — check them, then save. Nothing is added to the table until you verify.</p>
         ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "VERIFY & SAVE TO TABLE", emptyText: "No screenshots waiting." })}`, "mt-6")}
-      ${panel(`<h2 class="text-lg font-bold">Pending applications</h2>${
+      ${panel(`<h2 class="text-lg font-bold">Pending sign-ups</h2>${
         pending.length
           ? pending
               .map(
@@ -2342,9 +2298,8 @@ function matchRoute(path) {
   if (m) return ["regional", m[1]];
   m = q.match(/^\/regionals\/([^/]+)\/leagues\/(\d+)$/);
   if (m) return ["league", m[1], m[2]];
-  if (q === "/apply") return ["apply"];
   if (q === "/sign-in") return ["signin"];
-  if (q === "/sign-up") return ["signup"];
+  if (q === "/apply" || q === "/sign-up") return ["signup"];
   if (q === "/invite") return ["invite"];
   if (q === "/forgot-password") return ["forgot"];
   if (q === "/dashboard") return ["dashboard"];
@@ -2362,6 +2317,10 @@ async function render() {
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
+    if ((state.path.split("?")[0] || "/") === "/apply") {
+      go("/sign-up");
+      return;
+    }
     if (["dashboard", "matches", "admin"].includes(route[0]) && !state.user) {
       go("/sign-in");
       return;
@@ -2381,7 +2340,6 @@ async function render() {
       regionals: pageRegionals,
       regional: () => pageRegional(route[1]),
       league: () => pageLeague(route[1], route[2]),
-      apply: pageApply,
       signin: () => pageSignIn(),
       signup: () => pageSignUp(),
       invite: () => pageInvite(),
@@ -2705,11 +2663,6 @@ document.addEventListener("submit", async (e) => {
       storeToken(d.token, true);
       state.user = d.user;
       go(afterAuthPath(d.user));
-    } else if (kind === "APPLY" || kind === "SUBMIT APPLICATION" || kind === "SIGN UP TO APPLY") {
-      if (!state.user) return go("/sign-up");
-      await api("/api/apply", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Application received. An admin will place you in a division.";
-      render();
     } else if (kind === "UPLOADBOTH" || kind === "UPLOAD") {
       const id = form.dataset.id;
       const draft = state.shotDrafts?.[id] || {};

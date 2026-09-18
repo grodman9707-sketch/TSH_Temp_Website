@@ -131,7 +131,7 @@
                 "Email addresses must be unique",
                 "Usernames must be unique and must not match another player's email",
                 "DartCounter display names must be unique",
-                "A player may not submit a second application while one is pending, or after they have been placed"
+                "A player may not create a second account after they have signed up"
               ]
             },
             {
