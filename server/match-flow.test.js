@@ -71,11 +71,11 @@ try {
 
   const homeReg = await api(port, "/api/auth/register", {
     method: "POST",
-    body: { name: "Home Player", email: "home-flow@test.com", password: "pass1234", regional: "europe", dartcounterName: "HomeDC", avg: 55 },
+    body: { name: "Home Player", email: "home-flow@test.com", password: "pass1234", regional: "international", dartcounterName: "HomeDC", avg: 55 },
   });
   const awayReg = await api(port, "/api/auth/register", {
     method: "POST",
-    body: { name: "Away Player", email: "away-flow@test.com", password: "pass1234", regional: "europe", dartcounterName: "AwayDC", avg: 52 },
+    body: { name: "Away Player", email: "away-flow@test.com", password: "pass1234", regional: "international", dartcounterName: "AwayDC", avg: 52 },
   });
   check("register home and visitor", homeReg.status === 200 && awayReg.status === 200);
   const homeTok = homeReg.data.token;
@@ -83,14 +83,14 @@ try {
   const homeId = homeReg.data.user.id;
   const awayId = awayReg.data.user.id;
 
-  const placeHome = await api(port, "/api/admin/place-player", { method: "POST", token: ownerTok, body: { userId: homeId, leagueId: 1 } });
-  const placeAway = await api(port, "/api/admin/place-player", { method: "POST", token: ownerTok, body: { userId: awayId, leagueId: 1 } });
+  const placeHome = await api(port, "/api/admin/place-player", { method: "POST", token: ownerTok, body: { userId: homeId, leagueId: 9 } });
+  const placeAway = await api(port, "/api/admin/place-player", { method: "POST", token: ownerTok, body: { userId: awayId, leagueId: 9 } });
   check("place both players", placeHome.status === 200 && placeAway.status === 200);
 
   const created = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, week: 2, homeId, awayId, date: "2026-08-26" },
+    body: { leagueId: 9, week: 2, homeId, awayId, date: "2026-08-26" },
   });
   check("create fixture", created.status === 200 && created.data.fixture?.id);
   const fixtureId = created.data.fixture.id;
@@ -174,9 +174,9 @@ try {
   const week1 = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, week: 1, homeId, awayId, date: "2026-08-20" },
+    body: { leagueId: 9, week: 1, homeId, awayId, date: "2026-08-20" },
   });
-  check("create Europe League 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
+  check("create International Division 1 week 1 fixture", week1.status === 200 && week1.data.fixture?.id);
   const week1Id = week1.data.fixture.id;
   const week1MineBefore = await api(port, "/api/my-fixtures", { token: homeTok });
   const week1RowBefore = (week1MineBefore.data.fixtures || []).find((f) => f.id === week1Id);
@@ -211,7 +211,7 @@ try {
   const otherWeek1 = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, week: 1, homeId, awayId, date: "2026-08-27", skipVisitorAccept: false },
+    body: { leagueId: 9, week: 1, homeId, awayId, date: "2026-08-27", skipVisitorAccept: false },
   });
   check("second Europe L1 week 1 fixture created", otherWeek1.status === 200 && otherWeek1.data.fixture?.id);
   const otherBlocked = await api(port, `/api/my-fixtures/${otherWeek1.data.fixture.id}/screenshots`, {
@@ -224,7 +224,7 @@ try {
   const flagged = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, week: 2, homeId, awayId, date: "2026-09-03", skipVisitorAccept: true },
+    body: { leagueId: 9, week: 2, homeId, awayId, date: "2026-09-03", skipVisitorAccept: true },
   });
   check("create flagged skip-accept fixture", flagged.status === 200 && flagged.data.fixture?.skipVisitorAccept === true);
   const flaggedShot = await api(port, `/api/my-fixtures/${flagged.data.fixture.id}/screenshots`, {

@@ -36,6 +36,7 @@ check("isValidTimeZone rejects junk", isValidTimeZone("Not/AZone") === false);
 check("defaultTimezoneForRegional maps americas -> New York", defaultTimezoneForRegional("americas") === "America/New_York");
 check("defaultTimezoneForRegional maps europe -> London", defaultTimezoneForRegional("europe") === "Europe/London");
 check("defaultTimezoneForRegional maps world -> UTC", defaultTimezoneForRegional("world") === "UTC");
+check("defaultTimezoneForRegional maps international -> UTC", defaultTimezoneForRegional("international") === "UTC");
 check("defaultTimezoneForRegional maps world-americas -> New York", defaultTimezoneForRegional("world-americas") === "America/New_York");
 
 // --- reminder uses the absolute startAt regardless of naive date/time ---

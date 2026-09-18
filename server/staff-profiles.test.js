@@ -101,7 +101,7 @@ try {
       name: "Alex Admin",
       email: "alex-admin@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "AlexDC",
       avg: 50,
     },
@@ -120,7 +120,7 @@ try {
   const assignAdmin = await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: playerId, leagueId: 1 },
+    body: { userId: playerId, leagueId: 9 },
   });
   check("assign division admin", assignAdmin.status === 200);
   const withAdmin = await api(port, "/api/staff-profiles");
@@ -132,7 +132,7 @@ try {
   const assignOwnerAlsoAdmin = await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: 1, leagueId: 4 },
+    body: { userId: 1, leagueId: 12 },
   });
   check("owner can also be a division admin", assignOwnerAlsoAdmin.status === 200);
   const ownerPlusAdmin = (await api(port, "/api/staff-profiles")).data.profiles.find((p) => p.userId === 1);
@@ -178,7 +178,7 @@ try {
   const revokeAdmin = await api(port, "/api/admin/revoke-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: playerId, role: "admin", leagueId: 1 },
+    body: { userId: playerId, role: "admin", leagueId: 9 },
   });
   check("revoke division admin", revokeAdmin.status === 200 && !revokeAdmin.data.pending);
   const afterRevokeAdmin = await api(port, "/api/staff-profiles");
@@ -189,7 +189,7 @@ try {
   const replace = await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: playerId, leagueId: 2 },
+    body: { userId: playerId, leagueId: 10 },
   });
   check("reassign as admin of another league", replace.status === 200);
   const afterReplace = await api(port, "/api/staff-profiles");
@@ -214,7 +214,7 @@ try {
       name: "Casey Owner",
       email: "casey-owner@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "CaseyDC",
       avg: 48,
     },
@@ -263,7 +263,7 @@ try {
       name: "Riley Gone",
       email: "riley-gone@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "RileyDC",
       avg: 44,
     },
@@ -272,7 +272,7 @@ try {
   await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: doomedId, leagueId: 3 },
+    body: { userId: doomedId, leagueId: 11 },
   });
   const beforeDelete = await api(port, "/api/staff-profiles");
   check(

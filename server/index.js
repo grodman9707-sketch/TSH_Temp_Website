@@ -589,32 +589,32 @@ function divisionName(league) {
   const m = raw.match(/^League\s+(\d+)$/i);
   return m ? `Division ${m[1]}` : raw;
 }
-const EUROPE_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4"];
-const AMERICAS_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4"];
-const WORLD_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
-const WORLD_REGIONAL_ID = 3;
-const SIGNUP_BOTH_ERROR =
-  "Choose Worlds League only, or Worlds League plus one regional. You cannot play in Europe and Americas together.";
-const EUROPE_RETIRED_DIVISIONS = {
-  premier: "Division 1",
-  championship: "Division 1",
-  foundation: "Division 4",
-  development: "Division 4",
-};
+const INTERNATIONAL_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
+const INTERNATIONAL_REGIONAL_ID = 3;
+const SIGNUP_REGIONALS_SOON_ERROR = "Regional leagues are coming soon. Sign up for the International League.";
 function europeRegional(db) {
   return (db.regionals || []).find((r) => r.slug === "europe" || Number(r.id) === 1) || null;
 }
 function americasRegional(db) {
   return (db.regionals || []).find((r) => r.slug === "americas" || Number(r.id) === 2) || null;
 }
-function worldRegional(db) {
-  return (db.regionals || []).find((r) => r.slug === "world") || null;
+function internationalRegional(db) {
+  return (db.regionals || []).find((r) => r.slug === "international" || r.slug === "world") || null;
 }
-function isWorldRegional(r) {
-  return Boolean(r && r.slug === "world");
+function isInternationalRegional(r) {
+  return Boolean(r && (r.slug === "international" || r.slug === "world"));
+}
+function isComingSoonRegional(r) {
+  return Boolean(r && !isInternationalRegional(r) && (r.comingSoon || r.slug === "europe" || r.slug === "americas"));
 }
 function geographicRegionals(db) {
-  return (db.regionals || []).filter((r) => !isWorldRegional(r));
+  return (db.regionals || []).filter((r) => !isInternationalRegional(r));
+}
+function findRegionalBySlug(db, slug) {
+  const key = String(slug || "").trim().toLowerCase();
+  if (!key) return null;
+  if (key === "world" || key === "international") return internationalRegional(db);
+  return (db.regionals || []).find((r) => r.slug === key) || null;
 }
 function sortedRegionals(db) {
   return [...(db.regionals || [])].sort((a, b) => {
@@ -659,115 +659,171 @@ function ensureDivisionLadder(db, regional, names) {
   });
   return changed;
 }
-function ensureWorldLeague(db) {
-  if (!Array.isArray(db.regionals)) db.regionals = [];
+function stampRegional(r, fields) {
   let changed = false;
-  let world = worldRegional(db);
-  if (!world) {
-    world = {
-      id: nextUnusedId(db.regionals, WORLD_REGIONAL_ID),
-      slug: "world",
-      flag: "UN",
-      emoji: "🌍",
-      name: "World",
-      fullTitle: "TSH World",
-      region: "Global",
-      description: "The Worlds League of The Social Hub Darts League.",
-      active: true,
-      sortOrder: 0,
-    };
-    db.regionals.push(world);
-    changed = true;
-  } else {
-    if (world.slug !== "world") {
-      world.slug = "world";
-      changed = true;
-    }
-    if (!world.fullTitle) {
-      world.fullTitle = "TSH World";
-      changed = true;
-    }
-    if (world.sortOrder !== 0) {
-      world.sortOrder = 0;
+  for (const [key, value] of Object.entries(fields)) {
+    if (r[key] !== value) {
+      r[key] = value;
       changed = true;
     }
   }
-  const europe = europeRegional(db);
-  if (europe && (europe.sortOrder == null || Number(europe.sortOrder) === 0)) {
-    europe.sortOrder = 1;
-    changed = true;
-  }
-  const americas = americasRegional(db);
-  if (americas && (americas.sortOrder == null || Number(americas.sortOrder) <= 1) && Number(americas.sortOrder) !== 2) {
-    if (Number(americas.sortOrder) !== 2) {
-      americas.sortOrder = 2;
-      changed = true;
-    }
-  }
-  if (ensureDivisionLadder(db, world, WORLD_DIVISION_LADDER)) changed = true;
   return changed;
 }
-function remapLeagueIdList(list, fromId, toId) {
-  if (!Array.isArray(list)) return list;
-  return [...new Set(list.map(Number).map((id) => (id === Number(fromId) ? Number(toId) : id)).filter(Boolean))];
-}
-function remapRetiredEuropeLeague(db, fromId, toId) {
-  const from = Number(fromId);
-  const to = Number(toId);
-  if (!from || !to || from === to) return;
-  for (const u of db.users || []) {
-    if (Number(u.leagueId) === from) u.leagueId = to;
-    if (Array.isArray(u.leagueIds)) u.leagueIds = remapLeagueIdList(u.leagueIds, from, to);
-    if (Number(u.adminLeagueId) === from) u.adminLeagueId = to;
-    if (Array.isArray(u.adminLeagueIds)) u.adminLeagueIds = remapLeagueIdList(u.adminLeagueIds, from, to);
-    if (Array.isArray(u.adminLeagueIds)) syncAdminLeagues(u);
-  }
-  for (const row of [...(db.fixtures || []), ...(db.applications || []), ...(db.leagueRequests || []), ...(db.approvals || [])]) {
-    if (Number(row.leagueId) === from) row.leagueId = to;
-  }
-}
-function ensureEuropeDivisions(db) {
-  if (!Array.isArray(db.leagues)) db.leagues = [];
-  const europe = europeRegional(db);
-  if (!europe) return false;
+function ensureComingSoonRegional(db, { preferredId, slug, flag, emoji, name, fullTitle, region, description, sortOrder }) {
+  if (!Array.isArray(db.regionals)) db.regionals = [];
+  let regional = (db.regionals || []).find((r) => r.slug === slug || Number(r.id) === Number(preferredId)) || null;
   let changed = false;
-  let nextId = Math.max(0, ...db.leagues.map((l) => Number(l.id) || 0)) + 1;
-  for (const name of EUROPE_DIVISION_LADDER) {
-    const existing = db.leagues.find(
-      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
-    );
-    if (!existing) {
-      db.leagues.push({
-        id: nextId++,
-        regionalId: europe.id,
-        name,
-        format: "Best of 9",
-        sortOrder: 0,
-      });
-      changed = true;
-    }
+  if (!regional) {
+    regional = {
+      id: nextUnusedId(db.regionals, preferredId),
+      slug,
+      flag,
+      emoji,
+      name,
+      fullTitle,
+      region,
+      description,
+      active: false,
+      comingSoon: true,
+      sortOrder,
+    };
+    db.regionals.push(regional);
+    return true;
   }
-  EUROPE_DIVISION_LADDER.forEach((name, i) => {
-    const league = db.leagues.find(
-      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === name.toLowerCase()
-    );
-    if (league && league.sortOrder !== i) {
-      league.sortOrder = i;
+  changed = stampRegional(regional, {
+    slug,
+    flag,
+    emoji,
+    name,
+    fullTitle,
+    region,
+    description,
+    active: false,
+    comingSoon: true,
+    sortOrder,
+  }) || changed;
+  return changed;
+}
+function ensureComingSoonRegionals(db) {
+  let changed = false;
+  if (
+    ensureComingSoonRegional(db, {
+      preferredId: 1,
+      slug: "europe",
+      flag: "EU",
+      emoji: "🇪🇺",
+      name: "Europe",
+      fullTitle: "TSH Europe",
+      region: "Europe",
+      description: "The European regional of The Social Hub Darts League. Coming soon.",
+      sortOrder: 1,
+    })
+  ) {
+    changed = true;
+  }
+  if (
+    ensureComingSoonRegional(db, {
+      preferredId: 2,
+      slug: "americas",
+      flag: "AM",
+      emoji: "🌎",
+      name: "Americas",
+      fullTitle: "TSH Americas",
+      region: "Americas",
+      description: "The Americas regional of The Social Hub Darts League. Coming soon.",
+      sortOrder: 2,
+    })
+  ) {
+    changed = true;
+  }
+  return changed;
+}
+function ensureInternationalLeague(db) {
+  if (!Array.isArray(db.regionals)) db.regionals = [];
+  let changed = false;
+  let international = internationalRegional(db);
+  if (!international) {
+    international = {
+      id: nextUnusedId(db.regionals, INTERNATIONAL_REGIONAL_ID),
+      slug: "international",
+      flag: "UN",
+      emoji: "🌍",
+      name: "International",
+      fullTitle: "TSH International",
+      region: "Global",
+      description: "The International League of The Social Hub Darts League.",
+      active: true,
+      comingSoon: false,
+      sortOrder: 0,
+    };
+    db.regionals.push(international);
+    changed = true;
+  } else {
+    changed =
+      stampRegional(international, {
+        slug: "international",
+        name: "International",
+        fullTitle: "TSH International",
+        region: "Global",
+        description: "The International League of The Social Hub Darts League.",
+        active: true,
+        comingSoon: false,
+        sortOrder: 0,
+      }) || changed;
+  }
+  if (ensureDivisionLadder(db, international, INTERNATIONAL_DIVISION_LADDER)) changed = true;
+  return changed;
+}
+function retireGeographicLeagues(db) {
+  if (!Array.isArray(db.leagues)) db.leagues = [];
+  const geoIds = new Set(geographicRegionals(db).map((r) => Number(r.id)));
+  const retired = db.leagues.filter((l) => geoIds.has(Number(l.regionalId)));
+  const retiredIds = new Set(retired.map((l) => Number(l.id)));
+  const intl = internationalRegional(db);
+  const intlId = intl?.id || INTERNATIONAL_REGIONAL_ID;
+  let changed = false;
+  if (retiredIds.size) {
+    for (const u of db.users || []) {
+      if (Number(u.leagueId) && retiredIds.has(Number(u.leagueId))) {
+        u.leagueId = null;
+        changed = true;
+      }
+      if (Array.isArray(u.leagueIds) && u.leagueIds.some((id) => retiredIds.has(Number(id)))) {
+        u.leagueIds = u.leagueIds.filter((id) => !retiredIds.has(Number(id)));
+        u.leagueId = u.leagueIds[0] || null;
+        changed = true;
+      }
+      if (Number(u.adminLeagueId) && retiredIds.has(Number(u.adminLeagueId))) {
+        u.adminLeagueId = null;
+        changed = true;
+      }
+      if (Array.isArray(u.adminLeagueIds) && u.adminLeagueIds.some((id) => retiredIds.has(Number(id)))) {
+        u.adminLeagueIds = u.adminLeagueIds.filter((id) => !retiredIds.has(Number(id)));
+        syncAdminLeagues(u);
+        changed = true;
+      }
+    }
+    const beforeFixtures = (db.fixtures || []).length;
+    db.fixtures = (db.fixtures || []).filter((f) => !retiredIds.has(Number(f.leagueId)));
+    if (db.fixtures.length !== beforeFixtures) changed = true;
+    for (const row of [...(db.applications || []), ...(db.leagueRequests || []), ...(db.approvals || [])]) {
+      if (retiredIds.has(Number(row.leagueId))) {
+        row.leagueId = null;
+        changed = true;
+      }
+    }
+    db.leagues = db.leagues.filter((l) => !retiredIds.has(Number(l.id)));
+    changed = true;
+  }
+  for (const u of db.users || []) {
+    const nextIds = [intlId];
+    const beforeChoice = u.regionalChoice;
+    const beforeIds = JSON.stringify(u.regionalIds || []);
+    const beforePrimary = u.regionalId;
+    applyRegionalIds(db, u, nextIds);
+    if (u.regionalChoice !== beforeChoice || JSON.stringify(u.regionalIds || []) !== beforeIds || u.regionalId !== beforePrimary) {
       changed = true;
     }
-  });
-  const keepNames = new Set(EUROPE_DIVISION_LADDER.map((name) => name.toLowerCase()));
-  const extras = db.leagues.filter(
-    (l) => Number(l.regionalId) === Number(europe.id) && !keepNames.has(String(l.name || "").trim().toLowerCase())
-  );
-  for (const extra of extras) {
-    const targetName = EUROPE_RETIRED_DIVISIONS[String(extra.name || "").trim().toLowerCase()] || "Division 4";
-    const target = db.leagues.find(
-      (l) => Number(l.regionalId) === Number(europe.id) && String(l.name || "").trim().toLowerCase() === targetName.toLowerCase()
-    );
-    if (target) remapRetiredEuropeLeague(db, extra.id, target.id);
-    db.leagues = db.leagues.filter((l) => l.id !== extra.id);
-    changed = true;
   }
   return changed;
 }
@@ -798,14 +854,13 @@ function leaguesForRegional(db, regional) {
     }));
 }
 function userRegionalIds(u) {
-  if (Array.isArray(u?.regionalIds) && u.regionalIds.length) return [...new Set(u.regionalIds.map(Number))];
-  const choice = String(u?.regionalChoice || "");
-  if (choice === "world") return [WORLD_REGIONAL_ID];
-  if (choice === "world-europe") return [WORLD_REGIONAL_ID, 1];
-  if (choice === "world-americas") return [WORLD_REGIONAL_ID, 2];
-  if (choice === "both") return [1, 2];
-  if (choice === "americas") return [2];
-  return [1];
+  const intlId = INTERNATIONAL_REGIONAL_ID;
+  if (Array.isArray(u?.regionalIds) && u.regionalIds.length) {
+    const ids = [...new Set(u.regionalIds.map(Number).filter(Boolean))];
+    if (ids.includes(intlId) || ids.some((id) => id === 3)) return [intlId];
+    return [intlId];
+  }
+  return [intlId];
 }
 function userLeagueIds(u) {
   if (Array.isArray(u?.leagueIds)) {
@@ -828,62 +883,36 @@ function isFullyPlaced(db, u) {
   return userRegionalIds(u).every((id) => have.has(id));
 }
 function choiceFromRegionalIds(db, ids) {
-  const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
-  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
-  const europeId = europeRegional(db)?.id || 1;
-  const americasId = americasRegional(db)?.id || 2;
-  const hasWorld = unique.includes(worldId);
-  const geos = unique.filter((id) => id !== worldId);
-  if (hasWorld && geos.length === 0) return "world";
-  if (hasWorld && geos.includes(europeId) && geos.length === 1) return "world-europe";
-  if (hasWorld && geos.includes(americasId) && geos.length === 1) return "world-americas";
-  if (geos.includes(europeId) && geos.includes(americasId)) return "both";
-  if (geos.length === 1 && geos[0] === americasId) return "americas";
-  if (geos.length === 1 && geos[0] === europeId) return "europe";
-  if (hasWorld) return "world";
-  return "europe";
+  return "international";
 }
 function applyRegionalIds(db, u, ids) {
-  const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
-  u.regionalIds = unique;
-  u.regionalChoice = choiceFromRegionalIds(db, unique);
-  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
-  u.regionalId = unique.find((id) => id !== worldId) || unique[0] || worldId;
+  const intl = internationalRegional(db);
+  const intlId = intl?.id || INTERNATIONAL_REGIONAL_ID;
+  u.regionalIds = [intlId];
+  u.regionalChoice = "international";
+  u.regionalId = intlId;
 }
 function leagueSelectionError(db, ids) {
   const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
-  const worldId = worldRegional(db)?.id || WORLD_REGIONAL_ID;
-  const geos = unique.filter((id) => id !== worldId);
-  if (geos.length > 1) return SIGNUP_BOTH_ERROR;
-  if (unique.length > 2) return "Two leagues max: Worlds League and one regional.";
+  const intlId = internationalRegional(db)?.id || INTERNATIONAL_REGIONAL_ID;
+  const geos = unique.filter((id) => id !== intlId);
+  if (geos.length) return SIGNUP_REGIONALS_SOON_ERROR;
   return null;
 }
 function resolveSignupSelection(db, body = {}) {
   const raw = String(body.regional || "").trim().toLowerCase();
-  if (raw === "both") return { error: SIGNUP_BOTH_ERROR };
-  const world = worldRegional(db);
-  const europe = europeRegional(db);
-  const americas = americasRegional(db);
-  const worldId = world?.id || WORLD_REGIONAL_ID;
-  const europeId = europe?.id || 1;
-  const americasId = americas?.id || 2;
-  const map = {
-    world: { choice: "world", ids: [worldId], primary: worldId },
-    "world-europe": { choice: "world-europe", ids: [worldId, europeId], primary: worldId },
-    "world-americas": { choice: "world-americas", ids: [worldId, americasId], primary: worldId },
-    europe: { choice: "europe", ids: [europeId], primary: europeId },
-    americas: { choice: "americas", ids: [americasId], primary: americasId },
-  };
-  if (raw && map[raw]) return map[raw];
+  const intl = internationalRegional(db);
+  const intlId = intl?.id || INTERNATIONAL_REGIONAL_ID;
+  const international = { choice: "international", ids: [intlId], primary: intlId };
+  if (raw === "europe" || raw === "americas" || raw === "both" || raw === "world-europe" || raw === "world-americas") {
+    return { error: SIGNUP_REGIONALS_SOON_ERROR };
+  }
   const rid = Number(body.regionalId);
   if (rid) {
     const regional = (db.regionals || []).find((r) => Number(r.id) === rid);
-    if (regional) {
-      const ids = [rid];
-      return { choice: choiceFromRegionalIds(db, ids), ids, primary: rid };
-    }
+    if (regional && !isInternationalRegional(regional)) return { error: SIGNUP_REGIONALS_SOON_ERROR };
   }
-  return map.world;
+  return international;
 }
 function userLeagueSummaries(db, u) {
   return userLeagueIds(u).map((id) => {
@@ -930,21 +959,7 @@ function pendingLeagueRequestsForUser(db, userId) {
   return pendingLeagueRequests(db, userId).map((r) => publicLeagueRequest(r, db));
 }
 function openJoinRegionals(db, u) {
-  if (pendingLeagueRequests(db, u.id, "join").length) return [];
-  const world = worldRegional(db);
-  const geos = geographicRegionals(db);
-  const worldId = world?.id;
-  const have = new Set([...userRegionalIds(u), ...placedRegionalIds(db, u)]);
-  const haveWorld = worldId ? have.has(worldId) : false;
-  const haveGeos = geos.filter((r) => have.has(r.id));
-  const options = [];
-  if (world && !haveWorld && haveGeos.length <= 1) options.push(world);
-  if (haveWorld && haveGeos.length === 0) options.push(...geos);
-  return options.map((r) => ({
-    id: r.id,
-    name: r.fullTitle || r.name || "",
-    slug: r.slug,
-  }));
+  return [];
 }
 function openJoinRegional(db, u) {
   const options = openJoinRegionals(db, u);
@@ -1081,9 +1096,9 @@ function ensureJasonJacksonOwner(db) {
       leagueIds: [],
       adminLeagueId: null,
       adminLeagueIds: [],
-      regionalChoice: "both",
-      regionalIds: [1, 2],
-      regionalId: 1,
+      regionalChoice: "international",
+      regionalIds: [INTERNATIONAL_REGIONAL_ID],
+      regionalId: INTERNATIONAL_REGIONAL_ID,
       nickname: "",
       avg: 0,
       country: "",
@@ -1231,9 +1246,9 @@ function migrate(db) {
       }
     }
   }
-  if (ensureEuropeDivisions(db)) changed = true;
-  if (ensureWorldLeague(db)) changed = true;
-  if (ensureDivisionLadder(db, americasRegional(db), AMERICAS_DIVISION_LADDER)) changed = true;
+  if (ensureInternationalLeague(db)) changed = true;
+  if (ensureComingSoonRegionals(db)) changed = true;
+  if (retireGeographicLeagues(db)) changed = true;
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
       const beforeA = item.a;
@@ -1791,7 +1806,7 @@ async function handleApi(req, res, url) {
 
   const regionalMatch = p.match(/^\/api\/regionals\/([^/]+)$/);
   if (method === "GET" && regionalMatch) {
-    const regional = db.regionals.find((r) => r.slug === regionalMatch[1]);
+    const regional = findRegionalBySlug(db, regionalMatch[1]);
     if (!regional) return json(res, 404, { ok: false, error: "Not found" });
     const leagues = db.leagues
       .filter((l) => l.regionalId === regional.id)
@@ -2138,11 +2153,11 @@ async function handleApi(req, res, url) {
     if (kind === "join") {
       const open = openJoinRegionals(db, u);
       if (!open.length) {
-        return json(res, 400, { ok: false, error: "You already play in two leagues, or a second-league request is already pending." });
+        return json(res, 400, { ok: false, error: SIGNUP_REGIONALS_SOON_ERROR });
       }
       const regionalId = Number(body.regionalId || (open.length === 1 ? open[0].id : 0));
       if (!open.some((r) => r.id === regionalId)) {
-        return json(res, 400, { ok: false, error: "That league is not available as a second league. You can add Worlds League or one regional, not both regionals." });
+        return json(res, 400, { ok: false, error: "Regional leagues are coming soon. The International League is the only competition open right now." });
       }
       const addError = addCompetitionToUser(db, u, regionalId);
       if (addError) return json(res, 400, { ok: false, error: addError });
@@ -2906,7 +2921,11 @@ async function handleApi(req, res, url) {
       const conflict = identityConflict(db, { email, username, dartcounterName });
       if (conflict) return json(res, 400, { ok: false, error: conflict });
       const league = body.leagueId ? db.leagues.find((l) => l.id === Number(body.leagueId)) : null;
-      const world = worldRegional(db);
+      const international = internationalRegional(db);
+      const intlId = international?.id || INTERNATIONAL_REGIONAL_ID;
+      if (league && !isInternationalRegional(db.regionals.find((r) => r.id === league.regionalId))) {
+        return json(res, 400, { ok: false, error: SIGNUP_REGIONALS_SOON_ERROR });
+      }
       const created = {
         id: Math.max(0, ...db.users.map((u) => u.id)) + 1,
         name,
@@ -2919,9 +2938,9 @@ async function handleApi(req, res, url) {
         leagueIds: league ? [league.id] : [],
         adminLeagueId: null,
         adminLeagueIds: [],
-        regionalChoice: league ? choiceFromRegionalIds(db, [league.regionalId]) : "world",
-        regionalIds: league ? [league.regionalId] : world ? [world.id] : [WORLD_REGIONAL_ID],
-        regionalId: league ? league.regionalId : world?.id || WORLD_REGIONAL_ID,
+        regionalChoice: "international",
+        regionalIds: [intlId],
+        regionalId: intlId,
         dartcounterName,
         nickname: String(body.nickname || "").trim(),
         avg: Number(String(body.avg || "0").replace(/[^0-9.]/g, "")) || 0,

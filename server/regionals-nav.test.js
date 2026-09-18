@@ -52,46 +52,39 @@ try {
   check("regionals API ok", res.ok && data.ok);
   const europe = (data.regionals || []).find((r) => r.slug === "europe");
   const americas = (data.regionals || []).find((r) => r.slug === "americas");
-  const world = (data.regionals || []).find((r) => r.slug === "world");
-  check("Europe, Americas, and World are present", Boolean(europe && americas && world));
-  check("World is listed first", (data.regionals || [])[0]?.slug === "world");
-  const europeLadder = ["Division 1", "Division 2", "Division 3", "Division 4"];
-  const worldLadder = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
-  check("Europe has four divisions", Array.isArray(europe?.leagues) && europe.leagues.length === 4);
-  check("Americas has four divisions", Array.isArray(americas?.leagues) && americas.leagues.length === 4);
-  check("World has five divisions", Array.isArray(world?.leagues) && world.leagues.length === 5);
+  const international = (data.regionals || []).find((r) => r.slug === "international");
+  check("Europe, Americas, and International are present", Boolean(europe && americas && international));
+  check("International is listed first", (data.regionals || [])[0]?.slug === "international");
+  const intlLadder = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
+  check("Europe is coming soon with no divisions", europe?.comingSoon === true && Array.isArray(europe?.leagues) && europe.leagues.length === 0);
+  check("Americas is coming soon with no divisions", americas?.comingSoon === true && Array.isArray(americas?.leagues) && americas.leagues.length === 0);
+  check("International has five divisions", Array.isArray(international?.leagues) && international.leagues.length === 5);
+  check("International ladder is Division 1–5", (international?.leagues || []).every((l, i) => l.displayName === intlLadder[i]));
   check(
-    "Europe ladder is Division 1–4",
-    (europe?.leagues || []).every((l, i) => l.displayName === europeLadder[i])
+    "International division links jump to the table",
+    international?.leagues?.[0]?.href === `/regionals/international/leagues/${international?.leagues?.[0]?.id}`
   );
-  check("Americas divisions stay Division 1–4", (americas?.leagues || []).every((l, i) => l.displayName === `Division ${i + 1}`));
-  check("World ladder is Division 1–5", (world?.leagues || []).every((l, i) => l.displayName === worldLadder[i]));
-  check("Europe matches Americas division names", JSON.stringify((europe?.leagues || []).map((l) => l.displayName)) === JSON.stringify((americas?.leagues || []).map((l) => l.displayName)));
-  check("division links jump to the table", europe?.leagues?.[0]?.href === `/regionals/europe/leagues/${europe?.leagues?.[0]?.id}`);
-  check("World division links jump to the table", world?.leagues?.[0]?.href === `/regionals/world/leagues/${world?.leagues?.[0]?.id}`);
 
-  const league = await (await fetch(`http://127.0.0.1:${port}/api/leagues/1`)).json();
+  const league = await (await fetch(`http://127.0.0.1:${port}/api/leagues/${international.leagues[0].id}`)).json();
   check("league payload uses Division in the title", /Division 1/.test(league.league?.title || "") && league.league?.displayName === "Division 1");
 
   const overview = await (await fetch(`http://127.0.0.1:${port}/api/regionals/europe`)).json();
-  check("Europe overview API ok", overview.ok && Array.isArray(overview.leagues));
-  check(
-    "Europe overview lists Division 1–4",
-    JSON.stringify((overview.leagues || []).map((l) => l.displayName || l.name)) === JSON.stringify(europeLadder)
-  );
-  check("retired Europe rungs are gone", !(overview.leagues || []).some((l) => /Premier|Championship|Foundation|Development/.test(l.displayName || l.name || "")));
+  check("Europe overview API ok", overview.ok && overview.regional?.comingSoon === true);
+  check("Europe overview has no playable divisions", Array.isArray(overview.leagues) && overview.leagues.length === 0);
+
+  const worldAlias = await (await fetch(`http://127.0.0.1:${port}/api/regionals/world`)).json();
+  check("legacy /world slug aliases International", worldAlias.ok && worldAlias.regional?.slug === "international" && (worldAlias.leagues || []).length === 5);
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
   check("each region has its own divisions dropdown", appJs.includes("class=\"nav-sub\"") && appJs.includes("nav-subsub"));
-  check("regionals page lists divisions without extra hops", appJs.includes("REGIONAL LEAGUE") && appJs.includes("WORLDS LEAGUE") && appJs.includes("DIVISIONS"));
-  check("Europe and Americas overviews carry a timezone acknowledgement", appJs.includes("regionalTimezoneAck") && appJs.includes("Timezone warning") && appJs.includes("UK time (GMT/BST)") && appJs.includes("US Eastern Time (ET)"));
-  check("World overview uses UTC", appJs.includes('slug === "world"') && appJs.includes("UTC"));
-  check("timezone ack says a time difference is not a legitimate excuse", appJs.includes("not a legitimate excuse") && appJs.includes("as though you were in this regional"));
+  check("regionals page lists International and coming soon regionals", appJs.includes("INTERNATIONAL LEAGUE") && appJs.includes("REGIONAL LEAGUE") && appJs.includes("Coming soon"));
+  check("coming soon nav does not invent Europe divisions", appJs.includes("Coming soon") && appJs.includes("isInternationalSlug"));
+  check("International overview uses UTC", appJs.includes("international") && appJs.includes("UTC"));
 
   const css = await (await fetch(`http://127.0.0.1:${port}/styles.css`)).text();
   check("nested nav has phone-sized tap targets", css.includes(".nav-tree") && css.includes(".nav-subsub") && css.includes("min-height: 2.75rem"));
-  check("timezone acknowledgement has warning styling", css.includes(".regional-ack") && css.includes(".regional-ack-panel"));
+  check("coming soon badge is styled", css.includes(".coming-soon-badge") && css.includes(".nav-soon"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
@@ -133,23 +126,14 @@ try {
   await waitHealth(migratePort, migrated);
   const renamed = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals`)).json();
   const migratedEurope = (renamed.regionals || []).find((r) => r.slug === "europe");
-  const migratedWorld = (renamed.regionals || []).find((r) => r.slug === "world");
-  const migratedNames = (migratedEurope?.leagues || []).map((l) => l.displayName);
-  check("migrate creates Worlds League", Boolean(migratedWorld) && (migratedWorld.leagues || []).length === 5);
-  check("migrate renames League 1 to Division 1", migratedNames.includes("Division 1"));
-  check("migrate fills Division 2–4", ["Division 2", "Division 3", "Division 4"].every((name) => migratedNames.includes(name)));
-  check("migrate does not add retired Europe rungs", !["Premier", "Championship", "Foundation", "Development"].some((name) => migratedNames.includes(name)));
-  check(
-    "migrated Europe order is Division 1–4",
-    JSON.stringify(migratedNames) === JSON.stringify(["Division 1", "Division 2", "Division 3", "Division 4"])
-  );
+  const migratedIntl = (renamed.regionals || []).find((r) => r.slug === "international");
+  check("migrate creates International League", Boolean(migratedIntl) && (migratedIntl.leagues || []).length === 5);
+  check("migrate marks Europe coming soon", migratedEurope?.comingSoon === true && (migratedEurope?.leagues || []).length === 0);
+  check("migrate does not keep playable Europe divisions", !(migratedEurope?.leagues || []).length);
+
   const overviewMigrated = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals/europe`)).json();
-  const overviewNames = (overviewMigrated.leagues || []).map((l) => l.displayName || l.name);
-  check("Europe overview after migrate starts at Division 1", overviewNames[0] === "Division 1");
-  check(
-    "Europe overview after migrate matches Americas",
-    JSON.stringify(overviewNames) === JSON.stringify(["Division 1", "Division 2", "Division 3", "Division 4"])
-  );
+  check("Europe overview after migrate is coming soon", overviewMigrated.ok && overviewMigrated.regional?.comingSoon === true);
+  check("Europe overview after migrate has no divisions", (overviewMigrated.leagues || []).length === 0);
 } catch (err) {
   failures++;
   console.error("  FAIL - migrate:", err.message);
@@ -197,20 +181,20 @@ try {
   const foldedNames = (foldedDb.leagues || []).map((l) => l.name);
   check("folding drops Premier and Development", !foldedNames.includes("Premier") && !foldedNames.includes("Development"));
   check(
-    "folding keeps four Europe divisions",
-    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 1 && /^Division [1-4]$/.test(l.name)).length === 4
+    "folding retires Europe divisions",
+    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 1).length === 0
   );
   check(
-    "folding also creates Worlds League divisions",
+    "folding creates International League divisions",
     (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 3 && /^Division [1-5]$/.test(l.name)).length === 5
   );
   const pat = (foldedDb.users || []).find((u) => u.id === 3);
   const dev = (foldedDb.users || []).find((u) => u.id === 4);
-  check("Premier player moves into Division 1", Array.isArray(pat?.leagueIds) && pat.leagueIds.includes(1) && !pat.leagueIds.includes(9));
-  check("Premier admin assignment moves to Division 1", Array.isArray(pat?.adminLeagueIds) && pat.adminLeagueIds.includes(1) && !pat.adminLeagueIds.includes(9));
-  const division4 = (foldedDb.leagues || []).find((l) => l.name === "Division 4");
-  check("Development player moves into Division 4", Boolean(division4) && Array.isArray(dev?.leagueIds) && dev.leagueIds.includes(division4.id) && !dev.leagueIds.includes(12));
-  check("Premier fixture moves to Division 1", (foldedDb.fixtures || []).some((f) => f.id === 8 && f.leagueId === 1));
+  check("Premier player is unplaced from retired Europe leagues", Array.isArray(pat?.leagueIds) && !pat.leagueIds.includes(9) && !pat.leagueIds.includes(1));
+  check("Development player is unplaced from retired Europe leagues", Array.isArray(dev?.leagueIds) && !dev.leagueIds.includes(12));
+  check("Premier fixture is removed with the retired league", !(foldedDb.fixtures || []).some((f) => f.id === 8));
+  const europeStub = (foldedDb.regionals || []).find((r) => r.slug === "europe");
+  check("folded Europe regional is coming soon", europeStub?.comingSoon === true);
 } catch (err) {
   failures++;
   console.error("  FAIL - fold extras:", err.message);

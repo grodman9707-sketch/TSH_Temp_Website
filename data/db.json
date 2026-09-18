@@ -36,7 +36,7 @@
       },
       {
         "q": "Can I play with friends?",
-        "a": "Absolutely. You can challenge friends directly or compete alongside them in the same regional."
+        "a": "Absolutely. You can challenge friends directly or compete alongside them in the International League."
       },
       {
         "q": "What Apps are supported?",
@@ -52,14 +52,15 @@
   "regionals": [
     {
       "id": 3,
-      "slug": "world",
+      "slug": "international",
       "flag": "UN",
       "emoji": "🌍",
-      "name": "World",
-      "fullTitle": "TSH World",
+      "name": "International",
+      "fullTitle": "TSH International",
       "region": "Global",
-      "description": "The Worlds League of The Social Hub Darts League.",
+      "description": "The International League of The Social Hub Darts League.",
       "active": true,
+      "comingSoon": false,
       "sortOrder": 0
     },
     {
@@ -69,9 +70,10 @@
       "emoji": "🇪🇺",
       "name": "Europe",
       "fullTitle": "TSH Europe",
-      "region": "United Kingdom",
-      "description": "The European regional of The Social Hub Darts League.",
-      "active": true,
+      "region": "Europe",
+      "description": "The European regional of The Social Hub Darts League. Coming soon.",
+      "active": false,
+      "comingSoon": true,
       "sortOrder": 1
     },
     {
@@ -82,68 +84,13 @@
       "name": "Americas",
       "fullTitle": "TSH Americas",
       "region": "Americas",
-      "description": "The Americas regional of The Social Hub Darts League.",
-      "active": true,
+      "description": "The Americas regional of The Social Hub Darts League. Coming soon.",
+      "active": false,
+      "comingSoon": true,
       "sortOrder": 2
     }
   ],
   "leagues": [
-    {
-      "id": 1,
-      "regionalId": 1,
-      "name": "Division 1",
-      "format": "Best of 9",
-      "sortOrder": 0
-    },
-    {
-      "id": 2,
-      "regionalId": 1,
-      "name": "Division 2",
-      "format": "Best of 9",
-      "sortOrder": 1
-    },
-    {
-      "id": 3,
-      "regionalId": 1,
-      "name": "Division 3",
-      "format": "Best of 9",
-      "sortOrder": 2
-    },
-    {
-      "id": 4,
-      "regionalId": 1,
-      "name": "Division 4",
-      "format": "Best of 9",
-      "sortOrder": 3
-    },
-    {
-      "id": 5,
-      "regionalId": 2,
-      "name": "Division 1",
-      "format": "Best of 9",
-      "sortOrder": 0
-    },
-    {
-      "id": 6,
-      "regionalId": 2,
-      "name": "Division 2",
-      "format": "Best of 9",
-      "sortOrder": 1
-    },
-    {
-      "id": 7,
-      "regionalId": 2,
-      "name": "Division 3",
-      "format": "Best of 9",
-      "sortOrder": 2
-    },
-    {
-      "id": 8,
-      "regionalId": 2,
-      "name": "Division 4",
-      "format": "Best of 9",
-      "sortOrder": 3
-    },
     {
       "id": 9,
       "regionalId": 3,
@@ -190,12 +137,11 @@
       "role": "owner",
       "leagueId": null,
       "adminLeagueId": null,
-      "regionalChoice": "both",
+      "regionalChoice": "international",
       "regionalIds": [
-        1,
-        2
+        3
       ],
-      "regionalId": 1,
+      "regionalId": 3,
       "dartcounterName": "Gordon Rodman",
       "nickname": "Viking",
       "avg": 40.37,
@@ -217,12 +163,11 @@
       "leagueIds": [],
       "adminLeagueId": null,
       "adminLeagueIds": [],
-      "regionalChoice": "both",
+      "regionalChoice": "international",
       "regionalIds": [
-        1,
-        2
+        3
       ],
-      "regionalId": 1,
+      "regionalId": 3,
       "dartcounterName": "Jason jackson",
       "nickname": "",
       "avg": 0,

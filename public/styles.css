@@ -729,6 +729,30 @@ button.btn-gold:disabled {
   border-left: 3px solid #e8b425;
   box-shadow: inset 3px 0 0 rgba(232, 180, 37, 0.25);
 }
+.coming-soon-badge {
+  display: inline-block;
+  margin-top: 0.35rem;
+  border: 1px solid rgba(232, 180, 37, 0.45);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e8b425;
+}
+.nav-soon {
+  margin-left: 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e8b425;
+}
+.community-card-soon {
+  opacity: 0.88;
+  cursor: default;
+}
 .regional-ack-kicker {
   font-size: 0.65rem;
   font-weight: 800;

@@ -113,7 +113,7 @@ async function register(port, { name, avg }) {
       name,
       email: `${slug}@test.com`,
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: `${name}DC`,
       avg,
     },
@@ -262,10 +262,10 @@ try {
   const placeT3 = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: t3.data.user.id, leagueId: 1 },
+    body: { userId: t3.data.user.id, leagueId: 9 },
   });
   check("placed bonus player in a league", placeT3.status === 200);
-  const table = await api(port, "/api/leagues/1");
+  const table = await api(port, "/api/leagues/9");
   const row = (table.data.standings || []).find((r) => r.playerId === t3.data.user.id);
   check("league table includes extra bonus points", row?.bonusPoints === 4 && row?.points === 4);
 
@@ -273,7 +273,7 @@ try {
   const makeDiv = await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: divAdmin.data.user.id, leagueId: 1 },
+    body: { userId: divAdmin.data.user.id, leagueId: 9 },
   });
   check("division admin assigned", makeDiv.status === 200);
   const divTok = (await api(port, "/api/auth/login", { method: "POST", body: { email: "divadmin@test.com", password: "pass1234" } })).data.token;

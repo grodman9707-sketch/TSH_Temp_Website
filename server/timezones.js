@@ -62,6 +62,6 @@ export function isValidTimeZone(tz) {
 export function defaultTimezoneForRegional(regionalChoice) {
   const choice = String(regionalChoice || "");
   if (choice === "americas" || choice === "world-americas") return "America/New_York";
-  if (choice === "world") return "UTC";
+  if (choice === "world" || choice === "international") return "UTC";
   return "Europe/London";
 }
