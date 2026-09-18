@@ -1,4 +1,4 @@
-// Worlds League, crests, and World-only / World + one regional signup.
+// International League, coming-soon regionals, and International-only signup.
 // Run: `node server/world-league.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -68,17 +68,19 @@ try {
   const ownerTok = owner.data.token;
 
   const regionals = await api(port, "/api/regionals");
-  const world = (regionals.data.regionals || []).find((r) => r.slug === "world");
+  const international = (regionals.data.regionals || []).find((r) => r.slug === "international");
   const europe = (regionals.data.regionals || []).find((r) => r.slug === "europe");
   const americas = (regionals.data.regionals || []).find((r) => r.slug === "americas");
-  check("Worlds League exists", Boolean(world));
-  check("World has Divisions 1–5", Array.isArray(world?.leagues) && world.leagues.length === 5);
+  check("International League exists", Boolean(international));
+  check("International has Divisions 1–5", Array.isArray(international?.leagues) && international.leagues.length === 5);
   check(
-    "World ladder names",
-    JSON.stringify((world?.leagues || []).map((l) => l.displayName)) ===
+    "International ladder names",
+    JSON.stringify((international?.leagues || []).map((l) => l.displayName)) ===
       JSON.stringify(["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"])
   );
-  const worldDiv1 = world?.leagues?.[0]?.id;
+  check("Europe is coming soon", europe?.comingSoon === true && (europe?.leagues || []).length === 0);
+  check("Americas is coming soon", americas?.comingSoon === true && (americas?.leagues || []).length === 0);
+  const intlDiv1 = international?.leagues?.[0]?.id;
 
   const both = await api(port, "/api/auth/register", {
     method: "POST",
@@ -91,7 +93,20 @@ try {
       avg: 50,
     },
   });
-  check("register both regionals is rejected", both.status === 400 && /one regional/i.test(both.data.error || ""));
+  check("register both regionals is rejected", both.status === 400 && /coming soon/i.test(both.data.error || ""));
+
+  const europeSignup = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Europe Only",
+      email: "europe-only@test.com",
+      password: "pass1234",
+      regional: "europe",
+      dartcounterName: "EuropeOnlyDC",
+      avg: 50,
+    },
+  });
+  check("register Europe is rejected", europeSignup.status === 400 && /coming soon/i.test(europeSignup.data.error || ""));
 
   const worldOnly = await api(port, "/api/auth/register", {
     method: "POST",
@@ -104,8 +119,8 @@ try {
       avg: 55,
     },
   });
-  check("register Worlds League only", worldOnly.status === 200 && worldOnly.data.user?.regionalChoice === "world");
-  check("world-only regionalIds", JSON.stringify(worldOnly.data.user?.regionalIds) === JSON.stringify([world.id]));
+  check("register International via world alias", worldOnly.status === 200 && worldOnly.data.user?.regionalChoice === "international");
+  check("international regionalIds", JSON.stringify(worldOnly.data.user?.regionalIds) === JSON.stringify([international.id]));
   const worldTok = worldOnly.data.token;
   const worldUserId = worldOnly.data.user.id;
 
@@ -114,36 +129,25 @@ try {
     token: ownerTok,
     body: { userId: worldUserId, leagueId: 1 },
   });
-  check("cannot place world-only player in Europe", placeEurope.status === 400);
+  check("cannot place a player in a retired Europe league", placeEurope.status === 400);
 
   const placeWorld = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: worldUserId, leagueId: worldDiv1 },
+    body: { userId: worldUserId, leagueId: intlDiv1 },
   });
-  check("can place world-only player in World Division 1", placeWorld.status === 200 && placeWorld.data.fullyPlaced === true);
+  check("can place player in International Division 1", placeWorld.status === 200 && placeWorld.data.fullyPlaced === true);
 
   const worldMe = await api(port, "/api/auth/me", { token: worldTok });
   const joinOptions = worldMe.data.user?.openJoinRegionals || [];
-  check("world-only player can add one regional", joinOptions.length === 2);
-  check(
-    "join options are Europe and Americas",
-    joinOptions.some((r) => r.slug === "europe" || r.id === europe.id) && joinOptions.some((r) => r.slug === "americas" || r.id === americas.id)
-  );
+  check("no second regional is offered", joinOptions.length === 0);
 
   const joinEurope = await api(port, "/api/account/league-request", {
     method: "POST",
     token: worldTok,
     body: { kind: "join", regionalId: europe.id },
   });
-  check("world player can request Europe", joinEurope.status === 200 && joinEurope.data.user?.regionalChoice === "world-europe");
-
-  const joinAmericasToo = await api(port, "/api/account/league-request", {
-    method: "POST",
-    token: worldTok,
-    body: { kind: "join", regionalId: americas.id },
-  });
-  check("world + Europe cannot also request Americas", joinAmericasToo.status === 400);
+  check("cannot request a coming-soon regional", joinEurope.status === 400 && /coming soon/i.test(joinEurope.data.error || ""));
 
   const combo = await api(port, "/api/auth/register", {
     method: "POST",
@@ -156,36 +160,26 @@ try {
       avg: 48,
     },
   });
-  check("register World + Europe", combo.status === 200 && combo.data.user?.regionalChoice === "world-europe");
-  const comboIds = [...(combo.data.user?.regionalIds || [])].sort((a, b) => a - b);
-  check("World + Europe ids", JSON.stringify(comboIds) === JSON.stringify([europe.id, world.id].sort((a, b) => a - b)));
+  check("register World + Europe is rejected", combo.status === 400 && /coming soon/i.test(combo.data.error || ""));
 
-  const comboAmericas = await api(port, "/api/admin/place-player", {
-    method: "POST",
-    token: ownerTok,
-    body: { userId: combo.data.user.id, leagueId: 5 },
-  });
-  check("cannot place World + Europe player in Americas", comboAmericas.status === 400);
-
-  const americasPlayer = await api(port, "/api/auth/register", {
+  const intlPlayer = await api(port, "/api/auth/register", {
     method: "POST",
     body: {
-      name: "World Americas",
-      email: "world-americas@test.com",
+      name: "Intl Player",
+      email: "intl-player@test.com",
       password: "pass1234",
-      regional: "world-americas",
-      dartcounterName: "WorldAmericasDC",
+      regional: "international",
+      dartcounterName: "IntlPlayerDC",
       avg: 47,
     },
   });
-  check("register World + Americas", americasPlayer.status === 200 && americasPlayer.data.user?.regionalChoice === "world-americas");
+  check("register International League", intlPlayer.status === 200 && intlPlayer.data.user?.regionalChoice === "international");
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
-  check("signup offers Worlds League only", appJs.includes('opt("world",') && appJs.includes("Worlds League only"));
-  check("signup offers World + Europe", appJs.includes('opt("world-europe"'));
-  check("signup offers World + Americas", appJs.includes('opt("world-americas"'));
+  check("signup describes International League", appJs.includes("International League") && appJs.includes("Regionals coming soon"));
+  check("signup no longer offers Europe or Americas pickers", !appJs.includes('opt("world-europe"') && !appJs.includes('opt("world-americas"') && !appJs.includes("Worlds League only"));
   check("signup no longer offers Both regionals", !appJs.includes('opt("both"') && !appJs.includes("Both lets you play"));
-  check("client has World crest", appJs.includes("tsh-world-crest.png"));
+  check("client has World crest for International", appJs.includes("tsh-world-crest.png"));
   check("client has Europe crest", appJs.includes("tsh-europe-crest.png"));
   check("client has America crest", appJs.includes("tsh-america-crest.png"));
 
@@ -196,7 +190,10 @@ try {
 
   const worldPage = await fetch(`http://127.0.0.1:${port}/api/regionals/world`);
   const worldData = await worldPage.json();
-  check("World overview API ok", worldPage.ok && worldData.ok && worldData.leagues?.length === 5);
+  check("legacy World overview aliases International", worldPage.ok && worldData.ok && worldData.regional?.slug === "international" && worldData.leagues?.length === 5);
+  const intlPage = await fetch(`http://127.0.0.1:${port}/api/regionals/international`);
+  const intlData = await intlPage.json();
+  check("International overview API ok", intlPage.ok && intlData.ok && intlData.leagues?.length === 5);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
@@ -224,4 +221,4 @@ if (failures) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);
 }
-console.log("world league tests passed");
+console.log("international league tests passed");

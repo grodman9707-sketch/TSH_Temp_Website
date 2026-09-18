@@ -176,7 +176,7 @@ try {
       name: "Offsite Player",
       email: "offsite@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "OffsiteDC",
       avg: 44,
     },

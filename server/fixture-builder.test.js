@@ -88,7 +88,7 @@ try {
         name: `${name} Player`,
         email: `${name.toLowerCase()}-fix@test.com`,
         password: "pass1234",
-        regional: "europe",
+        regional: "international",
         dartcounterName: `${name}DC`,
         avg: 50,
       },
@@ -97,7 +97,7 @@ try {
     const placed = await api(port, "/api/admin/place-player", {
       method: "POST",
       token: ownerTok,
-      body: { userId: reg.data.user.id, leagueId: 1 },
+      body: { userId: reg.data.user.id, leagueId: 9 },
     });
     check(`place ${name}`, placed.status === 200);
     players.push(reg.data.user.id);
@@ -106,7 +106,7 @@ try {
   const generated = await api(port, "/api/admin/fixtures/generate", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, season: 1, startDate: "2026-09-06", weekGapDays: 1 },
+    body: { leagueId: 9, season: 1, startDate: "2026-09-06", weekGapDays: 1 },
   });
   check("generate season without using a custom gap", generated.status === 200 && generated.data.created >= 3);
   const dates = [...new Set((generated.data.fixtures || []).map((f) => f.date))].sort();
@@ -116,7 +116,7 @@ try {
   const one = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, homeId: players[0], awayId: players[1], week: 9, date: "2026-11-01" },
+    body: { leagueId: 9, homeId: players[0], awayId: players[1], week: 9, date: "2026-11-01" },
   });
   check("individual fixture still creates", one.status === 200 && one.data.fixture?.homeId === players[0] && one.data.fixture?.awayId === players[1]);
 
@@ -126,7 +126,7 @@ try {
       name: "Americas Only",
       email: "americas-fix@test.com",
       password: "pass1234",
-      regional: "americas",
+      regional: "international",
       dartcounterName: "AmericasDC",
       avg: 40,
     },
@@ -134,13 +134,13 @@ try {
   const outsiderPlace = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: outsider.data.user.id, leagueId: 5 },
+    body: { userId: outsider.data.user.id, leagueId: 10 },
   });
-  check("place outsider in Americas", outsiderPlace.status === 200);
+  check("place outsider in another division", outsiderPlace.status === 200);
   const cross = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 1, homeId: players[0], awayId: outsider.data.user.id, week: 10 },
+    body: { leagueId: 9, homeId: players[0], awayId: outsider.data.user.id, week: 10 },
   });
   check("individual fixture rejects a player from another division", cross.status === 400);
 } catch (err) {

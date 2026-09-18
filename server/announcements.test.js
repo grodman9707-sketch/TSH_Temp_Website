@@ -73,7 +73,7 @@ async function register(port, name) {
       name,
       email: `${slug}@test.com`,
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: `${name}DC`,
       avg: 50,
     },
@@ -134,7 +134,7 @@ try {
   const assignAdmin = await api(port, "/api/admin/assign-admin", {
     method: "POST",
     token: ownerTok,
-    body: { userId: adminId, leagueId: 1 },
+    body: { userId: adminId, leagueId: 9 },
   });
   check("division admin assigned", assignAdmin.status === 200);
   const adminLogin = await api(port, "/api/auth/login", {

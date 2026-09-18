@@ -1,4 +1,4 @@
-// Players can request a second regional or ask to drop from a league.
+// Players can ask to withdraw from a league. Regionals are coming soon, so a second league cannot be added.
 // Run: `node server/league-change.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -67,102 +67,84 @@ try {
   check("owner login", owner.status === 200 && owner.data.token);
   const ownerTok = owner.data.token;
 
+  const regionals = await api(port, "/api/regionals");
+  const international = (regionals.data.regionals || []).find((r) => r.slug === "international");
+  const div1 = (international?.leagues || []).find((l) => l.displayName === "Division 1" || l.name === "Division 1");
+  const leagueId = div1?.id;
+  check("International Division 1 exists", Boolean(leagueId));
+
   const registered = await api(port, "/api/auth/register", {
     method: "POST",
     body: {
       name: "One Regional",
       email: "one-regional@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "OneRegionalDC",
       avg: 52,
     },
   });
-  check("register europe player", registered.status === 200 && registered.data.token);
+  check("register international player", registered.status === 200 && registered.data.token);
   const tok = registered.data.token;
   const playerId = registered.data.user.id;
 
   const beforePlace = await api(port, "/api/auth/me", { token: tok });
-  check("Worlds League is offered on the profile before placement", beforePlace.data.user?.openJoinRegional?.slug === "world" || beforePlace.data.user?.openJoinRegional?.id === 3);
-  check("Americas is not offered as a second regional", !(beforePlace.data.user?.openJoinRegionals || []).some((r) => r.slug === "americas"));
+  check("no second regional is offered", beforePlace.data.user?.openJoinRegional == null && !(beforePlace.data.user?.openJoinRegionals || []).length);
 
   const joinEarly = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
-    body: { kind: "join", regionalId: 3, note: "Want World too" },
+    body: { kind: "join", regionalId: 1, note: "Want Europe too" },
   });
-  check("join request ok before first placement", joinEarly.status === 200 && joinEarly.data.request?.kind === "join");
-  check("join adds Worlds League", joinEarly.data.user?.regionalChoice === "world-europe");
-  check("join is pending", joinEarly.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
-  check("join offer hides while pending", joinEarly.data.user?.openJoinRegional == null && !(joinEarly.data.user?.openJoinRegionals || []).length);
+  check("join request for a coming-soon regional is rejected", joinEarly.status === 400 && /coming soon/i.test(joinEarly.data.error || ""));
 
   const place = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: playerId, leagueId: 1 },
+    body: { userId: playerId, leagueId },
   });
-  check("placed in Europe Division 1", place.status === 200 && place.data.user?.leagueIds?.includes(1));
-  check("join stays pending until World is filled", place.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
-
-  const mePlaced = await api(port, "/api/auth/me", { token: tok });
-  check("player hub still shows the pending join", mePlaced.data.user?.pendingLeagueRequests?.some((r) => r.kind === "join"));
-
-  const dupJoin = await api(port, "/api/account/league-request", {
-    method: "POST",
-    token: tok,
-    body: { kind: "join" },
-  });
-  check("duplicate join is blocked", dupJoin.status === 400);
-
-  const overview = await api(port, "/api/admin/overview", { token: ownerTok });
-  check(
-    "admin sees the join request",
-    (overview.data.leagueRequests || []).some((r) => r.userId === playerId && r.kind === "join" && r.note === "Want World too")
-  );
-
-  const placeSecond = await api(port, "/api/admin/place-player", {
-    method: "POST",
-    token: ownerTok,
-    body: { userId: playerId, leagueId: 9 },
-  });
-  check("placed in World", placeSecond.status === 200 && placeSecond.data.user?.leagueIds?.includes(9));
-  check("join request clears after World placement", !(placeSecond.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "join"));
-  check("no join offer when already in World + Europe", placeSecond.data.user?.openJoinRegional == null && !(placeSecond.data.user?.openJoinRegionals || []).length);
+  check("placed in International Division 1", place.status === 200 && place.data.user?.leagueIds?.includes(leagueId));
 
   const blockedAmericas = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
     body: { kind: "join", regionalId: 2 },
   });
-  check("cannot add Americas as a third league", blockedAmericas.status === 400);
+  check("cannot add a coming-soon regional", blockedAmericas.status === 400);
 
   const drop = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
-    body: { kind: "drop", leagueId: 1, note: "Schedule clash" },
+    body: { kind: "drop", leagueId, note: "Schedule clash" },
   });
   check("drop request ok", drop.status === 200 && drop.data.request?.kind === "drop");
-  check("player stays in the league until admin acts", drop.data.user?.leagueIds?.includes(1));
+  check("player stays in the league until admin acts", drop.data.user?.leagueIds?.includes(leagueId));
 
   const dupDrop = await api(port, "/api/account/league-request", {
     method: "POST",
     token: tok,
-    body: { kind: "drop", leagueId: 1 },
+    body: { kind: "drop", leagueId },
   });
   check("duplicate drop is blocked", dupDrop.status === 400);
 
   const afterDrop = await api(port, "/api/admin/overview", { token: ownerTok });
-  const dropReq = (afterDrop.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop" && r.leagueId === 1);
-  check("admin sees the drop request", Boolean(dropReq?.id) && dropReq.leagueId === 1);
+  const dropReq = (afterDrop.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop" && r.leagueId === leagueId);
+  check("admin sees the drop request", Boolean(dropReq?.id) && dropReq.leagueId === leagueId);
 
   const resolve = await api(port, "/api/admin/league-requests/resolve", {
     method: "POST",
     token: ownerTok,
     body: { id: dropReq.id, action: "done" },
   });
-  check("owner can drop them", resolve.status === 200 && !resolve.data.user?.leagueIds?.includes(1));
-  check("they keep the other league", resolve.data.user?.leagueIds?.includes(9));
+  check("owner can drop them", resolve.status === 200 && !resolve.data.user?.leagueIds?.includes(leagueId));
   check("drop request is gone", !(resolve.data.user?.pendingLeagueRequests || []).some((r) => r.kind === "drop"));
+
+  const placedAgain = await api(port, "/api/admin/place-player", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: playerId, leagueId },
+  });
+  check("re-placed after drop", placedAgain.status === 200 && placedAgain.data.user?.leagueIds?.includes(leagueId));
 
   const dropAll = await api(port, "/api/account/league-request", {
     method: "POST",
@@ -170,7 +152,7 @@ try {
     body: { kind: "drop", scope: "all", note: "Stepping away" },
   });
   check("drop-all request ok", dropAll.status === 200 && dropAll.data.request?.scope === "all");
-  check("drop-all leaves them placed until admin acts", dropAll.data.user?.leagueIds?.includes(9));
+  check("drop-all leaves them placed until admin acts", dropAll.data.user?.leagueIds?.includes(leagueId));
 
   const dupAll = await api(port, "/api/account/league-request", {
     method: "POST",
@@ -197,7 +179,7 @@ try {
       name: "Cancel Me",
       email: "cancel-league@test.com",
       password: "pass1234",
-      regional: "americas",
+      regional: "international",
       dartcounterName: "CancelDC",
       avg: 41,
     },
@@ -206,12 +188,12 @@ try {
   await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: cancelPlayer.data.user.id, leagueId: 5 },
+    body: { userId: cancelPlayer.data.user.id, leagueId },
   });
   const asked = await api(port, "/api/account/league-request", {
     method: "POST",
     token: cancelTok,
-    body: { kind: "join", regionalId: 3 },
+    body: { kind: "drop", leagueId },
   });
   const reqId = asked.data.request?.id;
   const cancelled = await api(port, "/api/account/league-request/cancel", {

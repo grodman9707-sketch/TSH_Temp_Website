@@ -168,7 +168,7 @@ try {
       name: "Sheets Player",
       email: "sheets@test.com",
       password: "pass1234",
-      regional: "europe",
+      regional: "international",
       dartcounterName: "SheetsDC",
       avg: 44,
     },

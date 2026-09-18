@@ -73,41 +73,34 @@ try {
       name: "Both Regionals",
       email: "both-unplace@test.com",
       password: "pass1234",
-      regional: "world-europe",
+      regional: "international",
       dartcounterName: "BothDC",
       avg: 50,
     },
   });
-  check("register dual-league player", both.status === 200 && both.data.user?.id);
+  check("register international player", both.status === 200 && both.data.user?.id);
   const bothId = both.data.user.id;
-  check("signed up for World + Europe", JSON.stringify([...(both.data.user?.regionalIds || [])].sort()) === JSON.stringify([1, 3]));
+  check("signed up for International", JSON.stringify(both.data.user?.regionalIds || []) === JSON.stringify([3]));
 
-  const europe = await api(port, "/api/admin/place-player", {
-    method: "POST",
-    token: ownerTok,
-    body: { userId: bothId, leagueId: 1 },
-  });
-  const worldPlace = await api(port, "/api/admin/place-player", {
+  const placed = await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
     body: { userId: bothId, leagueId: 9 },
   });
-  check("place in Europe League 1", europe.status === 200 && europe.data.user?.leagueIds?.includes(1));
-  check("place in World Division 1", worldPlace.status === 200 && worldPlace.data.user?.leagueIds?.includes(9));
-  check("both leagues listed after place", (worldPlace.data.user?.leagueIds || []).sort((a, b) => a - b).join(",") === "1,9");
+  check("place in International Division 1", placed.status === 200 && placed.data.user?.leagueIds?.includes(9));
 
   const oneLeague = await api(port, "/api/admin/unplace-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: bothId, leagueId: 1 },
+    body: { userId: bothId, leagueId: 9 },
   });
-  check("unplace one league leaves the other", oneLeague.status === 200 && oneLeague.data.user?.leagueIds?.join(",") === "9");
-  check("leftover league is also leagueId", oneLeague.data.user?.leagueId === 9);
+  check("unplace one league clears it", oneLeague.status === 200 && !(oneLeague.data.user?.leagueIds || []).length);
+  check("leftover leagueId is cleared", oneLeague.data.user?.leagueId == null);
 
   await api(port, "/api/admin/place-player", {
     method: "POST",
     token: ownerTok,
-    body: { userId: bothId, leagueId: 1 },
+    body: { userId: bothId, leagueId: 9 },
   });
 
   const allLeagues = await api(port, "/api/admin/unplace-player", {

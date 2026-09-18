@@ -453,24 +453,15 @@
             },
             {
               "type": "p",
-              "text": "Players may compete in the Worlds League only, or in the Worlds League plus one regional (TSH Europe or TSH Americas). Players cannot compete in both regional leagues."
+              "text": "Players compete in the International League. European and American regional leagues are coming soon."
             },
             {
               "type": "p",
-              "text": "TSH World (the Worlds League) has five divisions, from highest to lowest: Division 1, Division 2, Division 3, Division 4, and Division 5."
+              "text": "TSH International (the International League) has five divisions, from highest to lowest: Division 1, Division 2, Division 3, Division 4, and Division 5."
             },
             {
               "type": "p",
-              "text": "TSH Europe and TSH Americas each have four divisions, from highest to lowest:"
-            },
-            {
-              "type": "ul",
-              "items": [
-                "Division 1",
-                "Division 2",
-                "Division 3",
-                "Division 4"
-              ]
+              "text": "TSH Europe and TSH Americas regional leagues are coming soon."
             },
             {
               "type": "p",
