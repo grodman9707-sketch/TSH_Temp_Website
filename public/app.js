@@ -662,8 +662,8 @@ function go(path) {
   state.notice = "";
   render();
 }
-async function loadNavTree() {
-  if (state.navTree) return;
+async function loadNavTree(force = false) {
+  if (state.navTree && !force) return;
   try {
     const d = await api("/api/regionals");
     state.navTree = Array.isArray(d.regionals) ? d.regionals : [];
@@ -726,10 +726,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=50",
-  europe: "/images/tsh-europe-crest.png?v=50",
-  americas: "/images/tsh-america-crest.png?v=50",
-  world: "/images/tsh-world-crest.png?v=50",
+  main: "/images/tsh-main-crest.png?v=51",
+  europe: "/images/tsh-europe-crest.png?v=51",
+  americas: "/images/tsh-america-crest.png?v=51",
+  world: "/images/tsh-world-crest.png?v=51",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -1912,8 +1912,73 @@ async function pageAdmin() {
   }
   const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
+  const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
+  const structurePanel = d.isOwner
+    ? panel(
+        `<h2 class="text-lg font-bold">Regions, leagues &amp; divisions</h2>
+        <p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Changes show on the site immediately and stay after a restart. The International League cannot be removed, and it must keep at least one division.</p>
+        <div class="mt-4 space-y-6">${
+          structureRegionals.length
+            ? structureRegionals
+                .map((r) => {
+                  const leagues = r.leagues || [];
+                  return `<div class="rounded-lg border border-white/10 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="font-bold">${esc(r.fullTitle || r.name)}${r.international ? " · International League" : ""}</div>
+                <div class="text-xs text-muted">/${esc(r.slug)}${r.comingSoon ? " · coming soon" : " · playable"}</div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                ${
+                  r.international
+                    ? ""
+                    : `<form data-form="TOGGLEREGIONAL" data-id="${r.id}"><input type="hidden" name="comingSoon" value="${r.comingSoon ? "0" : "1"}"><button class="btn-ghost">${r.comingSoon ? "MARK PLAYABLE" : "MARK COMING SOON"}</button></form>`
+                }
+                ${
+                  r.canDelete
+                    ? `<form data-form="DELETEREGIONAL" data-id="${r.id}"><button class="btn-ghost">REMOVE REGION</button></form>`
+                    : `<span class="text-xs text-muted">Protected</span>`
+                }
+              </div>
+            </div>
+            <div class="mt-3 space-y-2">${
+              leagues.length
+                ? leagues
+                    .map(
+                      (l) =>
+                        `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
+                <span>${esc(l.displayName || l.name)}</span>
+                ${
+                  l.canDelete
+                    ? `<form data-form="DELETELEAGUE" data-id="${l.id}"><button class="btn-ghost">REMOVE DIVISION</button></form>`
+                    : `<span class="text-xs text-muted">Last division</span>`
+                }
+              </div>`
+                    )
+                    .join("")
+                : `<p class="text-sm text-muted">No divisions yet.</p>`
+            }</div>
+            <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="ADDLEAGUE">
+              <input type="hidden" name="regionalId" value="${r.id}">
+              <input name="name" required placeholder="Division name" maxlength="40">
+              <input name="format" placeholder="Best of 9" maxlength="40">
+              <button class="btn-gold">ADD DIVISION</button>
+            </form>
+          </div>`;
+                })
+                .join("")
+            : `<p class="text-sm text-muted">No regions yet.</p>`
+        }</div>
+        <form class="mt-6 grid gap-3 md:grid-cols-2" data-form="ADDREGIONAL">
+          <input name="name" required placeholder="Region or league name" maxlength="40">
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="comingSoon" checked> Coming soon</label>
+          <button class="btn-gold md:col-span-2">ADD REGION</button>
+        </form>`,
+        "mt-6"
+      )
+    : "";
   const ownerSection = d.isOwner
-    ? `${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
+    ? `${structurePanel}${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
         <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
         <div class="mt-3 space-y-2">${d.owners
           .map(
@@ -2029,7 +2094,7 @@ async function pageAdmin() {
       <h1 class="page-title font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
       <p class="mt-2 text-muted">${
         d.isOwner
-          ? "Promote owners (max 3), assign Head Admins and Division Admins, generate seasons, and run the league."
+          ? "Promote owners (max 3), add or remove regions and divisions, assign Head Admins and Division Admins, generate seasons, and run the league."
           : d.isHeadAdmin
             ? "Verify extracted match stats, generate fixtures, and override another admin’s confirmed result when needed."
             : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
@@ -2851,6 +2916,33 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Announcement posted.";
+      render();
+    } else if (kind === "ADDREGIONAL") {
+      await api("/api/admin/structure/regionals", { method: "POST", body: JSON.stringify({ name: fd.name, comingSoon: form.querySelector('input[name="comingSoon"]')?.checked === true }) });
+      await loadNavTree(true);
+      state.notice = "Region added.";
+      render();
+    } else if (kind === "TOGGLEREGIONAL") {
+      await api("/api/admin/structure/regionals/update", { method: "POST", body: JSON.stringify({ id: form.dataset.id, comingSoon: fd.comingSoon === "1" }) });
+      await loadNavTree(true);
+      state.notice = fd.comingSoon === "1" ? "Region marked coming soon." : "Region is now playable.";
+      render();
+    } else if (kind === "DELETEREGIONAL") {
+      if (!window.confirm("Remove this region and all of its divisions? Players in those divisions are unplaced. This cannot be undone.")) return;
+      await api("/api/admin/structure/regionals/delete", { method: "POST", body: JSON.stringify({ id: form.dataset.id }) });
+      await loadNavTree(true);
+      state.notice = "Region removed.";
+      render();
+    } else if (kind === "ADDLEAGUE") {
+      await api("/api/admin/structure/leagues", { method: "POST", body: JSON.stringify({ regionalId: fd.regionalId, name: fd.name, format: fd.format }) });
+      await loadNavTree(true);
+      state.notice = "Division added.";
+      render();
+    } else if (kind === "DELETELEAGUE") {
+      if (!window.confirm("Remove this division? Players in it are unplaced and its fixtures are deleted. This cannot be undone.")) return;
+      await api("/api/admin/structure/leagues/delete", { method: "POST", body: JSON.stringify({ id: form.dataset.id }) });
+      await loadNavTree(true);
+      state.notice = "Division removed.";
       render();
     } else if (kind === "DELETENEWS") {
       if (!window.confirm("Delete this announcement? This cannot be undone.")) return;
