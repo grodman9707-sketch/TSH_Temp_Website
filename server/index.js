@@ -69,7 +69,7 @@ const LEAGUE_MESSENGER_INVITES = [
     label: "TSH General Chat",
     shortLabel: "TSH General Chat",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Request to be added to TSH General Chat.",
+    blurb: "Open TSH General Chat.",
   },
 ];
 function messengerInvitesNeedUpdate(list) {

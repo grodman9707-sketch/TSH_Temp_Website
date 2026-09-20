@@ -16,7 +16,7 @@ const LEAGUE_MESSENGER_INVITES = [
     label: "TSH General Chat",
     shortLabel: "TSH General Chat",
     href: "https://m.me/j/0cIs92X7ME8Bhrbf/?send_source=gc%3Acopy_invite_link_c",
-    blurb: "Request to be added to TSH General Chat.",
+    blurb: "Open TSH General Chat.",
   },
 ];
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -126,6 +126,36 @@ function isStaff(u = state.user) {
 function afterAuthPath(user = state.user) {
   if (user?.communityJoinPending) return "/sign-up";
   return isStaff(user) ? "/admin" : "/dashboard";
+}
+function joinLinkStatus(id, on) {
+  if (id === "tsh") return on ? "Opened — chat opened in a new tab" : "Click to open the chat";
+  return on ? "Opened — waiting list in a new tab" : "Click to open the waiting list";
+}
+function markJoinLinkOpened(id) {
+  if (!id) return;
+  state.signup.clicked = { ...(state.signup.clicked || {}), [id]: true };
+  state.error = "";
+}
+function refreshJoinCommunityControls() {
+  const clicked = state.signup.clicked || {};
+  document.querySelectorAll("[data-act=join-link][data-link]").forEach((el) => {
+    const id = el.dataset.link;
+    const on = Boolean(clicked[id]);
+    el.classList.toggle("clicked", on);
+    const status = el.querySelector(".join-link-status");
+    if (status) status.textContent = joinLinkStatus(id, on);
+  });
+  const ready = messengerInvites().every((m) => clicked[m.id]);
+  const btn = document.querySelector("form[data-form=JOINCOMMUNITY] button");
+  const hint = document.querySelector("[data-join-hint]");
+  if (btn) btn.disabled = !ready;
+  if (hint) hint.hidden = ready;
+}
+async function finishCommunityJoin(dest = "/dashboard") {
+  const d = await api("/api/account/community-join", { method: "POST", body: JSON.stringify({ requested: true }) });
+  if (d.user) state.user = d.user;
+  state.signup.clicked = {};
+  go(dest);
 }
 function messengerInvites(league) {
   const list = Array.isArray(league?.messengerInvites) ? league.messengerInvites : [];
@@ -726,10 +756,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=50",
-  europe: "/images/tsh-europe-crest.png?v=50",
-  americas: "/images/tsh-america-crest.png?v=50",
-  world: "/images/tsh-world-crest.png?v=50",
+  main: "/images/tsh-main-crest.png?v=51",
+  europe: "/images/tsh-europe-crest.png?v=51",
+  americas: "/images/tsh-america-crest.png?v=51",
+  world: "/images/tsh-world-crest.png?v=51",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -1368,41 +1398,36 @@ function pageJoinCommunity() {
   const cards = groups
     .map((m) => {
       const on = Boolean(clicked[m.id]);
-      const status =
-        m.id === "tsh"
-          ? on
-            ? "Opened — request to be added"
-            : "Click to request to be added"
-          : on
-            ? "Opened — waiting list"
-            : "Click to open the waiting list";
       return `<a class="join-link-card${on ? " clicked" : ""}" href="${esc(m.href)}" target="_blank" rel="noopener noreferrer" data-external="1" data-act="join-link" data-link="${esc(m.id)}">
         <div class="messenger-mark" aria-hidden="true">M</div>
         <div class="min-w-0">
           <h3>${esc(m.label)}</h3>
           <p>${esc(m.blurb)}</p>
-          <p class="join-link-status">${status}</p>
+          <p class="join-link-status">${joinLinkStatus(m.id, on)}</p>
         </div>
       </a>`;
     })
     .join("");
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
-      <p class="page-kicker text-xs font-semibold gold">AFTER SIGN UP</p>
+      <div class="join-community-head">
+        <p class="page-kicker text-xs font-semibold gold">AFTER SIGN UP</p>
+        <button type="button" class="join-dismiss" data-act="skip-community" aria-label="Close chat links">✕</button>
+      </div>
       <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
-      <p class="mt-2 text-sm text-muted">Your account is ready. Open TSH Waiting List, then request to be added to TSH General Chat.</p>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Tap each link to open the chat in a new tab, then continue. You can close this and use the menu anytime.</p>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <div class="mt-6 space-y-3">${cards}</div>
       <form class="mt-6" data-form="JOINCOMMUNITY">
         <button class="btn-gold w-full py-3"${ready ? "" : " disabled"}>CONTINUE TO PLAYER HUB</button>
-        ${ready ? "" : `<p class="mt-3 text-center text-xs text-muted">Open both Facebook Messenger links, then continue.</p>`}
+        <p class="mt-3 text-center text-xs text-muted" data-join-hint${ready ? " hidden" : ""}>Open both Facebook Messenger chats, then continue.</p>
       </form>
+      <p class="mt-4 text-center"><button type="button" class="join-skip" data-act="skip-community">SKIP FOR NOW</button></p>
     `)}</div>`,
     { arena: true }
   );
 }
 function pageInvite() {
-  if (state.user?.communityJoinPending) return pageJoinCommunity();
   const signedIn = Boolean(state.user);
   return layout(
     `<div class="mx-auto max-w-lg px-4 py-10">${panel(`
@@ -1613,6 +1638,25 @@ async function pageDashboard() {
       </div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
+      ${
+        u.communityJoinPending
+          ? panel(
+              `<div class="split-row">
+                <div class="min-w-0">
+                  <div class="text-xs tracking-widest gold">JOIN THE CHATS</div>
+                  <p class="mt-2 text-sm text-muted">Open TSH Waiting List and TSH General Chat in Messenger. You can dismiss this anytime.</p>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    ${messengerInvites()
+                      .map((m) => `<a class="btn-gold" href="${esc(m.href)}" target="_blank" rel="noopener noreferrer" data-external="1">${esc(m.shortLabel)}</a>`)
+                      .join("")}
+                  </div>
+                </div>
+                <button type="button" class="btn-ghost shrink-0" data-act="skip-community">DISMISS</button>
+              </div>`,
+              "mt-6"
+            )
+          : ""
+      }
       <div class="mt-6 grid gap-4 md:grid-cols-3">
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>${
           next
@@ -2295,10 +2339,6 @@ async function render() {
       go("/sign-in");
       return;
     }
-    if (state.user?.communityJoinPending && route[0] !== "signup" && route[0] !== "invite") {
-      go("/sign-up");
-      return;
-    }
     if (route[0] === "admin" && !isStaff()) {
       go("/dashboard");
       return;
@@ -2393,13 +2433,20 @@ document.addEventListener("click", async (e) => {
   }
   const joinLink = e.target.closest("[data-act=join-link]");
   if (joinLink) {
+    // Native target=_blank opens Messenger. Do not preventDefault or re-render:
+    // preventDefault + window.open was blocked as a popup, so the card only
+    // recorded a join request and the chat never opened.
+    markJoinLinkOpened(joinLink.dataset.link);
+    refreshJoinCommunityControls();
+    return;
+  }
+  const skipCommunity = e.target.closest("[data-act=skip-community]");
+  if (skipCommunity) {
     e.preventDefault();
-    const href = joinLink.getAttribute("href");
-    const id = joinLink.dataset.link;
-    if (href) window.open(href, "_blank", "noopener,noreferrer");
-    if (id) {
-      state.signup.clicked = { ...(state.signup.clicked || {}), [id]: true };
-      state.error = "";
+    try {
+      await finishCommunityJoin("/dashboard");
+    } catch (err) {
+      state.error = err.message || "Could not continue";
       render();
     }
     return;
@@ -2620,14 +2667,11 @@ document.addEventListener("submit", async (e) => {
       const clicked = state.signup.clicked || {};
       const missing = messengerInvites().filter((m) => !clicked[m.id]);
       if (missing.length) {
-        state.error = "Open TSH Waiting List and request to be added to TSH General Chat, then continue.";
+        state.error = "Open both Facebook Messenger chats, then continue. Or skip for now.";
         render();
         return;
       }
-      const d = await api("/api/account/community-join", { method: "POST", body: JSON.stringify({ requested: true }) });
-      if (d.user) state.user = d.user;
-      state.signup.clicked = {};
-      go("/dashboard");
+      await finishCommunityJoin("/dashboard");
     } else if (kind === "CREATE ACCOUNT") {
       const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ ...fd, timezone: BROWSER_TZ }) });
       storeToken(d.token, true);

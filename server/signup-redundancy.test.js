@@ -218,7 +218,7 @@ try {
   check("old apply URLs send people to sign-up", appJs.includes('"/apply"') && appJs.includes('go("/sign-up")'));
   check("client never posts to /api/apply", !appJs.includes("/api/apply"));
   check("signed-in users cannot open sign-up again", appJs.includes("You already have an account"));
-  check("signup ends with Messenger join requests", appJs.includes("JOINCOMMUNITY") && appJs.includes("Join the chats") && appJs.includes("data-act=\"join-link\""));
+  check("signup ends with Messenger chat links", appJs.includes("JOINCOMMUNITY") && appJs.includes("Join the chats") && appJs.includes("data-act=\"join-link\"") && appJs.includes("data-act=\"skip-community\""));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
