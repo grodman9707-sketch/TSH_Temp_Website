@@ -145,11 +145,6 @@ function refreshJoinCommunityControls() {
     const status = el.querySelector(".join-link-status");
     if (status) status.textContent = joinLinkStatus(id, on);
   });
-  const ready = messengerInvites().every((m) => clicked[m.id]);
-  const btn = document.querySelector("form[data-form=JOINCOMMUNITY] button");
-  const hint = document.querySelector("[data-join-hint]");
-  if (btn) btn.disabled = !ready;
-  if (hint) hint.hidden = ready;
 }
 async function finishCommunityJoin(dest = "/dashboard") {
   const d = await api("/api/account/community-join", { method: "POST", body: JSON.stringify({ requested: true }) });
@@ -756,10 +751,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=51",
-  europe: "/images/tsh-europe-crest.png?v=51",
-  americas: "/images/tsh-america-crest.png?v=51",
-  world: "/images/tsh-world-crest.png?v=51",
+  main: "/images/tsh-main-crest.png?v=52",
+  europe: "/images/tsh-europe-crest.png?v=52",
+  americas: "/images/tsh-america-crest.png?v=52",
+  world: "/images/tsh-world-crest.png?v=52",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -1394,7 +1389,6 @@ function pageForgotPassword() {
 function pageJoinCommunity() {
   const clicked = state.signup.clicked || {};
   const groups = messengerInvites();
-  const ready = groups.every((m) => clicked[m.id]);
   const cards = groups
     .map((m) => {
       const on = Boolean(clicked[m.id]);
@@ -1415,12 +1409,12 @@ function pageJoinCommunity() {
         <button type="button" class="join-dismiss" data-act="skip-community" aria-label="Close chat links">✕</button>
       </div>
       <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
-      <p class="mt-2 text-sm text-muted">Your account is ready. Open TSH Waiting List, then TSH General Chat, in a new tab. You can close this and use the menu anytime.</p>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Open TSH Waiting List, then TSH General Chat, in a new tab. You can continue to Player Hub anytime.</p>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <div class="mt-6 space-y-3">${cards}</div>
       <form class="mt-6" data-form="JOINCOMMUNITY">
-        <button class="btn-gold w-full py-3"${ready ? "" : " disabled"}>CONTINUE TO PLAYER HUB</button>
-        <p class="mt-3 text-center text-xs text-muted" data-join-hint${ready ? " hidden" : ""}>Open both Facebook Messenger chats, then continue.</p>
+        <button class="btn-gold w-full py-3">CONTINUE TO PLAYER HUB</button>
+        <p class="mt-3 text-center text-xs text-muted">You can open the chats now, or continue to Player Hub.</p>
       </form>
       <p class="mt-4 text-center"><button type="button" class="join-skip" data-act="skip-community">SKIP FOR NOW</button></p>
     `)}</div>`,
@@ -2664,13 +2658,6 @@ document.addEventListener("submit", async (e) => {
         render();
       }
     } else if (kind === "JOINCOMMUNITY") {
-      const clicked = state.signup.clicked || {};
-      const missing = messengerInvites().filter((m) => !clicked[m.id]);
-      if (missing.length) {
-        state.error = "Open both Facebook Messenger chats, then continue. Or skip for now.";
-        render();
-        return;
-      }
       await finishCommunityJoin("/dashboard");
     } else if (kind === "CREATE ACCOUNT") {
       const d = await api("/api/auth/register", { method: "POST", body: JSON.stringify({ ...fd, timezone: BROWSER_TZ }) });
