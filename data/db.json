@@ -194,5 +194,11 @@
     }
   ],
   "fixtures": [],
-  "adminProfiles": []
+  "adminProfiles": [],
+  "structure": {
+    "ownerManaged": true,
+    "regionalsSeeded": true,
+    "geoLeaguesRetired": true,
+    "ladderSeeded": true
+  }
 }
