@@ -528,7 +528,7 @@ function divisionName(league) {
   const m = raw.match(/^League\s+(\d+)$/i);
   return m ? `Division ${m[1]}` : raw;
 }
-const INTERNATIONAL_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
+const INTERNATIONAL_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5", "Division 6"];
 const INTERNATIONAL_REGIONAL_ID = 3;
 const SIGNUP_REGIONALS_SOON_ERROR = "Regional leagues are coming soon. Sign up for the International League.";
 function europeRegional(db) {

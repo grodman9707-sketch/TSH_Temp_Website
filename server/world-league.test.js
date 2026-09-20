@@ -72,11 +72,11 @@ try {
   const europe = (regionals.data.regionals || []).find((r) => r.slug === "europe");
   const americas = (regionals.data.regionals || []).find((r) => r.slug === "americas");
   check("International League exists", Boolean(international));
-  check("International has Divisions 1–5", Array.isArray(international?.leagues) && international.leagues.length === 5);
+  check("International has Divisions 1–6", Array.isArray(international?.leagues) && international.leagues.length === 6);
   check(
     "International ladder names",
     JSON.stringify((international?.leagues || []).map((l) => l.displayName)) ===
-      JSON.stringify(["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"])
+      JSON.stringify(["Division 1", "Division 2", "Division 3", "Division 4", "Division 5", "Division 6"])
   );
   check("Europe is coming soon", europe?.comingSoon === true && (europe?.leagues || []).length === 0);
   check("Americas is coming soon", americas?.comingSoon === true && (americas?.leagues || []).length === 0);
@@ -190,10 +190,10 @@ try {
 
   const worldPage = await fetch(`http://127.0.0.1:${port}/api/regionals/world`);
   const worldData = await worldPage.json();
-  check("legacy World overview aliases International", worldPage.ok && worldData.ok && worldData.regional?.slug === "international" && worldData.leagues?.length === 5);
+  check("legacy World overview aliases International", worldPage.ok && worldData.ok && worldData.regional?.slug === "international" && worldData.leagues?.length === 6);
   const intlPage = await fetch(`http://127.0.0.1:${port}/api/regionals/international`);
   const intlData = await intlPage.json();
-  check("International overview API ok", intlPage.ok && intlData.ok && intlData.leagues?.length === 5);
+  check("International overview API ok", intlPage.ok && intlData.ok && intlData.leagues?.length === 6);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

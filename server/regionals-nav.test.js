@@ -55,11 +55,11 @@ try {
   const international = (data.regionals || []).find((r) => r.slug === "international");
   check("Europe, Americas, and International are present", Boolean(europe && americas && international));
   check("International is listed first", (data.regionals || [])[0]?.slug === "international");
-  const intlLadder = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5"];
+  const intlLadder = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5", "Division 6"];
   check("Europe is coming soon with no divisions", europe?.comingSoon === true && Array.isArray(europe?.leagues) && europe.leagues.length === 0);
   check("Americas is coming soon with no divisions", americas?.comingSoon === true && Array.isArray(americas?.leagues) && americas.leagues.length === 0);
-  check("International has five divisions", Array.isArray(international?.leagues) && international.leagues.length === 5);
-  check("International ladder is Division 1–5", (international?.leagues || []).every((l, i) => l.displayName === intlLadder[i]));
+  check("International has six divisions", Array.isArray(international?.leagues) && international.leagues.length === 6);
+  check("International ladder is Division 1–6", (international?.leagues || []).every((l, i) => l.displayName === intlLadder[i]));
   check(
     "International division links jump to the table",
     international?.leagues?.[0]?.href === `/regionals/international/leagues/${international?.leagues?.[0]?.id}`
@@ -73,7 +73,7 @@ try {
   check("Europe overview has no playable divisions", Array.isArray(overview.leagues) && overview.leagues.length === 0);
 
   const worldAlias = await (await fetch(`http://127.0.0.1:${port}/api/regionals/world`)).json();
-  check("legacy /world slug aliases International", worldAlias.ok && worldAlias.regional?.slug === "international" && (worldAlias.leagues || []).length === 5);
+  check("legacy /world slug aliases International", worldAlias.ok && worldAlias.regional?.slug === "international" && (worldAlias.leagues || []).length === 6);
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("sidebar Regionals is a nested dropdown", appJs.includes("navRegionalsBlock") && appJs.includes("class=\"nav-tree\"") && appJs.includes("<details"));
@@ -127,7 +127,7 @@ try {
   const renamed = await (await fetch(`http://127.0.0.1:${migratePort}/api/regionals`)).json();
   const migratedEurope = (renamed.regionals || []).find((r) => r.slug === "europe");
   const migratedIntl = (renamed.regionals || []).find((r) => r.slug === "international");
-  check("migrate creates International League", Boolean(migratedIntl) && (migratedIntl.leagues || []).length === 5);
+  check("migrate creates International League", Boolean(migratedIntl) && (migratedIntl.leagues || []).length === 6);
   check("migrate marks Europe coming soon", migratedEurope?.comingSoon === true && (migratedEurope?.leagues || []).length === 0);
   check("migrate does not keep playable Europe divisions", !(migratedEurope?.leagues || []).length);
 
@@ -186,7 +186,7 @@ try {
   );
   check(
     "folding creates International League divisions",
-    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 3 && /^Division [1-5]$/.test(l.name)).length === 5
+    (foldedDb.leagues || []).filter((l) => Number(l.regionalId) === 3 && /^Division [1-6]$/.test(l.name)).length === 6
   );
   const pat = (foldedDb.users || []).find((u) => u.id === 3);
   const dev = (foldedDb.users || []).find((u) => u.id === 4);
