@@ -119,7 +119,9 @@ try {
   check("signup last step names both chats", joinChunk.includes("TSH Waiting List") && joinChunk.includes("TSH General Chat"));
   check("signup last step has no Discord card", !joinChunk.includes("League Discord"));
   check("signup last step has no join-request copy", !joinChunk.includes("request to be added"));
-  check("continue stays blocked until both Messenger chats are opened", joinChunk.includes("Open both Facebook Messenger chats"));
+  check("continue to player hub is always clickable", joinChunk.includes("CONTINUE TO PLAYER HUB") && !joinChunk.includes(" disabled") && joinChunk.includes("continue to Player Hub anytime"));
+  const joinSubmit = appJs.slice(appJs.indexOf('kind === "JOINCOMMUNITY"'), appJs.indexOf('kind === "CREATE ACCOUNT"'));
+  check("continue submits straight to the hub", joinSubmit.includes('finishCommunityJoin("/dashboard")') && !joinSubmit.includes("missing"));
   check("join cards are native new-tab links", joinChunk.includes('target="_blank"') && joinChunk.includes('data-act="join-link"'));
   check("join popup can be closed or skipped", joinChunk.includes('data-act="skip-community"') && joinChunk.includes("SKIP FOR NOW") && joinChunk.includes("Close chat links"));
   check("invite page is not replaced by the join popup", !/function pageInvite\(\) \{\s*if \(state\.user\?\.communityJoinPending\) return pageJoinCommunity/.test(appJs));
