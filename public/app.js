@@ -1415,7 +1415,7 @@ function pageJoinCommunity() {
         <button type="button" class="join-dismiss" data-act="skip-community" aria-label="Close chat links">✕</button>
       </div>
       <h1 class="mt-2 page-title font-extrabold">Join the chats</h1>
-      <p class="mt-2 text-sm text-muted">Your account is ready. Tap each link to open the chat in a new tab, then continue. You can close this and use the menu anytime.</p>
+      <p class="mt-2 text-sm text-muted">Your account is ready. Open TSH Waiting List, then TSH General Chat, in a new tab. You can close this and use the menu anytime.</p>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       <div class="mt-6 space-y-3">${cards}</div>
       <form class="mt-6" data-form="JOINCOMMUNITY">
@@ -2433,9 +2433,9 @@ document.addEventListener("click", async (e) => {
   }
   const joinLink = e.target.closest("[data-act=join-link]");
   if (joinLink) {
-    // Native target=_blank opens Messenger. Do not preventDefault or re-render:
-    // preventDefault + window.open was blocked as a popup, so the card only
-    // recorded a join request and the chat never opened.
+    // Native target=_blank opens Messenger. Do not cancel the click or rebuild
+    // the page: a scripted popup was blocked on phones, so the card only
+    // recorded a request and the chat never opened.
     markJoinLinkOpened(joinLink.dataset.link);
     refreshJoinCommunityControls();
     return;

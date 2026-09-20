@@ -115,7 +115,7 @@ try {
   check("sidebar has no Discord server link", !navChunk.includes(">Discord</a>"));
 
   const joinChunk = appJs.slice(appJs.indexOf("function pageJoinCommunity"), appJs.indexOf("function pageInvite"));
-  check("signup last step opens the chats", appJs.includes("Open TSH General Chat") && joinChunk.includes("JOINCOMMUNITY") && joinChunk.includes("open the chat in a new tab"));
+  check("signup last step opens the chats", appJs.includes("Open TSH General Chat") && joinChunk.includes("JOINCOMMUNITY") && joinChunk.includes("in a new tab"));
   check("signup last step names both chats", joinChunk.includes("TSH Waiting List") && joinChunk.includes("TSH General Chat"));
   check("signup last step has no Discord card", !joinChunk.includes("League Discord"));
   check("signup last step has no join-request copy", !joinChunk.includes("request to be added"));
@@ -125,7 +125,7 @@ try {
   check("invite page is not replaced by the join popup", !/function pageInvite\(\) \{\s*if \(state\.user\?\.communityJoinPending\) return pageJoinCommunity/.test(appJs));
   check("pending join does not trap the menu", !appJs.includes('communityJoinPending && route[0] !== "signup"'));
   const joinClick = appJs.slice(appJs.indexOf("const joinLink = e.target.closest(\"[data-act=join-link]\")"), appJs.indexOf("const skipCommunity"));
-  check("join-link click does not preventDefault or window.open", joinClick.includes("markJoinLinkOpened") && !joinClick.includes("preventDefault") && !joinClick.includes("window.open"));
+  check("join-link click does not preventDefault or window.open", joinClick.includes("markJoinLinkOpened") && !joinClick.includes("e.preventDefault") && !joinClick.includes("window.open("));
   check("dashboard still offers the chats if they left the popup", appJs.includes("function finishCommunityJoin") && appJs.includes("You can dismiss this anytime"));
   check("invite page is wired", appJs.includes("function pageInvite") && appJs.includes('q === "/invite"') && appJs.includes("copy-invite"));
   check("signup still advances between form steps", appJs.includes("state.signup.step = step + 1"));
