@@ -726,10 +726,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=49",
-  europe: "/images/tsh-europe-crest.png?v=49",
-  americas: "/images/tsh-america-crest.png?v=49",
-  world: "/images/tsh-world-crest.png?v=49",
+  main: "/images/tsh-main-crest.png?v=50",
+  europe: "/images/tsh-europe-crest.png?v=50",
+  americas: "/images/tsh-america-crest.png?v=50",
+  world: "/images/tsh-world-crest.png?v=50",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -1467,7 +1467,7 @@ function pageSignUp() {
       <div class="glass rounded-xl p-5 text-center">
         <img src="${CRESTS.world}" alt="TSH International" class="mx-auto" width="96" height="96">
         <div class="mt-3 font-bold">International League</div>
-        <div class="mt-1 text-xs text-muted">TSH International · Divisions 1–5</div>
+        <div class="mt-1 text-xs text-muted">TSH International · Divisions 1–6</div>
         <div class="mt-3 coming-soon-badge">Regionals coming soon</div>
       </div>
     `;

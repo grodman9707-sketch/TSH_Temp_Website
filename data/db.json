@@ -125,6 +125,13 @@
       "name": "Division 5",
       "format": "Best of 9",
       "sortOrder": 4
+    },
+    {
+      "id": 14,
+      "regionalId": 3,
+      "name": "Division 6",
+      "format": "Best of 9",
+      "sortOrder": 5
     }
   ],
   "users": [

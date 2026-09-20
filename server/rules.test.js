@@ -83,7 +83,7 @@ try {
   check("Premium protection is present", JSON.stringify(data).includes("Premium Protection System"));
   check("one account per player rule is present", JSON.stringify(data).includes("One Account Per Player"));
   check("regionals are listed as coming soon", JSON.stringify(data).includes("TSH Europe and TSH Americas regional leagues are coming soon"));
-  check("International League has five divisions", JSON.stringify(data).includes("International League") && JSON.stringify(data).includes("five divisions") && JSON.stringify(data).includes("Division 5"));
+  check("International League has six divisions", JSON.stringify(data).includes("International League") && JSON.stringify(data).includes("six divisions") && JSON.stringify(data).includes("Division 6"));
   check("players compete in the International League", JSON.stringify(data).includes("Players compete in the International League"));
   check("strike three is removal", JSON.stringify(data).includes("Strike 3 = Removal from the league"));
   const fixtures = data.sections.find((s) => s.id === "4");
