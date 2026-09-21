@@ -751,10 +751,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=53",
-  europe: "/images/tsh-europe-crest.png?v=53",
-  americas: "/images/tsh-america-crest.png?v=53",
-  world: "/images/tsh-world-crest.png?v=53",
+  main: "/images/tsh-main-crest.png?v=54",
+  europe: "/images/tsh-europe-crest.png?v=54",
+  americas: "/images/tsh-america-crest.png?v=54",
+  world: "/images/tsh-world-crest.png?v=54",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -2016,7 +2016,7 @@ async function pageAdmin() {
       )
     : "";
   const ownerSection = d.isOwner
-    ? `${structurePanel}${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>`
+    ? `${structurePanel}${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
         <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
         <div class="mt-3 space-y-2">${d.owners
           .map(
