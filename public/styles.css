@@ -313,6 +313,27 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   z-index: 1;
   background: rgba(16, 21, 34, 0.96);
 }
+.staff-activity table { min-width: 48rem; font-size: 0.85rem; }
+.staff-activity tr.staff-idle td { color: #c9a227; }
+.staff-log {
+  max-height: 28rem;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+.staff-log-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.staff-log-when {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #999;
+  padding-top: 0.15rem;
+}
 @media (max-width: 700px) {
   th, td { padding: 0.55rem 0.45rem; }
 }

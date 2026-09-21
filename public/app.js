@@ -1983,8 +1983,118 @@ function newsComposeTools() {
       </div>
     </div>`;
 }
+function staffActionLabel(action) {
+  const labels = {
+    approve_result: "Approved match",
+    override_result: "Changed stats",
+    place_player: "Placed player",
+    unplace_player: "Unplaced player",
+    create_player: "Created player",
+    delete_player: "Deleted player",
+    create_fixture: "Created fixture",
+    generate_fixtures: "Generated fixtures",
+    delete_fixture: "Deleted fixture",
+    clear_result: "Cleared result",
+    clear_league: "Cleared league",
+    skip_accept: "Skip accept",
+    assign_owner: "Assigned owner",
+    assign_head_admin: "Assigned Head Admin",
+    assign_admin: "Assigned Division Admin",
+    revoke_head_admin: "Removed Head Admin",
+    revoke_admin: "Removed Division Admin",
+    request_remove_owner: "Requested owner removal",
+    request_remove_admin: "Requested admin removal",
+    approve_removal: "Approved removal",
+    reject_removal: "Dismissed removal",
+    resolve_request: "Resolved request",
+    dismiss_request: "Dismissed request",
+    post_news: "Posted news",
+    delete_news: "Deleted news",
+    add_region: "Added region",
+    update_region: "Updated region",
+    delete_region: "Removed region",
+    add_division: "Added division",
+    delete_division: "Removed division",
+  };
+  return labels[action] || String(action || "").replace(/_/g, " ");
+}
+function staffWhen(iso) {
+  if (!iso) return "Never";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+function staffActivityPanel(activity) {
+  if (!activity) {
+    return panel(
+      `<h2 class="text-lg font-bold">Staff activity</h2>
+      <p class="mt-1 text-sm text-muted">Owners only. Could not load the private admin log.</p>`,
+      "mt-6"
+    );
+  }
+  const summary = activity.summary || {};
+  const byActor = Array.isArray(summary.byActor) ? summary.byActor : [];
+  const entries = Array.isArray(activity.entries) ? activity.entries.slice(0, 80) : [];
+  const rows = byActor.length
+    ? byActor
+        .map((row) => {
+          const idle = !row.actions7d;
+          return `<tr class="${idle ? "staff-idle" : ""}">
+            <td>${esc(row.actorName)}</td>
+            <td>${esc(row.role)}</td>
+            <td title="${esc(row.lastAt || "")}">${esc(staffWhen(row.lastAt))}${row.lastSummary ? `<div class="text-xs text-muted">${esc(row.lastSummary)}</div>` : ""}</td>
+            <td>${row.approvals7d}</td>
+            <td>${row.approvals30d}</td>
+            <td>${row.overrides30d}</td>
+            <td>${row.actions7d} / ${row.actions30d}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="7" class="text-sm text-muted">No staff assigned yet.</td></tr>`;
+  const log = entries.length
+    ? entries
+        .map(
+          (e) =>
+            `<div class="staff-log-row">
+              <div class="staff-log-when" title="${esc(e.at || "")}">${esc(staffWhen(e.at))}</div>
+              <div>
+                <div class="text-sm"><b>${esc(e.actorName)}</b> · ${esc(e.actorRole || "")} · ${esc(staffActionLabel(e.action))}</div>
+                <div class="text-xs text-muted">${esc(e.summary || "")}</div>
+              </div>
+            </div>`
+        )
+        .join("")
+    : `<p class="text-sm text-muted">No admin work logged yet. Approvals, stat changes, placements, and other desk actions will show here.</p>`;
+  return panel(
+    `<h2 class="text-lg font-bold">Staff activity</h2>
+      <p class="mt-1 text-sm text-muted">Private to owners. Head Admins and Division Admins cannot see this. Use it to check how often staff are approving matches, changing stats, and keeping the league moving.</p>
+      <p class="mt-2 text-xs text-muted">${summary.approvals7d || 0} match approval${summary.approvals7d === 1 ? "" : "s"} in 7 days · ${summary.approvals30d || 0} in 30 days · ${summary.totalEntries || 0} logged action${summary.totalEntries === 1 ? "" : "s"}</p>
+      <div class="table-wrap staff-activity mt-4 rounded-lg">
+        <table>
+          <thead><tr>${["Staff", "Role", "Last action", "Approvals 7d", "Approvals 30d", "Stat changes 30d", "Actions 7d / 30d"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <h3 class="mt-5 text-sm font-bold tracking-widest text-muted">RECENT LOG</h3>
+      <div class="staff-log mt-2">${log}</div>`,
+    "mt-6"
+  );
+}
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
+  let activity = null;
+  if (d.isOwner) {
+    try {
+      activity = await api("/api/admin/activity");
+    } catch {
+      activity = false;
+    }
+  }
   const everyone = d.users;
   const registered = everyone;
   const leaguesById = Object.fromEntries((d.allLeagues || d.leagues).map((l) => [l.id, l]));
@@ -2216,6 +2326,7 @@ async function pageAdmin() {
           .map(([v, l]) => panel(`<div class="text-center"><div class="text-3xl font-extrabold gold">${v}</div><div class="mt-1 text-xs tracking-widest text-muted">${l}</div></div>`))
           .join("")}
       </div>
+      ${d.isOwner ? staffActivityPanel(activity) : ""}
       ${approvalsSection}
       ${ownerSection}
       ${headAdminSection}
