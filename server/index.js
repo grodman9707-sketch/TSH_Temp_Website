@@ -2468,6 +2468,9 @@ async function handleApi(req, res, url) {
     if (shotCount(fixture) >= 2) return json(res, 400, { ok: false, error: "Both screenshots are already uploaded" });
     if (shotCount(fixture) > 0) return json(res, 400, { ok: false, error: "This match already has a screenshot. Submit both together on a fresh match." });
     if (!body.image1 || !body.image2) return json(res, 400, { ok: false, error: "Upload both match screenshots before submitting" });
+    if (body.homeLegs == null || body.homeLegs === "" || body.awayLegs == null || body.awayLegs === "") {
+      return json(res, 400, { ok: false, error: "Enter the match stats with the screenshots" });
+    }
     const legsError = validateLegs(body.homeLegs, body.awayLegs);
     if (legsError) return json(res, 400, { ok: false, error: legsError });
     const extracted = pickExtractedStats(body);
