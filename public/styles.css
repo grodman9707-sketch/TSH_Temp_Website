@@ -1211,6 +1211,15 @@ input, select, textarea {
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
+.desk-fold-body {
+  padding-top: 0.75rem;
+}
+.desk-fold-body .structure-folds {
+  margin-top: 0.75rem;
+}
+.desk-fold-selects select {
+  width: 100%;
+}
 @media (min-width: 768px) {
   .structure-add-div {
     grid-template-columns: 1fr 1fr auto;
