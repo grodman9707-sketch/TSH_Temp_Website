@@ -544,7 +544,55 @@ function isInternationalRegional(r) {
   return Boolean(r && (r.slug === "international" || r.slug === "world"));
 }
 function isComingSoonRegional(r) {
-  return Boolean(r && !isInternationalRegional(r) && (r.comingSoon || r.slug === "europe" || r.slug === "americas"));
+  return Boolean(r && !isInternationalRegional(r) && r.comingSoon);
+}
+function structureState(db) {
+  if (!db.structure || typeof db.structure !== "object") db.structure = {};
+  return db.structure;
+}
+function setStructureFlag(db, key, value = true) {
+  const s = structureState(db);
+  if (s[key] === value) return false;
+  s[key] = value;
+  return true;
+}
+function ownerManagedStructure(db) {
+  return Boolean(structureState(db).ownerManaged);
+}
+function truthyFlag(value) {
+  return value === true || value === 1 || value === "1" || value === "true" || value === "on";
+}
+function slugifyRegionalName(name) {
+  const slug = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return slug || "regional";
+}
+function reservedRegionalSlug(slug) {
+  return slug === "world" || slug === "international" || slug === "api" || slug === "admin" || slug === "regionals";
+}
+function uniqueRegionalSlug(db, base, exceptId) {
+  let root = slugifyRegionalName(base);
+  if (reservedRegionalSlug(root)) root = `${root}-league`;
+  const taken = (s) => (db.regionals || []).some((r) => r.slug === s && Number(r.id) !== Number(exceptId || 0));
+  if (!taken(root)) return root;
+  let i = 2;
+  while (taken(`${root}-${i}`)) i += 1;
+  return `${root}-${i}`;
+}
+function defaultRegionalFlag(name) {
+  const letters = String(name || "")
+    .replace(/[^A-Za-z]/g, "")
+    .slice(0, 2)
+    .toUpperCase();
+  return letters || "RG";
+}
+function playableRegionalIds(db) {
+  return (db.regionals || []).filter((r) => r && !r.comingSoon).map((r) => Number(r.id));
 }
 function geographicRegionals(db) {
   return (db.regionals || []).filter((r) => !isInternationalRegional(r));
@@ -677,7 +725,7 @@ function ensureComingSoonRegionals(db) {
   }
   return changed;
 }
-function ensureInternationalLeague(db) {
+function ensureInternationalRegional(db) {
   if (!Array.isArray(db.regionals)) db.regionals = [];
   let changed = false;
   let international = internationalRegional(db);
@@ -710,6 +758,11 @@ function ensureInternationalLeague(db) {
         sortOrder: 0,
       }) || changed;
   }
+  return changed;
+}
+function ensureInternationalLeague(db) {
+  let changed = ensureInternationalRegional(db);
+  const international = internationalRegional(db);
   if (ensureDivisionLadder(db, international, INTERNATIONAL_DIVISION_LADDER)) changed = true;
   return changed;
 }
@@ -766,6 +819,93 @@ function retireGeographicLeagues(db) {
   }
   return changed;
 }
+function wipeLeague(db, leagueId) {
+  const id = Number(leagueId);
+  if (!id) return false;
+  let changed = false;
+  for (const u of db.users || []) {
+    if (Number(u.leagueId) === id) {
+      u.leagueId = null;
+      changed = true;
+    }
+    if (Array.isArray(u.leagueIds) && u.leagueIds.some((x) => Number(x) === id)) {
+      unplaceUserFromLeagues(u, id);
+      changed = true;
+    }
+    if (Number(u.adminLeagueId) === id) {
+      u.adminLeagueId = null;
+      changed = true;
+    }
+    if (Array.isArray(u.adminLeagueIds) && u.adminLeagueIds.some((x) => Number(x) === id)) {
+      u.adminLeagueIds = u.adminLeagueIds.filter((x) => Number(x) !== id);
+      syncAdminLeagues(u);
+      changed = true;
+    }
+  }
+  const beforeFixtures = (db.fixtures || []).length;
+  db.fixtures = (db.fixtures || []).filter((f) => Number(f.leagueId) !== id);
+  if ((db.fixtures || []).length !== beforeFixtures) changed = true;
+  for (const row of [...(db.applications || []), ...(db.leagueRequests || []), ...(db.approvals || [])]) {
+    if (Number(row.leagueId) === id) {
+      row.leagueId = null;
+      changed = true;
+    }
+  }
+  const beforeLeagues = (db.leagues || []).length;
+  db.leagues = (db.leagues || []).filter((l) => Number(l.id) !== id);
+  if ((db.leagues || []).length !== beforeLeagues) changed = true;
+  return changed;
+}
+function wipeRegional(db, regionalId) {
+  const id = Number(regionalId);
+  const regional = (db.regionals || []).find((r) => Number(r.id) === id);
+  if (!regional) return false;
+  if (isInternationalRegional(regional)) return false;
+  const leagues = (db.leagues || []).filter((l) => Number(l.regionalId) === id);
+  for (const league of leagues) wipeLeague(db, league.id);
+  for (const u of db.users || []) {
+    const stored = Array.isArray(u.regionalIds) ? u.regionalIds.map(Number) : [];
+    if (Number(u.regionalId) === id || stored.includes(id)) {
+      applyRegionalIds(
+        db,
+        u,
+        stored.filter((x) => x !== id)
+      );
+    }
+  }
+  for (const row of [...(db.applications || []), ...(db.leagueRequests || [])]) {
+    if (Number(row.regionalId) === id) row.regionalId = null;
+  }
+  db.regionals = (db.regionals || []).filter((r) => Number(r.id) !== id);
+  return true;
+}
+function publicStructure(db) {
+  return {
+    regionals: sortedRegionals(db).map((r) => {
+      const leagues = leaguesForRegional(db, r);
+      const protectLast = isInternationalRegional(r) && leagues.length <= 1;
+      return {
+        id: r.id,
+        slug: r.slug,
+        name: r.name,
+        fullTitle: r.fullTitle,
+        region: r.region,
+        description: r.description,
+        emoji: r.emoji || "",
+        flag: r.flag || "",
+        comingSoon: Boolean(r.comingSoon),
+        active: r.active !== false && !r.comingSoon,
+        sortOrder: r.sortOrder,
+        international: isInternationalRegional(r),
+        canDelete: !isInternationalRegional(r),
+        leagues: leagues.map((l) => ({
+          ...l,
+          canDelete: !protectLast,
+        })),
+      };
+    }),
+  };
+}
 function leagueTitle(db, league) {
   const regional = db.regionals.find((r) => r.id === league.regionalId);
   return `${regional?.fullTitle || "TSH"} ${divisionName(league)}`;
@@ -794,12 +934,10 @@ function leaguesForRegional(db, regional) {
 }
 function userRegionalIds(u) {
   const intlId = INTERNATIONAL_REGIONAL_ID;
-  if (Array.isArray(u?.regionalIds) && u.regionalIds.length) {
-    const ids = [...new Set(u.regionalIds.map(Number).filter(Boolean))];
-    if (ids.includes(intlId) || ids.some((id) => id === 3)) return [intlId];
-    return [intlId];
-  }
-  return [intlId];
+  const stored = Array.isArray(u?.regionalIds) ? [...new Set(u.regionalIds.map(Number).filter(Boolean))] : [];
+  if (!stored.length) return [intlId];
+  if (!stored.includes(intlId)) stored.unshift(intlId);
+  return stored;
 }
 function userLeagueIds(u) {
   if (Array.isArray(u?.leagueIds)) {
@@ -827,9 +965,13 @@ function choiceFromRegionalIds(db, ids) {
 function applyRegionalIds(db, u, ids) {
   const intl = internationalRegional(db);
   const intlId = intl?.id || INTERNATIONAL_REGIONAL_ID;
-  u.regionalIds = [intlId];
+  const playable = new Set(playableRegionalIds(db));
+  playable.add(Number(intlId));
+  const next = [...new Set((ids || []).map(Number).filter((id) => playable.has(id)))];
+  if (!next.includes(Number(intlId))) next.unshift(Number(intlId));
+  u.regionalIds = next;
   u.regionalChoice = "international";
-  u.regionalId = intlId;
+  u.regionalId = next[0] || intlId;
 }
 function leagueSelectionError(db, ids) {
   const unique = [...new Set((ids || []).map(Number).filter(Boolean))];
@@ -994,8 +1136,15 @@ function unplaceUserFromLeagues(u, leagueId) {
   u.leagueId = next[0] || null;
 }
 function placeUserInLeague(db, u, league) {
-  const allowed = userRegionalIds(u);
-  if (!allowed.includes(league.regionalId)) {
+  const regional = (db.regionals || []).find((r) => Number(r.id) === Number(league.regionalId));
+  if (!regional) return "League not found";
+  if (regional.comingSoon) return "That regional is coming soon";
+  let allowed = userRegionalIds(u);
+  if (!allowed.includes(Number(league.regionalId))) {
+    applyRegionalIds(db, u, [...allowed, Number(league.regionalId)]);
+    allowed = userRegionalIds(u);
+  }
+  if (!allowed.includes(Number(league.regionalId))) {
     const names = allowed.map((id) => db.regionals.find((r) => r.id === id)?.fullTitle || "a regional").join(" and ");
     return `This player signed up for ${names} only`;
   }
@@ -1189,9 +1338,17 @@ function migrate(db) {
       }
     }
   }
-  if (ensureInternationalLeague(db)) changed = true;
-  if (ensureComingSoonRegionals(db)) changed = true;
-  if (retireGeographicLeagues(db)) changed = true;
+  if (ownerManagedStructure(db)) {
+    if (ensureInternationalRegional(db)) changed = true;
+  } else {
+    if (ensureInternationalLeague(db)) changed = true;
+    if (ensureComingSoonRegionals(db)) changed = true;
+    if (retireGeographicLeagues(db)) changed = true;
+    if (setStructureFlag(db, "regionalsSeeded")) changed = true;
+    if (setStructureFlag(db, "geoLeaguesRetired")) changed = true;
+    if (setStructureFlag(db, "ladderSeeded")) changed = true;
+    if (setStructureFlag(db, "ownerManaged")) changed = true;
+  }
   if (Array.isArray(db.content?.faq)) {
     for (const item of db.content.faq) {
       const beforeA = item.a;
@@ -2473,7 +2630,107 @@ async function handleApi(req, res, url) {
         leagues,
         allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
         fixtures,
+        structure: isOwner(user) ? publicStructure(db) : null,
       });
+    }
+    if (method === "POST" && p === "/api/admin/structure/regionals") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can add a region" });
+      const name = String(body.name || "").trim();
+      if (!name) return json(res, 400, { ok: false, error: "Enter a region or league name" });
+      if (!Array.isArray(db.regionals)) db.regionals = [];
+      const slug = uniqueRegionalSlug(db, body.slug || name);
+      const comingSoon = !("comingSoon" in body) ? true : truthyFlag(body.comingSoon);
+      const sortOrder = Number.isFinite(Number(body.sortOrder))
+        ? Number(body.sortOrder)
+        : Math.max(0, ...(db.regionals || []).map((r) => Number(r.sortOrder) || 0)) + 1;
+      const regional = {
+        id: nextUnusedId(db.regionals),
+        slug,
+        flag: String(body.flag || defaultRegionalFlag(name)).trim().slice(0, 4) || defaultRegionalFlag(name),
+        emoji: String(body.emoji || "🎯").trim().slice(0, 8) || "🎯",
+        name,
+        fullTitle: String(body.fullTitle || `TSH ${name}`).trim() || `TSH ${name}`,
+        region: String(body.region || name).trim() || name,
+        description: String(body.description || `${name} in The Social Hub Darts League.`).trim(),
+        active: !comingSoon,
+        comingSoon,
+        sortOrder,
+      };
+      db.regionals.push(regional);
+      persistDb(db);
+      return json(res, 200, { ok: true, regional, structure: publicStructure(db) });
+    }
+    if (method === "POST" && p === "/api/admin/structure/regionals/update") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can update a region" });
+      const regional = (db.regionals || []).find((r) => Number(r.id) === Number(body.id));
+      if (!regional) return json(res, 400, { ok: false, error: "Region not found" });
+      if (body.name != null) {
+        const name = String(body.name || "").trim();
+        if (!name) return json(res, 400, { ok: false, error: "Enter a region or league name" });
+        regional.name = name;
+        if (body.fullTitle == null) regional.fullTitle = isInternationalRegional(regional) ? regional.fullTitle : `TSH ${name}`;
+      }
+      if (body.fullTitle != null) regional.fullTitle = String(body.fullTitle).trim() || regional.fullTitle;
+      if (body.region != null) regional.region = String(body.region).trim() || regional.region;
+      if (body.description != null) regional.description = String(body.description);
+      if (body.emoji != null) regional.emoji = String(body.emoji).trim().slice(0, 8) || regional.emoji;
+      if (body.flag != null) regional.flag = String(body.flag).trim().slice(0, 4) || regional.flag;
+      if ("comingSoon" in body) {
+        if (isInternationalRegional(regional)) {
+          return json(res, 400, { ok: false, error: "The International League stays open" });
+        }
+        regional.comingSoon = truthyFlag(body.comingSoon);
+        regional.active = !regional.comingSoon;
+      }
+      persistDb(db);
+      return json(res, 200, { ok: true, regional, structure: publicStructure(db) });
+    }
+    if (method === "POST" && p === "/api/admin/structure/regionals/delete") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove a region" });
+      const regional = (db.regionals || []).find((r) => Number(r.id) === Number(body.id));
+      if (!regional) return json(res, 400, { ok: false, error: "Region not found" });
+      if (isInternationalRegional(regional)) {
+        return json(res, 400, { ok: false, error: "The International League cannot be removed" });
+      }
+      wipeRegional(db, regional.id);
+      persistDb(db);
+      return json(res, 200, { ok: true, structure: publicStructure(db) });
+    }
+    if (method === "POST" && p === "/api/admin/structure/leagues") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can add a division" });
+      const regional = (db.regionals || []).find((r) => Number(r.id) === Number(body.regionalId));
+      if (!regional) return json(res, 400, { ok: false, error: "Choose a region" });
+      if (!Array.isArray(db.leagues)) db.leagues = [];
+      const siblings = db.leagues.filter((l) => Number(l.regionalId) === Number(regional.id));
+      const name = String(body.name || "").trim() || `Division ${siblings.length + 1}`;
+      if (siblings.some((l) => String(l.name || "").trim().toLowerCase() === name.toLowerCase())) {
+        return json(res, 400, { ok: false, error: "That division already exists in this region" });
+      }
+      const league = {
+        id: nextUnusedId(db.leagues),
+        regionalId: regional.id,
+        name,
+        format: String(body.format || "Best of 9").trim() || "Best of 9",
+        sortOrder: Number.isFinite(Number(body.sortOrder))
+          ? Number(body.sortOrder)
+          : Math.max(-1, ...siblings.map((l) => Number(l.sortOrder) || 0)) + 1,
+      };
+      db.leagues.push(league);
+      persistDb(db);
+      return json(res, 200, { ok: true, league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) }, structure: publicStructure(db) });
+    }
+    if (method === "POST" && p === "/api/admin/structure/leagues/delete") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove a division" });
+      const league = (db.leagues || []).find((l) => Number(l.id) === Number(body.id));
+      if (!league) return json(res, 400, { ok: false, error: "Division not found" });
+      const regional = (db.regionals || []).find((r) => Number(r.id) === Number(league.regionalId));
+      const siblingCount = (db.leagues || []).filter((l) => Number(l.regionalId) === Number(league.regionalId)).length;
+      if (isInternationalRegional(regional) && siblingCount <= 1) {
+        return json(res, 400, { ok: false, error: "The International League must keep at least one division" });
+      }
+      wipeLeague(db, league.id);
+      persistDb(db);
+      return json(res, 200, { ok: true, structure: publicStructure(db) });
     }
     if (method === "POST" && p === "/api/admin/assign-owner") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can do this" });
