@@ -595,6 +595,13 @@ function fixtureWhen(f) {
   else if (f.when) bits.push(f.when);
   return bits.join(" · ");
 }
+function weeklyReleaseNote(payload, { empty = false, emptyFallback = "No fixtures yet." } = {}) {
+  if (!payload?.nextFixtureReleaseAt) {
+    return empty ? `<p class="text-sm text-muted">${emptyFallback}</p>` : "";
+  }
+  const msg = "Fixtures are released week by week. The next week appears on Sunday at 12:00am GMT.";
+  return `<p class="${empty ? "" : "mt-3 "}text-sm text-muted">${msg}</p>`;
+}
 function toLocalInput(date, time) {
   if (!date) return "";
   const t = time && /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : "19:00";
@@ -751,10 +758,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=54",
-  europe: "/images/tsh-europe-crest.png?v=54",
-  americas: "/images/tsh-america-crest.png?v=54",
-  world: "/images/tsh-world-crest.png?v=54",
+  main: "/images/tsh-main-crest.png?v=55",
+  europe: "/images/tsh-europe-crest.png?v=55",
+  americas: "/images/tsh-america-crest.png?v=55",
+  world: "/images/tsh-world-crest.png?v=55",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -1274,7 +1281,7 @@ async function pageLeague(slug, id) {
         tab === "fixtures"
           ? `<div class="mt-4 space-y-4">${
               d.fixtures.length
-                ? d.fixtures
+                ? `${weeklyReleaseNote(d)}${d.fixtures
                     .slice()
                     .sort((a, b) => Number(a.week || 0) - Number(b.week || 0) || String(a.date || "").localeCompare(String(b.date || "")))
                     .map((f) => {
@@ -1312,8 +1319,11 @@ async function pageLeague(slug, id) {
                         </div>`
                       );
                     })
-                    .join("")
-                : `<p class="text-sm text-muted">No fixtures yet. Division admins can generate a season from the Admin desk.</p>`
+                    .join("")}`
+                : weeklyReleaseNote(d, {
+                    empty: true,
+                    emptyFallback: "No fixtures yet. Division admins can generate a season from the Admin desk.",
+                  })
             }</div>`
           : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
               .map(
@@ -1652,7 +1662,7 @@ async function pageDashboard() {
           : ""
       }
       <div class="mt-6 grid gap-4 md:grid-cols-3">
-        ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : "None scheduled"}</div>${
+        ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : d.nextFixtureReleaseAt ? "Drops Sunday 12:00am GMT" : "None scheduled"}</div>${
           next
             ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
                ${scheduleActions(next)}
@@ -1727,8 +1737,11 @@ async function pageMyMatches() {
       <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, upload both DartCounter screenshots together. The site will try to read the stats; a division admin verifies them before they count.</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
+      ${weeklyReleaseNote(d)}
       <div class="mt-6 space-y-3">
-        ${d.fixtures
+        ${
+          d.fixtures.length
+            ? d.fixtures
           .map((f) => {
             const action = screenshotUploader(f);
             return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_260px] md:items-start ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
@@ -1749,7 +1762,11 @@ async function pageMyMatches() {
                 ${action}
               </div>`);
           })
-          .join("")}
+          .join("")
+            : d.nextFixtureReleaseAt
+              ? ""
+              : `<p class="text-sm text-muted">No matches released yet.</p>`
+        }
       </div>
     </div>`,
     { arena: true }
@@ -2209,7 +2226,7 @@ async function pageAdmin() {
         <p class="mt-1 text-sm text-muted">${
           (state.fixtureBuilder?.mode || "season") === "individual"
             ? "Create one match between two players already placed in the chosen division."
-            : "Builds a round-robin so every player in the division meets every other player. Odd numbers get a bye that week. Weeks are seven days apart. Existing pairings for that season are skipped unless you replace unplayed matches."
+            : "Builds a round-robin so every player in the division meets every other player. Odd numbers get a bye that week. Weeks are seven days apart. Players only see each week from 12:00am GMT on that week's Sunday. Existing pairings for that season are skipped unless you replace unplayed matches."
         }</p>
         ${(() => {
           const fb = state.fixtureBuilder || { mode: "season", leagueId: "" };
@@ -2273,7 +2290,7 @@ async function pageAdmin() {
                 .map(
                   (f) =>
                     `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
-                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}</span>
+                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}</span>
                       <div class="flex flex-wrap gap-2">
                         ${
                           f.status !== "played"

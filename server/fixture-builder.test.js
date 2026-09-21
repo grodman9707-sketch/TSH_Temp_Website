@@ -72,6 +72,7 @@ try {
   check("individual mode uses home and away player selects", appJs.includes('name="homeId"') && appJs.includes('name="awayId"') && appJs.includes("Home player"));
   check("days between weeks is removed", !appJs.includes("weekGapDays") && !appJs.includes("Days between weeks"));
   check("separate generate and create-one forms are gone", !appJs.includes("Generate season fixtures") && !appJs.includes("Create one fixture"));
+  check("admin copy mentions Sunday GMT week release", appJs.includes("12:00am GMT on that week's Sunday"));
 
   const owner = await api(port, "/api/auth/login", {
     method: "POST",

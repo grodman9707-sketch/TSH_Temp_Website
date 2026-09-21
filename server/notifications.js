@@ -6,6 +6,7 @@
 // (claiming them) before actually sending, so a restart never double-sends.
 
 import { zonedWallTimeToUtc, zonedYmd, wallStringToUtc } from "./timezones.js";
+import { isFixtureReleased } from "./fixtureRelease.js";
 
 const LEAGUE_TZ = process.env.LEAGUE_TIMEZONE || "Europe/London";
 const REMINDER_MINUTES = Number(process.env.MATCH_REMINDER_MINUTES) || 30;
@@ -97,6 +98,7 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
 
   for (const f of db.fixtures || []) {
     if (f.status === "played") continue;
+    if (!isFixtureReleased(f, now)) continue;
     if (!f.notify || typeof f.notify !== "object") {
       f.notify = { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
       changed = true;
