@@ -751,10 +751,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=53",
-  europe: "/images/tsh-europe-crest.png?v=53",
-  americas: "/images/tsh-america-crest.png?v=53",
-  world: "/images/tsh-world-crest.png?v=53",
+  main: "/images/tsh-main-crest.png?v=54",
+  europe: "/images/tsh-europe-crest.png?v=54",
+  americas: "/images/tsh-america-crest.png?v=54",
+  world: "/images/tsh-world-crest.png?v=54",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -2134,8 +2134,10 @@ async function pageAdmin() {
         d.isOwner
           ? "Promote owners (max 3), add or remove regions and divisions, assign Head Admins and Division Admins, generate seasons, and run the league."
           : d.isHeadAdmin
-            ? "Verify extracted match stats, generate fixtures, and override another admin’s confirmed result when needed."
-            : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
+            ? "See and verify every division. Generate fixtures, place players, and override another admin’s confirmed result. Owner override — add, move, or delete players — stays with owners."
+            : (d.leagues || []).length
+              ? `Verify match stats for ${(d.leagues || []).map((l) => esc(l.title || l.name)).join(", ")}. Other divisions stay hidden.`
+              : "No division is assigned to you yet."
       }</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
@@ -2257,9 +2259,9 @@ async function pageAdmin() {
         <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
       ${
-        d.isOwner
+        d.canOverride
           ? panel(`<h2 class="text-lg font-bold">Manage fixtures</h2>
-        <p class="mt-1 text-sm text-muted">Delete a single match, or clear a whole league (optionally one season). Only one season of fixtures per league is allowed, so clear the current set before generating a new season.</p>
+        <p class="mt-1 text-sm text-muted">Delete a single match, or clear a whole league (optionally one season). Only one season of fixtures per league is allowed, so clear the current set before generating a new season.${d.isOwner ? "" : " Adding, moving, or deleting player accounts stays on Owner override."}</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="CLEARLEAGUE">
           <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
           <input name="season" type="number" min="1" placeholder="Season (blank = all)">
@@ -2292,7 +2294,7 @@ async function pageAdmin() {
       ${
         d.canOverride
           ? `${
-              d.isOwner
+              d.isOwner || d.canOwnerOverride
                 ? panel(`<h2 class="text-lg font-bold">Owner override</h2>
         <p class="mt-1 text-sm text-muted">Only owners can add, move, or delete players here. Head Admins can override match stats below. This updates the live league immediately — no screenshot and no GitHub PR.</p>
         <h3 class="mt-5 text-sm font-bold tracking-widest gold">ADD PLAYER</h3>
