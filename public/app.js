@@ -46,6 +46,8 @@ const state = {
   },
   reset: { email: "", sent: false },
   inviteCopied: false,
+  structureOpenIds: [],
+  structureAddOpen: false,
 };
 
 function token() {
@@ -789,11 +791,24 @@ window.addEventListener("popstate", () => {
   state.path = location.pathname;
   render();
 });
+document.addEventListener(
+  "toggle",
+  (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLDetailsElement)) return;
+    if (el.hasAttribute("data-structure-id")) {
+      if (el.open) rememberStructureOpen(el.getAttribute("data-structure-id"));
+      else forgetStructureOpen(el.getAttribute("data-structure-id"));
+    }
+    if (el.classList.contains("structure-add-region")) state.structureAddOpen = el.open;
+  },
+  true
+);
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=56",
-  europe: "/images/tsh-europe-crest.png?v=56",
-  americas: "/images/tsh-america-crest.png?v=56",
-  world: "/images/tsh-world-crest.png?v=56",
+  main: "/images/tsh-main-crest.png?v=57",
+  europe: "/images/tsh-europe-crest.png?v=57",
+  americas: "/images/tsh-america-crest.png?v=57",
+  world: "/images/tsh-world-crest.png?v=57",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -2085,6 +2100,76 @@ function staffActivityPanel(activity) {
     "mt-6"
   );
 }
+function rememberStructureOpen(id) {
+  const n = Number(id);
+  if (!n) return;
+  const cur = Array.isArray(state.structureOpenIds) ? state.structureOpenIds.map(Number) : [];
+  if (!cur.includes(n)) cur.push(n);
+  state.structureOpenIds = cur;
+}
+function forgetStructureOpen(id) {
+  const n = Number(id);
+  state.structureOpenIds = (Array.isArray(state.structureOpenIds) ? state.structureOpenIds : []).filter((x) => Number(x) !== n);
+}
+function structureRegionFold(r, openIds) {
+  const leagues = r.leagues || [];
+  const open = openIds.has(Number(r.id));
+  const countLabel = leagues.length === 1 ? "1 division" : `${leagues.length} divisions`;
+  const status = r.comingSoon ? "coming soon" : "playable";
+  const divisionRows = leagues.length
+    ? leagues
+        .map((l) => {
+          const action = l.canDelete
+            ? `<form data-form="DELETELEAGUE" data-id="${l.id}"><button class="btn-ghost">REMOVE</button></form>`
+            : `<span class="text-xs text-muted">Last division</span>`;
+          return `<div class="structure-div-row"><span>${esc(l.displayName || l.name)}</span>${action}</div>`;
+        })
+        .join("")
+    : `<p class="text-sm text-muted">No divisions yet.</p>`;
+  const playableBtn = r.international
+    ? ""
+    : `<form data-form="TOGGLEREGIONAL" data-id="${r.id}"><input type="hidden" name="comingSoon" value="${r.comingSoon ? "0" : "1"}"><button class="btn-ghost">${r.comingSoon ? "MARK PLAYABLE" : "MARK COMING SOON"}</button></form>`;
+  const deleteBtn = r.canDelete
+    ? `<form data-form="DELETEREGIONAL" data-id="${r.id}"><button class="btn-ghost">REMOVE REGION</button></form>`
+    : `<span class="text-xs text-muted">Protected</span>`;
+  return `<details class="structure-fold" data-structure-id="${r.id}"${open ? " open" : ""}>
+    <summary>
+      <span class="structure-fold-copy">
+        <span class="structure-fold-title">${esc(r.fullTitle || r.name)}</span>
+        <span class="structure-fold-meta">${esc(countLabel)} · ${esc(status)}</span>
+      </span>
+    </summary>
+    <div class="structure-fold-body">
+      <div class="structure-fold-actions">${playableBtn}${deleteBtn}</div>
+      <div class="structure-div-list">${divisionRows}</div>
+      <form class="structure-add-div" data-form="ADDLEAGUE">
+        <input type="hidden" name="regionalId" value="${r.id}">
+        <input name="name" required placeholder="Division name" maxlength="40">
+        <input name="format" placeholder="Best of 9" maxlength="40">
+        <button class="btn-gold">ADD DIVISION</button>
+      </form>
+    </div>
+  </details>`;
+}
+function structureDeskHtml(regionals, openIds, addOpen) {
+  const ids = new Set((openIds || []).map(Number).filter(Boolean));
+  const folds = regionals.length
+    ? regionals.map((r) => structureRegionFold(r, ids)).join("")
+    : `<p class="text-sm text-muted">No regions yet.</p>`;
+  return `<h2 class="text-lg font-bold">Regions, leagues &amp; divisions</h2>
+    <p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Open a dropdown to manage one. The International League cannot be removed, and it must keep at least one division.</p>
+    <div class="structure-folds">${folds}</div>
+    <details class="structure-fold structure-add-region"${addOpen ? " open" : ""}>
+      <summary><span class="structure-fold-title">Add a region or league</span></summary>
+      <div class="structure-fold-body">
+        <form class="structure-add-region-form" data-form="ADDREGIONAL">
+          <input name="name" required placeholder="Region or league name" maxlength="40">
+          <label class="check-row"><input type="checkbox" name="comingSoon" checked> Coming soon</label>
+          <button class="btn-gold">ADD REGION</button>
+        </form>
+      </div>
+    </details>`;
+}
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
   let activity = null;
@@ -2126,68 +2211,7 @@ async function pageAdmin() {
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
   const structurePanel = d.isOwner
-    ? panel(
-        `<h2 class="text-lg font-bold">Regions, leagues &amp; divisions</h2>
-        <p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Changes show on the site immediately and stay after a restart. The International League cannot be removed, and it must keep at least one division.</p>
-        <div class="mt-4 space-y-6">${
-          structureRegionals.length
-            ? structureRegionals
-                .map((r) => {
-                  const leagues = r.leagues || [];
-                  return `<div class="rounded-lg border border-white/10 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div class="font-bold">${esc(r.fullTitle || r.name)}${r.international ? " · International League" : ""}</div>
-                <div class="text-xs text-muted">/${esc(r.slug)}${r.comingSoon ? " · coming soon" : " · playable"}</div>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                ${
-                  r.international
-                    ? ""
-                    : `<form data-form="TOGGLEREGIONAL" data-id="${r.id}"><input type="hidden" name="comingSoon" value="${r.comingSoon ? "0" : "1"}"><button class="btn-ghost">${r.comingSoon ? "MARK PLAYABLE" : "MARK COMING SOON"}</button></form>`
-                }
-                ${
-                  r.canDelete
-                    ? `<form data-form="DELETEREGIONAL" data-id="${r.id}"><button class="btn-ghost">REMOVE REGION</button></form>`
-                    : `<span class="text-xs text-muted">Protected</span>`
-                }
-              </div>
-            </div>
-            <div class="mt-3 space-y-2">${
-              leagues.length
-                ? leagues
-                    .map(
-                      (l) =>
-                        `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
-                <span>${esc(l.displayName || l.name)}</span>
-                ${
-                  l.canDelete
-                    ? `<form data-form="DELETELEAGUE" data-id="${l.id}"><button class="btn-ghost">REMOVE DIVISION</button></form>`
-                    : `<span class="text-xs text-muted">Last division</span>`
-                }
-              </div>`
-                    )
-                    .join("")
-                : `<p class="text-sm text-muted">No divisions yet.</p>`
-            }</div>
-            <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="ADDLEAGUE">
-              <input type="hidden" name="regionalId" value="${r.id}">
-              <input name="name" required placeholder="Division name" maxlength="40">
-              <input name="format" placeholder="Best of 9" maxlength="40">
-              <button class="btn-gold">ADD DIVISION</button>
-            </form>
-          </div>`;
-                })
-                .join("")
-            : `<p class="text-sm text-muted">No regions yet.</p>`
-        }</div>
-        <form class="mt-6 grid gap-3 md:grid-cols-2" data-form="ADDREGIONAL">
-          <input name="name" required placeholder="Region or league name" maxlength="40">
-          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="comingSoon" checked> Coming soon</label>
-          <button class="btn-gold md:col-span-2">ADD REGION</button>
-        </form>`,
-        "mt-6"
-      )
+    ? panel(structureDeskHtml(structureRegionals, state.structureOpenIds, state.structureAddOpen), "mt-6")
     : "";
   const ownerSection = d.isOwner
     ? `${structurePanel}${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
@@ -3118,30 +3142,37 @@ document.addEventListener("submit", async (e) => {
       state.notice = "Announcement posted.";
       render();
     } else if (kind === "ADDREGIONAL") {
-      await api("/api/admin/structure/regionals", { method: "POST", body: JSON.stringify({ name: fd.name, comingSoon: form.querySelector('input[name="comingSoon"]')?.checked === true }) });
+      const res = await api("/api/admin/structure/regionals", { method: "POST", body: JSON.stringify({ name: fd.name, comingSoon: form.querySelector('input[name="comingSoon"]')?.checked === true }) });
       await loadNavTree(true);
+      state.structureAddOpen = false;
+      if (res.regional?.id) rememberStructureOpen(res.regional.id);
       state.notice = "Region added.";
       render();
     } else if (kind === "TOGGLEREGIONAL") {
       await api("/api/admin/structure/regionals/update", { method: "POST", body: JSON.stringify({ id: form.dataset.id, comingSoon: fd.comingSoon === "1" }) });
       await loadNavTree(true);
+      rememberStructureOpen(form.dataset.id);
       state.notice = fd.comingSoon === "1" ? "Region marked coming soon." : "Region is now playable.";
       render();
     } else if (kind === "DELETEREGIONAL") {
       if (!window.confirm("Remove this region and all of its divisions? Players in those divisions are unplaced. This cannot be undone.")) return;
       await api("/api/admin/structure/regionals/delete", { method: "POST", body: JSON.stringify({ id: form.dataset.id }) });
       await loadNavTree(true);
+      forgetStructureOpen(form.dataset.id);
       state.notice = "Region removed.";
       render();
     } else if (kind === "ADDLEAGUE") {
       await api("/api/admin/structure/leagues", { method: "POST", body: JSON.stringify({ regionalId: fd.regionalId, name: fd.name, format: fd.format }) });
       await loadNavTree(true);
+      rememberStructureOpen(fd.regionalId);
       state.notice = "Division added.";
       render();
     } else if (kind === "DELETELEAGUE") {
       if (!window.confirm("Remove this division? Players in it are unplaced and its fixtures are deleted. This cannot be undone.")) return;
       await api("/api/admin/structure/leagues/delete", { method: "POST", body: JSON.stringify({ id: form.dataset.id }) });
       await loadNavTree(true);
+      const fold = form.closest("[data-structure-id]");
+      if (fold) rememberStructureOpen(fold.getAttribute("data-structure-id"));
       state.notice = "Division removed.";
       render();
     } else if (kind === "DELETENEWS") {
