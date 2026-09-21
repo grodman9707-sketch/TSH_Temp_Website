@@ -560,18 +560,22 @@
       "id": "11",
       "title": "MATCH EVIDENCE & RESULT SUBMISSION",
       "blocks": [
-        {
-          "type": "p",
-          "text": "Both players must submit:"
-        },
-        {
-          "type": "ul",
-          "items": [
-            "Final match score",
-            "Full match statistics",
-            "Supporting screenshots or visual evidence"
-          ]
-        }
+            {
+              "type": "p",
+              "text": "One player submits the match result on the official TSH website: both DartCounter screenshots and the full match statistics, entered manually. The opposing player must then verify those statistics. After both players agree, TSH Administration approves the result. Approved statistics are then loaded onto the league table, player records, and site totals. Until approval, results do not count."
+            },
+            {
+              "type": "p",
+              "text": "Each submission must include:"
+            },
+            {
+              "type": "ul",
+              "items": [
+                "Final match score",
+                "Full match statistics",
+                "Supporting screenshots or visual evidence"
+              ]
+            }
       ],
       "subsections": [
         {

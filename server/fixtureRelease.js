@@ -19,7 +19,7 @@ export function fixtureReleaseAt(fixture) {
 
 export function isFixtureReleased(fixture, now = new Date()) {
   if (!fixture) return false;
-  if (fixture.status === "played" || fixture.status === "submitted") return true;
+  if (fixture.status === "played" || fixture.status === "submitted" || fixture.status === "pending_verify") return true;
   const at = fixtureReleaseAt(fixture);
   if (!at) return true;
   return now.getTime() >= at.getTime();

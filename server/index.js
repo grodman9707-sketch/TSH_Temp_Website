@@ -1435,6 +1435,14 @@ function migrate(db) {
       f.weekStart = f.date || "";
       changed = true;
     }
+    if (!("resultSubmittedBy" in f)) {
+      f.resultSubmittedBy = null;
+      f.resultSubmittedAt = null;
+      f.opponentVerifiedBy = null;
+      f.opponentVerifiedAt = null;
+      f.statsDisputeNote = "";
+      changed = true;
+    }
   }
   if (ensureAdminProfiles(db)) changed = true;
   if (db.preseasonBounty || db.bountyClaims || db.bonusAwards || db.bounty) {
@@ -1573,10 +1581,18 @@ function withNames(db, f) {
     awayNickname: db.users.find((u) => u.id === f.awayId)?.nickname || "",
     when: fixtureScheduleLabel(f),
     extractedPending: Boolean(hasNumericExtracted(f.extractedStats) && f.status !== "played"),
-    needsConfirm: f.status !== "played" && (Boolean(shot1 && shot2) || f.status === "submitted"),
+    awaitingOpponentVerify: f.status === "pending_verify",
+    opponentVerified: Boolean(f.opponentVerifiedAt) || f.status === "submitted",
+    resultSubmittedByName: shotByName(db, f.resultSubmittedBy),
+    needsConfirm: f.status === "submitted",
     scheduleAcceptRequired: !skipsVisitorAccept(db, f),
     scheduleAgreed: f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f),
-    canUploadScreenshots: (f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f)) && f.status !== "played" && shotCount(f) < 2,
+    canUploadScreenshots:
+      (f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f)) &&
+      f.status !== "played" &&
+      f.status !== "submitted" &&
+      f.status !== "pending_verify" &&
+      shotCount(f) < 2,
     ocrRawText: f.ocrRawText || f.extractedStats?.rawText || "",
     weekStart: f.weekStart || f.date || "",
     releaseAt: fixtureReleaseAt(f)?.toISOString() || null,
@@ -1621,6 +1637,11 @@ function newFixture(partial) {
     extractedStats: null,
     ocrRawText: "",
     skipVisitorAccept: false,
+    resultSubmittedBy: null,
+    resultSubmittedAt: null,
+    opponentVerifiedBy: null,
+    opponentVerifiedAt: null,
+    statsDisputeNote: "",
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
@@ -1665,10 +1686,39 @@ function pickExtractedStats(body) {
 
 function screenshotUploadError(fixture, db) {
   if (fixture.status === "played") return "This match is already confirmed";
+  if (fixture.status === "submitted" || fixture.status === "pending_verify") {
+    return "This result is already submitted. The other player must verify it, or dispute it so it can be sent again";
+  }
   if (fixture.scheduleStatus !== "agreed" && !skipsVisitorAccept(db, fixture)) {
     return "The visiting player must accept the home player's proposed date and time before screenshots can be uploaded";
   }
   return null;
+}
+
+function playerResultLocked(fixture) {
+  return ["played", "submitted", "pending_verify"].includes(fixture?.status);
+}
+
+function clearResultSubmission(fixture) {
+  removeUpload(fixture.screenshot1File);
+  removeUpload(fixture.screenshot2File);
+  removeUpload(fixture.screenshotFile);
+  fixture.screenshot1File = null;
+  fixture.screenshot1By = null;
+  fixture.screenshot1At = null;
+  fixture.screenshot2File = null;
+  fixture.screenshot2By = null;
+  fixture.screenshot2At = null;
+  fixture.screenshotFile = null;
+  fixture.screenshotBy = null;
+  fixture.screenshotAt = null;
+  fixture.extractedStats = null;
+  fixture.ocrRawText = "";
+  fixture.status = "scheduled";
+  fixture.resultSubmittedBy = null;
+  fixture.resultSubmittedAt = null;
+  fixture.opponentVerifiedBy = null;
+  fixture.opponentVerifiedAt = null;
 }
 
 function applyScreenshotSlot(fixture, user, dataUrl, slot) {
@@ -2401,7 +2451,9 @@ async function handleApi(req, res, url) {
     } catch (err) {
       return json(res, err.status || 400, { ok: false, error: err.message });
     }
-    if (shotCount(fixture) >= 2) fixture.status = "submitted";
+    if (shotCount(fixture) >= 2) {
+      return json(res, 400, { ok: false, error: "Submit both screenshots together with the match stats" });
+    }
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -2416,6 +2468,12 @@ async function handleApi(req, res, url) {
     if (shotCount(fixture) >= 2) return json(res, 400, { ok: false, error: "Both screenshots are already uploaded" });
     if (shotCount(fixture) > 0) return json(res, 400, { ok: false, error: "This match already has a screenshot. Submit both together on a fresh match." });
     if (!body.image1 || !body.image2) return json(res, 400, { ok: false, error: "Upload both match screenshots before submitting" });
+    const legsError = validateLegs(body.homeLegs, body.awayLegs);
+    if (legsError) return json(res, 400, { ok: false, error: legsError });
+    const extracted = pickExtractedStats(body);
+    if (!hasNumericExtracted(extracted)) {
+      return json(res, 400, { ok: false, error: "Enter the match stats with the screenshots" });
+    }
     const saved = [];
     try {
       saved.push(applyScreenshotSlot(fixture, user, body.image1, 1));
@@ -2433,7 +2491,20 @@ async function handleApi(req, res, url) {
       fixture.screenshotAt = null;
       return json(res, err.status || 400, { ok: false, error: err.message });
     }
-    fixture.status = "submitted";
+    const now = new Date().toISOString();
+    fixture.extractedStats = {
+      ...extracted,
+      extractedAt: now,
+      extractedBy: user.id,
+      pending: true,
+      source: "manual",
+    };
+    fixture.status = "pending_verify";
+    fixture.resultSubmittedBy = user.id;
+    fixture.resultSubmittedAt = now;
+    fixture.opponentVerifiedBy = null;
+    fixture.opponentVerifiedAt = null;
+    fixture.statsDisputeNote = "";
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -2447,6 +2518,9 @@ async function handleApi(req, res, url) {
     }
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your match" });
+    if (!managesLeague(user, fixture.leagueId)) {
+      return json(res, 403, { ok: false, error: "Players enter stats when they submit the screenshots. The other player then verifies them." });
+    }
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
     if (body.rawText) fixture.ocrRawText = String(body.rawText).slice(0, 8000);
     const extracted = pickExtractedStats(body);
@@ -2471,7 +2545,7 @@ async function handleApi(req, res, url) {
     const fixture = owned.fixture;
     if (fixture.homeId !== user.id) return json(res, 403, { ok: false, error: "Only the home player can propose a date and time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
-    if (shotCount(fixture) > 0 || fixture.status === "submitted") {
+    if (playerResultLocked(fixture) || shotCount(fixture) > 0) {
       return json(res, 400, { ok: false, error: "Screenshots are already in — the kickoff time cannot be changed" });
     }
     const raw = String(body.datetime || `${body.date || ""}T${body.time || ""}`);
@@ -2517,6 +2591,46 @@ async function handleApi(req, res, url) {
       const s = wallStringToUtc(fixture.proposedDate, fixture.proposedTime, fixture.proposedTz);
       fixture.startAt = s ? s.toISOString() : null;
     }
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  const verifyStats = p.match(/^\/api\/fixtures\/(\d+)\/verify-stats$/);
+  if (method === "POST" && verifyStats) {
+    const owned = playerOwnedFixture(db, user, verifyStats[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
+    if (fixture.status !== "pending_verify") {
+      return json(res, 400, { ok: false, error: "There is no submitted result waiting for you to verify" });
+    }
+    if (Number(fixture.resultSubmittedBy) === Number(user.id)) {
+      return json(res, 403, { ok: false, error: "The other player has to verify the stats you submitted" });
+    }
+    if (!hasNumericExtracted(fixture.extractedStats)) {
+      return json(res, 400, { ok: false, error: "No stats were submitted with this result" });
+    }
+    const now = new Date().toISOString();
+    fixture.status = "submitted";
+    fixture.opponentVerifiedBy = user.id;
+    fixture.opponentVerifiedAt = now;
+    fixture.extractedStats = { ...fixture.extractedStats, opponentVerifiedBy: user.id, opponentVerifiedAt: now, pending: true };
+    writeDb(db);
+    return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  const disputeStats = p.match(/^\/api\/fixtures\/(\d+)\/dispute-stats$/);
+  if (method === "POST" && disputeStats) {
+    const owned = playerOwnedFixture(db, user, disputeStats[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
+    if (fixture.status !== "pending_verify") {
+      return json(res, 400, { ok: false, error: "There is no submitted result to send back" });
+    }
+    if (Number(fixture.resultSubmittedBy) === Number(user.id)) {
+      return json(res, 403, { ok: false, error: "Wait for the other player to verify, or ask them to dispute if the numbers are wrong" });
+    }
+    fixture.statsDisputeNote = String(body.note || "").trim().slice(0, 400);
+    clearResultSubmission(fixture);
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -3030,6 +3144,9 @@ async function handleApi(req, res, url) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      if (!canOverride(user) && fixture.status !== "submitted") {
+        return json(res, 400, { ok: false, error: "Wait for the opposing player to verify the submitted stats" });
+      }
       if (!canOverride(user) && shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1)) {
         return json(res, 400, { ok: false, error: "Wait for both match screenshots" });
       }

@@ -1,4 +1,4 @@
-// End-to-end API tests for home-propose / visitor-accept / dual screenshots / extracted stats.
+// End-to-end API tests for propose / accept / screenshots + manual stats / opponent verify / admin approval.
 // Run: `node server/match-flow.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -46,6 +46,17 @@ async function api(port, pathname, { method = "GET", token, body } = {}) {
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
 }
+
+const STATS = {
+  homeLegs: 5,
+  awayLegs: 3,
+  homeAvg: 62.4,
+  awayAvg: 51.2,
+  home180: 2,
+  away180: 0,
+  homeCheckout: 140,
+  awayCheckout: 85,
+};
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-match-flow-"));
 const port = 18000 + Math.floor(Math.random() * 2000);
@@ -132,44 +143,71 @@ try {
   const missingOne = await api(port, `/api/my-fixtures/${fixtureId}/screenshots`, {
     method: "POST",
     token: homeTok,
-    body: { image1: PNG },
+    body: { image1: PNG, ...STATS },
   });
   check("both screenshots required", missingOne.status === 400);
 
-  const upload = await api(port, `/api/my-fixtures/${fixtureId}/screenshots`, {
+  const shotsOnly = await api(port, `/api/my-fixtures/${fixtureId}/screenshots`, {
     method: "POST",
     token: homeTok,
     body: { image1: PNG, image2: PNG },
   });
-  check("dual screenshot submit", upload.status === 200 && upload.data.fixture?.hasBothScreenshots === true && upload.data.fixture?.status === "submitted");
+  check("stats required with screenshots", shotsOnly.status === 400 && /stats/i.test(shotsOnly.data.error || ""));
 
-  const extract = await api(port, `/api/my-fixtures/${fixtureId}/extracted-stats`, {
+  const upload = await api(port, `/api/my-fixtures/${fixtureId}/screenshots`, {
     method: "POST",
     token: homeTok,
-    body: { homeLegs: 5, awayLegs: 3, homeAvg: 62.4, awayAvg: 51.2, home180: 2, away180: 0, homeCheckout: 140, awayCheckout: 85 },
+    body: { image1: PNG, image2: PNG, ...STATS },
   });
-  check("save extracted stats", extract.status === 200 && extract.data.fixture?.extractedPending === true);
+  check("submit screenshots with manual stats", upload.status === 200 && upload.data.fixture?.hasBothScreenshots === true);
+  check("submitted result waits on opponent", upload.data.fixture?.status === "pending_verify" && upload.data.fixture?.needsConfirm === false);
+
+  const selfVerify = await api(port, `/api/fixtures/${fixtureId}/verify-stats`, { method: "POST", token: homeTok, body: {} });
+  check("submitter cannot verify own stats", selfVerify.status === 403);
+
+  const earlyAdmin = await api(port, "/api/admin/overview", { token: ownerTok });
+  const earlyRow = (earlyAdmin.data.fixtures || []).find((f) => f.id === fixtureId);
+  check("admin TO CONFIRM is empty until opponent verifies", earlyRow?.needsConfirm === false);
+
+  const playerExtract = await api(port, `/api/my-fixtures/${fixtureId}/extracted-stats`, {
+    method: "POST",
+    token: homeTok,
+    body: { homeLegs: 5, awayLegs: 2 },
+  });
+  check("players cannot post extracted stats separately", playerExtract.status === 403);
+
+  const verify = await api(port, `/api/fixtures/${fixtureId}/verify-stats`, { method: "POST", token: awayTok, body: {} });
+  check("opponent verifies stats", verify.status === 200 && verify.data.fixture?.status === "submitted" && verify.data.fixture?.needsConfirm === true);
 
   const overview = await api(port, "/api/admin/overview", { token: ownerTok });
   const row = (overview.data.fixtures || []).find((f) => f.id === fixtureId);
   check("admin overview includes fixture", Boolean(row));
-  check("admin fields pre-filled from extracted stats", row?.homeLegs === 5 && row?.awayLegs === 3 && row?.homeAvg === 62.4 && row?.awayAvg === 51.2);
+  check("admin fields pre-filled from submitted stats", row?.homeLegs === 5 && row?.awayLegs === 3 && row?.homeAvg === 62.4 && row?.awayAvg === 51.2);
   check("admin 180s and checkouts filled", row?.home180 === 2 && row?.awayCheckout === 85);
   check("extractedStats still present for the form", Boolean(row?.extractedStats?.homeLegs === 5));
-  check("submitted match needs admin confirm", row?.needsConfirm === true);
+  check("verified match needs admin approval", row?.needsConfirm === true);
 
   const confirm = await api(port, `/api/admin/fixtures/${fixtureId}/result`, {
     method: "POST",
     token: ownerTok,
-    body: { homeLegs: 5, awayLegs: 3, homeAvg: 62.4, awayAvg: 51.2, home180: 2, away180: 0, homeCheckout: 140, awayCheckout: 85 },
+    body: STATS,
   });
-  check("admin verify saves played result", confirm.status === 200 && confirm.data.fixture?.status === "played");
-  check("verified match leaves TO CONFIRM", confirm.data.fixture?.needsConfirm === false);
+  check("admin approval saves played result", confirm.status === 200 && confirm.data.fixture?.status === "played");
+  check("approved match leaves TO CONFIRM", confirm.data.fixture?.needsConfirm === false);
 
   const after = await api(port, "/api/admin/overview", { token: ownerTok });
   const playedRow = (after.data.fixtures || []).find((f) => f.id === fixtureId);
-  check("overview still has screenshots after verify", playedRow?.hasBothScreenshots === true && playedRow?.status === "played");
-  check("overview needsConfirm is false after verify", playedRow?.needsConfirm === false);
+  check("overview still has screenshots after approve", playedRow?.hasBothScreenshots === true && playedRow?.status === "played");
+  check("overview needsConfirm is false after approve", playedRow?.needsConfirm === false);
+
+  const table = await api(port, "/api/leagues/9");
+  const homeRow = (table.data.standings || []).find((r) => r.playerId === homeId);
+  const awayRow = (table.data.standings || []).find((r) => r.playerId === awayId);
+  check("league table loads home win after admin approval", homeRow?.won === 1 && homeRow?.lost === 0 && homeRow?.legsFor === 5 && homeRow?.points === 7);
+  check("league table loads away loss and 180s", awayRow?.lost === 1 && awayRow?.legsFor === 3 && homeRow?.oneEighties === 2);
+  const siteStats = await api(port, "/api/stats");
+  check("site totals load 180s after admin approval", siteStats.data.total180s === 2);
+  check("site totals load top checkout after admin approval", siteStats.data.topCheckout === 140);
 
   const week1 = await api(port, "/api/admin/fixtures", {
     method: "POST",
@@ -203,9 +241,10 @@ try {
   const week1Shot = await api(port, `/api/my-fixtures/${week1Id}/screenshots`, {
     method: "POST",
     token: homeTok,
-    body: { image1: PNG, image2: PNG },
+    body: { image1: PNG, image2: PNG, ...STATS },
   });
   check("skipped-accept match can upload without visitor accept", week1Shot.status === 200 && week1Shot.data.fixture?.hasBothScreenshots === true);
+  check("skipped-accept match waits on opponent", week1Shot.data.fixture?.status === "pending_verify");
   check("skipped-accept match reports skip", week1Shot.data.fixture?.scheduleAcceptRequired === false);
 
   const otherWeek1 = await api(port, "/api/admin/fixtures", {
@@ -230,14 +269,22 @@ try {
   const flaggedShot = await api(port, `/api/my-fixtures/${flagged.data.fixture.id}/screenshots`, {
     method: "POST",
     token: homeTok,
-    body: { image1: PNG, image2: PNG },
+    body: { image1: PNG, image2: PNG, ...STATS },
   });
   check("flagged match can upload without accept", flaggedShot.status === 200);
+
+  const dispute = await api(port, `/api/fixtures/${flagged.data.fixture.id}/dispute-stats`, {
+    method: "POST",
+    token: awayTok,
+    body: { note: "Legs look wrong" },
+  });
+  check("opponent can send a result back", dispute.status === 200 && dispute.data.fixture?.status === "scheduled" && dispute.data.fixture?.hasBothScreenshots !== true);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   check("My Matches still has a propose form", appJs.includes('data-form="PROPOSE"') && appJs.includes("Propose date & time"));
   check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
   check("admin can mark skip accept on one existing match", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("/skip-accept"));
+  check("result form asks for screenshots and stats", appJs.includes("SUBMIT RESULT") && appJs.includes('data-form="VERIFYSTATS"') && appJs.includes("verify-stats"));
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
