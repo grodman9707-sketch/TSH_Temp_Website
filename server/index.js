@@ -372,6 +372,9 @@ function isDivisionAdmin(u) {
 function canOverride(u) {
   return isOwner(u) || isHeadAdmin(u);
 }
+function canOwnerOverride(u) {
+  return isOwner(u);
+}
 function isStaff(u) {
   return isOwner(u) || isHeadAdmin(u) || isDivisionAdmin(u);
 }
@@ -1083,7 +1086,10 @@ function visibleLeagueRequests(db, user) {
   return pending
     .filter((r) => {
       if (r.kind === "join") return regionals.has(Number(r.regionalId));
-      if (isDropAllRequest(r)) return true;
+      if (isDropAllRequest(r)) {
+        const player = db.users.find((x) => Number(x.id) === Number(r.userId));
+        return userLeagueIds(player).some((id) => leagueIds.has(id));
+      }
       return leagueIds.has(Number(r.leagueId));
     })
     .map((r) => publicLeagueRequest(r, db));
@@ -1512,11 +1518,13 @@ function standingsForLeague(db, leagueId) {
     })
     .sort((a, b) => b.points - a.points || b.diff - a.diff || b.legsFor - a.legsFor);
 }
-function stats(db) {
-  const played = db.fixtures.filter((f) => f.status === "played");
+function stats(db, leagueList) {
+  const leagues = Array.isArray(leagueList) ? leagueList : db.leagues;
+  const leagueIds = new Set(leagues.map((l) => l.id));
+  const played = db.fixtures.filter((f) => f.status === "played" && leagueIds.has(f.leagueId));
   return {
-    activePlayers: db.users.filter((u) => userLeagueIds(u).length).length,
-    divisions: db.leagues.length,
+    activePlayers: db.users.filter((u) => userLeagueIds(u).some((id) => leagueIds.has(id))).length,
+    divisions: leagues.length,
     total180s: played.reduce((s, f) => s + (f.home180 || f.homeOneEighties || 0) + (f.away180 || f.awayOneEighties || 0), 0),
     topCheckout: played.reduce((m, f) => Math.max(m, f.topCheckout || 0), 0),
   };
@@ -2605,22 +2613,25 @@ async function handleApi(req, res, url) {
         }));
       return json(res, 200, {
         ok: true,
-        stats: stats(db),
+        stats: stats(db, leagues),
         me: publicUser(user, db),
         isOwner: isOwner(user),
         isHeadAdmin: isHeadAdmin(user),
         canOverride: canOverride(user),
+        canOwnerOverride: canOwnerOverride(user),
         ownerSlots: { used: ownerCount(db), max: MAX_OWNERS },
         users,
-        owners: db.users.filter((u) => isOwner(u)).map((u) => publicUser(u, db)),
-        headAdmins: db.users.filter((u) => isHeadAdmin(u)).map((u) => publicUser(u, db)),
-        leagueAdmins: db.users.flatMap((u) =>
-          adminLeagueIds(u).map((id) => ({
-            ...publicUser(u, db),
-            adminLeagueId: id,
-            adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "Unassigned", regionalId: 0 }),
-          }))
-        ),
+        owners: canOverride(user) ? db.users.filter((u) => isOwner(u)).map((u) => publicUser(u, db)) : [],
+        headAdmins: canOverride(user) ? db.users.filter((u) => isHeadAdmin(u)).map((u) => publicUser(u, db)) : [],
+        leagueAdmins: canOverride(user)
+          ? db.users.flatMap((u) =>
+              adminLeagueIds(u).map((id) => ({
+                ...publicUser(u, db),
+                adminLeagueId: id,
+                adminLeagueTitle: leagueTitle(db, db.leagues.find((l) => l.id === id) || { name: "Unassigned", regionalId: 0 }),
+              }))
+            )
+          : [],
         approvals: visibleApprovals,
         applications,
         leagueRequests: visibleLeagueRequests(db, user),
@@ -2628,7 +2639,7 @@ async function handleApi(req, res, url) {
           ? { postgresConfigured: postgresConfigured(), airtableConfigured: airtableConfigured() }
           : null,
         leagues,
-        allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
+        allLeagues: (canOverride(user) ? [...db.leagues] : leagues).sort(compareLeagueOrder).map((l) => ({ ...l, title: l.title || leagueTitle(db, l) })),
         fixtures,
         structure: isOwner(user) ? publicStructure(db) : null,
       });
@@ -2999,7 +3010,8 @@ async function handleApi(req, res, url) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
-      if (!canOverride(user) && shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1)) {
+      const needsScreenshots = shotCount(fixture) < 2 && !(fixture.status === "submitted" && shotCount(fixture) >= 1);
+      if (needsScreenshots && !canOwnerOverride(user) && !(isHeadAdmin(user) && fixture.status === "played")) {
         return json(res, 400, { ok: false, error: "Wait for both match screenshots" });
       }
       if (fixture.status === "played" && !canOverride(user)) return json(res, 400, { ok: false, error: "Only a head admin or owner can overwrite a confirmed result" });
@@ -3107,7 +3119,7 @@ async function handleApi(req, res, url) {
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     if (method === "POST" && p === "/api/admin/fixtures/clear-league") {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can clear fixtures" });
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only a head admin or owner can clear fixtures" });
       const leagueId = Number(body.leagueId);
       const league = db.leagues.find((l) => l.id === leagueId);
       if (!league) return json(res, 400, { ok: false, error: "Choose a league" });
@@ -3133,7 +3145,7 @@ async function handleApi(req, res, url) {
     }
     const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
     if (method === "POST" && deleteMatch) {
-      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete fixtures" });
+      if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only a head admin or owner can delete fixtures" });
       const id = Number(deleteMatch[1]);
       const fixture = db.fixtures.find((f) => f.id === id);
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
