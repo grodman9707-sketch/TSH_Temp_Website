@@ -48,6 +48,10 @@ const state = {
   inviteCopied: false,
   structureOpenIds: [],
   structureAddOpen: false,
+  deskFolds: {},
+  manageLeagueOpenIds: [],
+  overrideLeagueId: "",
+  overrideFixtureId: null,
 };
 
 function token() {
@@ -362,10 +366,12 @@ function matchShot(f, slot) {
     }
   </div>`;
 }
-function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, actions } = {}) {
+function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, actions, hidePicker } = {}) {
   if (!matches.length) return `<p class="mt-3 text-muted">${emptyText || "Nothing waiting."}</p>`;
   const selected = matches.find((f) => f.id === Number(selectedId)) || matches[0];
-  return `<div class="match-picker">
+  const picker = hidePicker
+    ? ""
+    : `<div class="match-picker">
       ${matches
         .map(
           (f) =>
@@ -375,7 +381,8 @@ function statsDesk(matches, selectedId, { formKind, buttonLabel, emptyText, acti
             </button>`
         )
         .join("")}
-    </div>
+    </div>`;
+  return `${picker}
     <div class="stats-desk">
       <div class="stats-shots">
         ${matchShot(selected, 1)}
@@ -801,14 +808,22 @@ document.addEventListener(
       else forgetStructureOpen(el.getAttribute("data-structure-id"));
     }
     if (el.classList.contains("structure-add-region")) state.structureAddOpen = el.open;
+    if (el.hasAttribute("data-desk-fold")) {
+      state.deskFolds = { ...(state.deskFolds || {}), [el.getAttribute("data-desk-fold")]: el.open };
+    }
+    if (el.hasAttribute("data-manage-league-id")) {
+      const id = Number(el.getAttribute("data-manage-league-id"));
+      const cur = Array.isArray(state.manageLeagueOpenIds) ? state.manageLeagueOpenIds.map(Number) : [];
+      state.manageLeagueOpenIds = el.open ? [...new Set([...cur, id])] : cur.filter((x) => x !== id);
+    }
   },
   true
 );
 const CRESTS = {
-  main: "/images/tsh-main-crest.png?v=57",
-  europe: "/images/tsh-europe-crest.png?v=57",
-  americas: "/images/tsh-america-crest.png?v=57",
-  world: "/images/tsh-world-crest.png?v=57",
+  main: "/images/tsh-main-crest.png?v=58",
+  europe: "/images/tsh-europe-crest.png?v=58",
+  americas: "/images/tsh-america-crest.png?v=58",
+  world: "/images/tsh-world-crest.png?v=58",
 };
 function crest(size = 64, which = "main", extraClass = "") {
   const src = CRESTS[which] || CRESTS.main;
@@ -2170,6 +2185,136 @@ function structureDeskHtml(regionals, openIds, addOpen) {
       </div>
     </details>`;
 }
+function deskFoldOpen(id) {
+  return Boolean(state.deskFolds?.[id]);
+}
+function fixtureDeskStatus(f) {
+  if (f.status === "played") return `${f.homeLegs}–${f.awayLegs}`;
+  if (f.status === "submitted") return "awaiting admin";
+  if (f.status === "pending_verify") return "awaiting opponent";
+  return f.scheduleStatus || "scheduled";
+}
+function fixturesGroupedByLeague(fixtures, leagues) {
+  const groups = new Map();
+  for (const l of leagues || []) {
+    groups.set(Number(l.id), { league: l, fixtures: [] });
+  }
+  for (const f of fixtures || []) {
+    const id = Number(f.leagueId);
+    if (!groups.has(id)) groups.set(id, { league: { id, title: f.leagueName, name: f.leagueName }, fixtures: [] });
+    groups.get(id).fixtures.push(f);
+  }
+  return [...groups.values()]
+    .filter((g) => g.fixtures.length)
+    .map((g) => {
+      g.fixtures.sort((a, b) => Number(a.season || 1) - Number(b.season || 1) || Number(a.week || 0) - Number(b.week || 0) || Number(a.id) - Number(b.id));
+      return g;
+    });
+}
+function deskFold({ id, title, meta, body }) {
+  return `<details class="structure-fold" data-desk-fold="${esc(id)}"${deskFoldOpen(id) ? " open" : ""}>
+    <summary>
+      <span class="structure-fold-copy">
+        <span class="structure-fold-title">${title}</span>
+        ${meta ? `<span class="structure-fold-meta">${meta}</span>` : ""}
+      </span>
+    </summary>
+    <div class="structure-fold-body desk-fold-body">${body}</div>
+  </details>`;
+}
+function manageFixturesDesk(d, allLeagueOptions) {
+  const groups = fixturesGroupedByLeague(d.fixtures, d.allLeagues || d.leagues);
+  const openIds = new Set((state.manageLeagueOpenIds || []).map(Number));
+  const folds = groups.length
+    ? groups
+        .map((g) => {
+          const title = g.league.title || g.league.name || "League";
+          const rows = g.fixtures
+            .map(
+              (f) =>
+                `<div class="structure-div-row">
+                  <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}</span>
+                  <div class="flex flex-wrap gap-2">
+                    ${
+                      f.status !== "played"
+                        ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
+                        : ""
+                    }
+                    <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+                  </div>
+                </div>`
+            )
+            .join("");
+          return `<details class="structure-fold" data-manage-league-id="${g.league.id}"${openIds.has(Number(g.league.id)) ? " open" : ""}>
+            <summary>
+              <span class="structure-fold-copy">
+                <span class="structure-fold-title">${esc(title)}</span>
+                <span class="structure-fold-meta">${g.fixtures.length} match${g.fixtures.length === 1 ? "" : "es"}</span>
+              </span>
+            </summary>
+            <div class="structure-fold-body">${rows}</div>
+          </details>`;
+        })
+        .join("")
+    : `<p class="text-sm text-muted">No fixtures yet.</p>`;
+  return deskFold({
+    id: "manage-fixtures",
+    title: "Manage fixtures",
+    meta: `${d.fixtures.length} match${d.fixtures.length === 1 ? "" : "es"}`,
+    body: `<p class="text-sm text-muted">Open a league to skip accept or delete a match. Clear a whole league (optionally one season) before generating a new season — only one season per league is allowed.</p>
+      <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="CLEARLEAGUE">
+        <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
+        <input name="season" type="number" min="1" placeholder="Season (blank = all)">
+        <button class="btn-ghost">CLEAR FIXTURES</button>
+      </form>
+      <div class="structure-folds">${folds}</div>`,
+  });
+}
+function overwriteStatsDesk(d) {
+  const leagues = d.allLeagues || d.leagues || [];
+  const leagueId = Number(state.overrideLeagueId) || Number(leagues[0]?.id) || 0;
+  const inLeague = d.fixtures
+    .filter((f) => Number(f.leagueId) === leagueId)
+    .slice()
+    .sort((a, b) => Number(a.season || 1) - Number(b.season || 1) || Number(a.week || 0) - Number(b.week || 0) || Number(a.id) - Number(b.id));
+  const selected = inLeague.find((f) => f.id === Number(state.overrideFixtureId)) || null;
+  const leagueSelect = `<select data-act="override-league"><option value="">League</option>${leagues
+    .map((l) => `<option value="${l.id}"${Number(l.id) === leagueId ? " selected" : ""}>${esc(l.title || l.name)}</option>`)
+    .join("")}</select>`;
+  const matchSelect = `<select data-act="override-match"><option value="">Match</option>${inLeague
+    .map(
+      (f) =>
+        `<option value="${f.id}"${selected && f.id === selected.id ? " selected" : ""}>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}</option>`
+    )
+    .join("")}</select>`;
+  const form = selected
+    ? statsDesk([selected], selected.id, {
+        formKind: "OVERRIDE",
+        buttonLabel: "SAVE STATS",
+        emptyText: "Choose a match.",
+        hidePicker: true,
+        actions: (f) => `<div class="mt-2 flex gap-2">
+            <form data-form="CLEARRESULT" data-id="${f.id}"><button class="btn-ghost">CLEAR RESULT</button></form>
+            ${d.isOwner ? `<form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE MATCH</button></form>` : ""}
+          </div>`,
+      })
+    : `<p class="mt-3 text-sm text-muted">${inLeague.length ? "Choose a match to edit stats." : "No fixtures in that league yet."}</p>`;
+  return deskFold({
+    id: "overwrite-stats",
+    title: d.isOwner ? "Overwrite match stats" : "Override another admin",
+    meta: `${d.fixtures.length} match${d.fixtures.length === 1 ? "" : "es"}`,
+    body: `<p class="text-sm text-muted">${
+      d.isOwner
+        ? "Choose a league, then a match. Tables update as soon as you save. Owners can do this without a screenshot."
+        : "Choose a league, then a match. Head Admins can correct or clear a result another admin already confirmed. Tables update as soon as you save."
+    }</p>
+      <div class="mt-3 grid gap-3 md:grid-cols-2 desk-fold-selects">
+        ${leagueSelect}
+        ${matchSelect}
+      </div>
+      ${form}`,
+  });
+}
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
   let activity = null;
@@ -2457,35 +2602,7 @@ async function pageAdmin() {
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
       ${
         d.isOwner
-          ? panel(`<h2 class="text-lg font-bold">Manage fixtures</h2>
-        <p class="mt-1 text-sm text-muted">Delete a single match, or clear a whole league (optionally one season). Only one season of fixtures per league is allowed, so clear the current set before generating a new season.</p>
-        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="CLEARLEAGUE">
-          <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
-          <input name="season" type="number" min="1" placeholder="Season (blank = all)">
-          <button class="btn-ghost">CLEAR FIXTURES</button>
-        </form>
-        <div class="mt-4 space-y-2">${
-          d.fixtures.length
-            ? d.fixtures
-                .slice()
-                .sort((a, b) => Number(a.season || 1) - Number(b.season || 1) || Number(a.week || 0) - Number(b.week || 0))
-                .map(
-                  (f) =>
-                    `<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm">
-                      <span>${esc(f.leagueName || "")} · S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${f.status === "played" ? `${esc(f.homeLegs)}–${esc(f.awayLegs)}` : esc(f.scheduleStatus || "scheduled")}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}</span>
-                      <div class="flex flex-wrap gap-2">
-                        ${
-                          f.status !== "played"
-                            ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
-                            : ""
-                        }
-                        <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
-                      </div>
-                    </div>`
-                )
-                .join("")
-            : `<p class="text-sm text-muted">No fixtures yet.</p>`
-        }</div>`, "mt-4")
+          ? panel(manageFixturesDesk(d, allLeagueOptions), "mt-4")
           : ""
       }
       ${
@@ -2520,17 +2637,7 @@ async function pageAdmin() {
         </form>`, "mt-4")
                 : ""
             }
-        ${panel(`<h2 class="text-lg font-bold">${d.isOwner ? "Overwrite match stats" : "Override another admin"}</h2>
-        <p class="mt-1 text-sm text-muted">${d.isOwner ? "Enter or correct official stats. Tables update as soon as you save. Owners can do this without a screenshot." : "Head Admins can correct or clear a result another admin already confirmed. Tables update as soon as you save."}</p>
-        ${statsDesk(d.fixtures, state.selectedResultId, {
-          formKind: "OVERRIDE",
-          buttonLabel: "SAVE STATS",
-          emptyText: "No fixtures yet. Create one above.",
-          actions: (f) => `<div class="mt-2 flex gap-2">
-            <form data-form="CLEARRESULT" data-id="${f.id}"><button class="btn-ghost">CLEAR RESULT</button></form>
-            ${d.isOwner ? `<form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE MATCH</button></form>` : ""}
-          </div>`,
-        })}`, "mt-4")}`
+        ${panel(overwriteStatsDesk(d), "mt-4")}`
           : ""
       }
       ${panel(
@@ -2800,6 +2907,21 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const overrideLeague = e.target.closest("[data-act=override-league]");
+  if (overrideLeague) {
+    state.overrideLeagueId = overrideLeague.value;
+    state.overrideFixtureId = null;
+    state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
+    render();
+    return;
+  }
+  const overrideMatch = e.target.closest("[data-act=override-match]");
+  if (overrideMatch) {
+    state.overrideFixtureId = Number(overrideMatch.value) || null;
+    state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
+    render();
+    return;
+  }
   const fixtureField = e.target.closest("[data-act=fixture-mode], [data-act=fixture-league]");
   if (fixtureField) {
     const form = fixtureField.closest("form");
@@ -2940,6 +3062,8 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "SCANSTATS") {
       state.selectedResultId = Number(form.dataset.id);
+      state.overrideFixtureId = Number(form.dataset.id);
+      state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
       state.notice = "Scanning screenshots…";
       render();
       const overview = await api("/api/admin/overview");
@@ -3098,6 +3222,7 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "SKIPACCEPT") {
       await api(`/api/admin/fixtures/${form.dataset.id}/skip-accept`, { method: "POST", body: JSON.stringify(fd) });
+      state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
       state.notice = fd.skipVisitorAccept === "1" ? "Visitor accept skipped for this match only." : "Visitor accept is required again for this match.";
       render();
     } else if (kind === "ADDPLAYER") {
@@ -3115,20 +3240,28 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "OVERRIDE" || kind === "SAVE STATS") {
       await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });
+      state.overrideFixtureId = Number(form.dataset.id);
+      state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
       state.notice = "Match stats saved. Table updated.";
       render();
     } else if (kind === "CLEARRESULT") {
       await api(`/api/admin/fixtures/${form.dataset.id}/clear`, { method: "POST", body: "{}" });
+      state.overrideFixtureId = Number(form.dataset.id);
+      state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
       state.notice = "Result cleared.";
       render();
     } else if (kind === "DELETEFIXTURE") {
       if (!window.confirm("Delete this match?")) return;
       await api(`/api/admin/fixtures/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
+      if (Number(state.overrideFixtureId) === Number(form.dataset.id)) state.overrideFixtureId = null;
+      state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true, "overwrite-stats": deskFoldOpen("overwrite-stats") };
       state.notice = "Match deleted.";
       render();
     } else if (kind === "CLEARLEAGUE") {
       if (!window.confirm(`Delete all fixtures for the selected league${fd.season ? ` (season ${fd.season})` : ""}? This cannot be undone.`)) return;
       const res = await api("/api/admin/fixtures/clear-league", { method: "POST", body: JSON.stringify(fd) });
+      state.overrideFixtureId = null;
+      state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
       state.notice = `Removed ${res.removed} fixture${res.removed === 1 ? "" : "s"}.`;
       render();
     } else if (kind === "TESTEMAIL") {
