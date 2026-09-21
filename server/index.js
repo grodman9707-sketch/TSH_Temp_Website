@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
+import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
@@ -1430,6 +1431,10 @@ function migrate(db) {
       f.skipVisitorAccept = false;
       changed = true;
     }
+    if (!f.weekStart) {
+      f.weekStart = f.date || "";
+      changed = true;
+    }
   }
   if (ensureAdminProfiles(db)) changed = true;
   if (db.preseasonBounty || db.bountyClaims || db.bonusAwards || db.bounty) {
@@ -1573,6 +1578,9 @@ function withNames(db, f) {
     scheduleAgreed: f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f),
     canUploadScreenshots: (f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f)) && f.status !== "played" && shotCount(f) < 2,
     ocrRawText: f.ocrRawText || f.extractedStats?.rawText || "",
+    weekStart: f.weekStart || f.date || "",
+    releaseAt: fixtureReleaseAt(f)?.toISOString() || null,
+    released: isFixtureReleased(f),
   };
   delete named.screenshotFile;
   delete named.screenshot1File;
@@ -1581,7 +1589,7 @@ function withNames(db, f) {
 }
 
 function newFixture(partial) {
-  return {
+  const fixture = {
     week: 1,
     season: 1,
     homeLegs: null,
@@ -1616,6 +1624,27 @@ function newFixture(partial) {
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
+  if (!fixture.weekStart) fixture.weekStart = fixture.date || "";
+  return fixture;
+}
+
+function namedPublicFixture(db, f) {
+  const named = withNames(db, f);
+  delete named.screenshotFile;
+  delete named.extractedStats;
+  return named;
+}
+
+function playerVisibleFixtures(db, fixtures) {
+  return releasedFixtures(fixtures).map((f) => namedPublicFixture(db, f));
+}
+
+function playerOwnedFixture(db, user, id) {
+  if (!user) return { status: 401, error: "Login required" };
+  const fixture = db.fixtures.find((f) => f.id === Number(id));
+  if (!fixture || !isFixtureReleased(fixture)) return { status: 404, error: "Fixture not found" };
+  if (fixture.homeId !== user.id && fixture.awayId !== user.id) return { status: 403, error: "Not your match" };
+  return { fixture };
 }
 
 function pickExtractedStats(body) {
@@ -1920,18 +1949,15 @@ async function handleApi(req, res, url) {
     const league = db.leagues.find((l) => l.id === Number(leagueMatch[1]));
     if (!league) return json(res, 404, { ok: false, error: "Not found" });
     const regional = db.regionals.find((r) => r.id === league.regionalId);
+    const leagueFixtures = db.fixtures.filter((f) => f.leagueId === league.id);
     return json(res, 200, {
       ok: true,
       league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) },
       regional,
       standings: standingsForLeague(db, league.id),
       divisionAdmins: divisionAdminsForLeague(db, league.id),
-      fixtures: db.fixtures.filter((f) => f.leagueId === league.id).map((f) => {
-        const named = withNames(db, f);
-        delete named.screenshotFile;
-        delete named.extractedStats;
-        return named;
-      }),
+      fixtures: playerVisibleFixtures(db, leagueFixtures),
+      ...fixturePublishMeta(leagueFixtures),
     });
   }
 
@@ -1939,6 +1965,7 @@ async function handleApi(req, res, url) {
   if (method === "GET" && playerMatch) {
     const found = db.users.find((u) => u.id === Number(playerMatch[1]));
     if (!found) return json(res, 404, { ok: false, error: "Not found" });
+    const playerFixtures = db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id);
     return json(res, 200, {
       ok: true,
       player: publicUser(found, db),
@@ -1946,12 +1973,8 @@ async function handleApi(req, res, url) {
       leagues: userLeagueIds(found).map((id) => db.leagues.find((l) => l.id === id)).filter(Boolean).map((l) => ({ ...l, title: leagueTitle(db, l) })),
       regional: db.regionals.find((r) => r.id === found.regionalId) || null,
       regionals: [...new Set(placedRegionalIds(db, found))].map((id) => db.regionals.find((r) => r.id === id)).filter(Boolean),
-      fixtures: db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id).map((f) => {
-        const named = withNames(db, f);
-        delete named.screenshotFile;
-        delete named.extractedStats;
-        return named;
-      }),
+      fixtures: playerVisibleFixtures(db, playerFixtures),
+      ...fixturePublishMeta(playerFixtures),
     });
   }
 
@@ -2335,7 +2358,12 @@ async function handleApi(req, res, url) {
   }
   if (method === "GET" && p === "/api/my-fixtures") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    return json(res, 200, { ok: true, fixtures: db.fixtures.filter((f) => f.homeId === user.id || f.awayId === user.id).map((f) => withNames(db, f)) });
+    const mine = db.fixtures.filter((f) => f.homeId === user.id || f.awayId === user.id);
+    return json(res, 200, {
+      ok: true,
+      fixtures: releasedFixtures(mine).map((f) => withNames(db, f)),
+      ...fixturePublishMeta(mine),
+    });
   }
 
   const screenshotGet = p.match(/^\/api\/fixtures\/(\d+)\/screenshot$/);
@@ -2347,6 +2375,9 @@ async function handleApi(req, res, url) {
     if (!fixture || !filename) return json(res, 404, { ok: false, error: "No screenshot" });
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Forbidden" });
+    if (inMatch && !managesLeague(user, fixture.leagueId) && !isFixtureReleased(fixture)) {
+      return json(res, 404, { ok: false, error: "No screenshot" });
+    }
     const filePath = safeUploadPath(filename);
     if (!filePath || !fs.existsSync(filePath)) return json(res, 404, { ok: false, error: "No screenshot" });
     const ext = path.extname(filePath).toLowerCase();
@@ -2357,10 +2388,9 @@ async function handleApi(req, res, url) {
 
   const screenshotPost = p.match(/^\/api\/my-fixtures\/(\d+)\/screenshot$/);
   if (method === "POST" && screenshotPost) {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const fixture = db.fixtures.find((f) => f.id === Number(screenshotPost[1]));
-    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
-    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    const owned = playerOwnedFixture(db, user, screenshotPost[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
     const blocked = screenshotUploadError(fixture, db);
     if (blocked) return json(res, 400, { ok: false, error: blocked });
     const requested = Number(body.slot);
@@ -2378,10 +2408,9 @@ async function handleApi(req, res, url) {
 
   const screenshotsPost = p.match(/^\/api\/my-fixtures\/(\d+)\/screenshots$/);
   if (method === "POST" && screenshotsPost) {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const fixture = db.fixtures.find((f) => f.id === Number(screenshotsPost[1]));
-    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
-    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    const owned = playerOwnedFixture(db, user, screenshotsPost[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
     const blocked = screenshotUploadError(fixture, db);
     if (blocked) return json(res, 400, { ok: false, error: blocked });
     if (shotCount(fixture) >= 2) return json(res, 400, { ok: false, error: "Both screenshots are already uploaded" });
@@ -2413,7 +2442,9 @@ async function handleApi(req, res, url) {
   if (method === "POST" && extractedPost) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     const fixture = db.fixtures.find((f) => f.id === Number(extractedPost[1]));
-    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+    if (!fixture || (!isFixtureReleased(fixture) && !managesLeague(user, fixture.leagueId))) {
+      return json(res, 404, { ok: false, error: "Fixture not found" });
+    }
     const inMatch = fixture.homeId === user.id || fixture.awayId === user.id;
     if (!inMatch && !managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your match" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already confirmed" });
@@ -2435,10 +2466,9 @@ async function handleApi(req, res, url) {
 
   const proposeMatch = p.match(/^\/api\/fixtures\/(\d+)\/propose$/);
   if (method === "POST" && proposeMatch) {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const fixture = db.fixtures.find((f) => f.id === Number(proposeMatch[1]));
-    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
-    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    const owned = playerOwnedFixture(db, user, proposeMatch[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
     if (fixture.homeId !== user.id) return json(res, 403, { ok: false, error: "Only the home player can propose a date and time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
     if (shotCount(fixture) > 0 || fixture.status === "submitted") {
@@ -2467,10 +2497,9 @@ async function handleApi(req, res, url) {
 
   const acceptTime = p.match(/^\/api\/fixtures\/(\d+)\/accept-time$/);
   if (method === "POST" && acceptTime) {
-    if (!user) return json(res, 401, { ok: false, error: "Login required" });
-    const fixture = db.fixtures.find((f) => f.id === Number(acceptTime[1]));
-    if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
-    if (fixture.homeId !== user.id && fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Not your match" });
+    const owned = playerOwnedFixture(db, user, acceptTime[1]);
+    if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
+    const fixture = owned.fixture;
     if (fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Only the visiting player can accept the proposed time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
     if (!fixture.proposedDate || !fixture.proposedTime || !fixture.proposedBy) {
@@ -2919,6 +2948,7 @@ async function handleApi(req, res, url) {
         date: body.date || new Date().toISOString().slice(0, 10),
         time: String(body.time || "").slice(0, 5),
         skipVisitorAccept: flagOn(body.skipVisitorAccept),
+        weekStart: body.date || new Date().toISOString().slice(0, 10),
       });
       db.fixtures.push(fixture);
       writeDb(db);
@@ -2980,6 +3010,7 @@ async function handleApi(req, res, url) {
             homeId: m.homeId,
             awayId: m.awayId,
             date,
+            weekStart: date,
           });
           db.fixtures.push(fixture);
           created.push(fixture);

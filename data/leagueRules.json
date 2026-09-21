@@ -172,10 +172,10 @@
           "id": "4.1",
           "title": "Fixture Publication",
           "blocks": [
-            {
-              "type": "p",
-              "text": "All fixtures are published and managed exclusively via the official TSH website."
-            }
+    {
+      "type": "p",
+      "text": "All fixtures are published and managed exclusively via the official TSH website. Fixtures are released week by week. Each week's fixtures appear at 12:00am GMT on the Sunday that week begins."
+    }
           ]
         },
         {
