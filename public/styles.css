@@ -1111,3 +1111,92 @@ input, select, textarea {
   width: 100%;
 }
 
+.structure-folds {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.structure-fold {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.15);
+}
+.structure-fold + .structure-fold,
+.structure-folds + .structure-fold {
+  margin-top: 0.5rem;
+}
+.structure-fold > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.9rem;
+  touch-action: manipulation;
+}
+.structure-fold > summary::-webkit-details-marker,
+.structure-fold > summary::marker {
+  display: none;
+  content: "";
+}
+.structure-fold > summary::after {
+  content: "▾";
+  color: #e8b425;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.structure-fold[open] > summary::after {
+  transform: rotate(180deg);
+}
+.structure-fold-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  min-width: 0;
+}
+.structure-fold-title {
+  font-weight: 700;
+}
+.structure-fold-meta {
+  color: #999999;
+  font-size: 0.75rem;
+}
+.structure-fold-body {
+  padding: 0 0.9rem 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.structure-fold-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.7rem 0 0.25rem;
+}
+.structure-div-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.875rem;
+}
+.structure-add-div,
+.structure-add-region-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+@media (min-width: 768px) {
+  .structure-add-div {
+    grid-template-columns: 1fr 1fr auto;
+  }
+  .structure-add-region-form {
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+  }
+}
+

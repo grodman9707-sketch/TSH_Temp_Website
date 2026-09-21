@@ -75,6 +75,7 @@ const parsed = spawnSync(process.execPath, ["--check", path.join(root, "public/a
 check("app.js parses so the site is not a black screen", parsed.status === 0);
 if (parsed.status !== 0 && parsed.stderr) console.error(parsed.stderr);
 check("Owner desk has structure manager", appJs.includes("Regions, leagues") && appJs.includes("ADDREGIONAL") && appJs.includes("ADDLEAGUE"));
+check("structure manager uses dropdowns", appJs.includes("structure-fold") && appJs.includes("<details") && appJs.includes("structureDeskHtml"));
 check("structure forms are owner-only", appJs.includes("Only owners can add or remove a region, league, or division"));
 check("head admins do not get structure controls", /isHeadAdmin && !d.isOwner/.test(appJs) && appJs.includes("data-form=\"ADDREGIONAL\""));
 
