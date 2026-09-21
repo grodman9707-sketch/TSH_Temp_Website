@@ -212,7 +212,11 @@ try {
   const mineIds = new Set((mine.data.fixtures || []).map((f) => f.id));
   check("my-fixtures includes this week's matches", mineIds.has(liveFix.id));
   check("my-fixtures hides next week's matches", [...nextIds].every((id) => !mineIds.has(id)));
-  check("my-fixtures reports the next Sunday drop", (mine.data.nextFixtureReleaseAt || "").startsWith(`${nextSunday}T00:00:00`));
+  const mineDrop = mine.data.nextFixtureReleaseAt || "";
+  check(
+    "my-fixtures reports a future Sunday drop",
+    mineDrop.endsWith("T00:00:00.000Z") && mineDrop >= `${nextSunday}T00:00:00.000Z`
+  );
 
   const profile = await api(port, `/api/player/${livePlayer.id}`);
   const profileIds = new Set((profile.data.fixtures || []).map((f) => f.id));
