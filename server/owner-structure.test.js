@@ -1,6 +1,6 @@
 // Owner-only add/remove for regions, leagues, and divisions.
 // Run: `node server/owner-structure.test.js`
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -71,6 +71,9 @@ function startServer(dataDir, port) {
 }
 
 const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
+const parsed = spawnSync(process.execPath, ["--check", path.join(root, "public/app.js")], { encoding: "utf8" });
+check("app.js parses so the site is not a black screen", parsed.status === 0);
+if (parsed.status !== 0 && parsed.stderr) console.error(parsed.stderr);
 check("Owner desk has structure manager", appJs.includes("Regions, leagues") && appJs.includes("ADDREGIONAL") && appJs.includes("ADDLEAGUE"));
 check("structure forms are owner-only", appJs.includes("Only owners can add or remove a region, league, or division"));
 check("head admins do not get structure controls", /isHeadAdmin && !d.isOwner/.test(appJs) && appJs.includes("data-form=\"ADDREGIONAL\""));
