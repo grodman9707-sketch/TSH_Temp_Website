@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
+import { appendStaffLog, staffLogPayload } from "./staffLog.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
@@ -220,6 +221,9 @@ function readDb() {
 function writeDb(db) {
   writeJson(dbPath, db);
   scheduleOffsiteSync(() => readDb());
+}
+function recordStaff(db, actor, action, extra = {}) {
+  appendStaffLog(db, actor, { action, ...extra });
 }
 function publicUser(u, db) {
   const { password, avatarFile, passwordReset, ...rest } = u;
@@ -1218,6 +1222,10 @@ function migrate(db) {
   }
   if (!Array.isArray(db.leagueRequests)) {
     db.leagueRequests = [];
+    changed = true;
+  }
+  if (!Array.isArray(db.staffLog)) {
+    db.staffLog = [];
     changed = true;
   }
   for (const u of db.users) {
@@ -2642,6 +2650,10 @@ async function handleApi(req, res, url) {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     if (!isStaff(user)) return json(res, 403, { ok: false, error: "Forbidden" });
     if (method === "GET" && p === "/api/admin/me") return json(res, 200, { ok: true, user: publicUser(user, db) });
+    if (method === "GET" && p === "/api/admin/activity") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Forbidden" });
+      return json(res, 200, { ok: true, ...staffLogPayload(db) });
+    }
     if (method === "GET" && p === "/api/admin/notifications/config") {
       return json(res, 200, { ok: true, ...emailConfigStatus() });
     }
@@ -2803,6 +2815,7 @@ async function handleApi(req, res, url) {
         sortOrder,
       };
       db.regionals.push(regional);
+      recordStaff(db, user, "add_region", { summary: `Added region ${regional.name}` });
       persistDb(db);
       return json(res, 200, { ok: true, regional, structure: publicStructure(db) });
     }
@@ -2828,6 +2841,7 @@ async function handleApi(req, res, url) {
         regional.comingSoon = truthyFlag(body.comingSoon);
         regional.active = !regional.comingSoon;
       }
+      recordStaff(db, user, "update_region", { summary: `Updated region ${regional.name}` });
       persistDb(db);
       return json(res, 200, { ok: true, regional, structure: publicStructure(db) });
     }
@@ -2838,7 +2852,9 @@ async function handleApi(req, res, url) {
       if (isInternationalRegional(regional)) {
         return json(res, 400, { ok: false, error: "The International League cannot be removed" });
       }
+      const regionalName = regional.name;
       wipeRegional(db, regional.id);
+      recordStaff(db, user, "delete_region", { summary: `Removed region ${regionalName}` });
       persistDb(db);
       return json(res, 200, { ok: true, structure: publicStructure(db) });
     }
@@ -2862,6 +2878,10 @@ async function handleApi(req, res, url) {
           : Math.max(-1, ...siblings.map((l) => Number(l.sortOrder) || 0)) + 1,
       };
       db.leagues.push(league);
+      recordStaff(db, user, "add_division", {
+        summary: `Added division ${leagueTitle(db, league)}`,
+        leagueId: league.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) }, structure: publicStructure(db) });
     }
@@ -2874,7 +2894,12 @@ async function handleApi(req, res, url) {
       if (isInternationalRegional(regional) && siblingCount <= 1) {
         return json(res, 400, { ok: false, error: "The International League must keep at least one division" });
       }
+      const removedTitle = leagueTitle(db, league);
       wipeLeague(db, league.id);
+      recordStaff(db, user, "delete_division", {
+        summary: `Removed division ${removedTitle}`,
+        leagueId: league.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, structure: publicStructure(db) });
     }
@@ -2885,6 +2910,10 @@ async function handleApi(req, res, url) {
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       if (isOwner(u)) return json(res, 400, { ok: false, error: "Already an owner" });
       addRole(u, "owner");
+      recordStaff(db, user, "assign_owner", {
+        summary: `Made ${u.name} an owner`,
+        targetUserId: u.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -2896,6 +2925,11 @@ async function handleApi(req, res, url) {
       if (adminLeagueIds(u).includes(league.id)) return json(res, 400, { ok: false, error: "Already the admin of that division" });
       u.adminLeagueIds = [...adminLeagueIds(u), league.id];
       syncAdminLeagues(u);
+      recordStaff(db, user, "assign_admin", {
+        summary: `Assigned ${u.name} as Division Admin of ${leagueTitle(db, league)}`,
+        leagueId: league.id,
+        targetUserId: u.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -2905,6 +2939,10 @@ async function handleApi(req, res, url) {
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       if (isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Already a head admin" });
       addRole(u, "head_admin");
+      recordStaff(db, user, "assign_head_admin", {
+        summary: `Made ${u.name} a Head Admin`,
+        targetUserId: u.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -2916,6 +2954,10 @@ async function handleApi(req, res, url) {
         if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove Head Admins" });
         if (!isHeadAdmin(u)) return json(res, 400, { ok: false, error: "Not a head admin" });
         removeRole(u, "head_admin");
+        recordStaff(db, user, "revoke_head_admin", {
+          summary: `Removed ${u.name} as Head Admin`,
+          targetUserId: u.id,
+        });
         persistDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
@@ -2930,6 +2972,10 @@ async function handleApi(req, res, url) {
         }
         const request = { id: nextId(db.approvals), kind: "remove_owner", targetUserId: u.id, leagueId: null, requestedById: user.id, createdAt: new Date().toISOString() };
         db.approvals.push(request);
+        recordStaff(db, user, "request_remove_owner", {
+          summary: `Asked ${u.name} to approve owner removal`,
+          targetUserId: u.id,
+        });
         writeDb(db);
         return json(res, 200, { ok: true, pending: true, approval: publicApproval(request, db) });
       }
@@ -2940,6 +2986,11 @@ async function handleApi(req, res, url) {
         u.adminLeagueIds = adminLeagueIds(u).filter((id) => id !== leagueId);
         if (!leagueId) u.adminLeagueIds = [];
         syncAdminLeagues(u);
+        recordStaff(db, user, "revoke_admin", {
+          summary: `Removed ${u.name} as Division Admin`,
+          leagueId: leagueId || null,
+          targetUserId: u.id,
+        });
         persistDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
@@ -2950,6 +3001,11 @@ async function handleApi(req, res, url) {
         }
         const request = { id: nextId(db.approvals), kind: "remove_division_admin", targetUserId: u.id, leagueId: leagueId || null, requestedById: user.id, createdAt: new Date().toISOString() };
         db.approvals.push(request);
+        recordStaff(db, user, "request_remove_admin", {
+          summary: `Requested removal of ${u.name} as Division Admin`,
+          leagueId: leagueId || null,
+          targetUserId: u.id,
+        });
         writeDb(db);
         return json(res, 200, { ok: true, pending: true, approval: publicApproval(request, db) });
       }
@@ -2968,6 +3024,11 @@ async function handleApi(req, res, url) {
       if (action === "reject") {
         if (!isApprover && !isRequester) return json(res, 403, { ok: false, error: "You cannot dismiss this request" });
         db.approvals.splice(idx, 1);
+        recordStaff(db, user, "reject_removal", {
+          summary: `Dismissed ${a.kind === "remove_owner" ? "owner" : "admin"} removal${target ? ` for ${target.name}` : ""}`,
+          targetUserId: a.targetUserId,
+          leagueId: a.leagueId || null,
+        });
         writeDb(db);
         return json(res, 200, { ok: true, dismissed: true });
       }
@@ -2988,6 +3049,11 @@ async function handleApi(req, res, url) {
         syncAdminLeagues(target);
       }
       db.approvals.splice(idx, 1);
+      recordStaff(db, user, "approve_removal", {
+        summary: `Approved ${a.kind === "remove_owner" ? "owner" : "admin"} removal of ${target.name}`,
+        targetUserId: target.id,
+        leagueId: a.leagueId || null,
+      });
       persistDb(db);
       return json(res, 200, { ok: true, user: publicUser(target, db) });
     }
@@ -3005,6 +3071,11 @@ async function handleApi(req, res, url) {
         request.status = "dismissed";
         request.resolvedAt = new Date().toISOString();
         request.resolvedById = user.id;
+        recordStaff(db, user, "dismiss_request", {
+          summary: `Dismissed ${request.kind} request from ${u.name}`,
+          targetUserId: u.id,
+          leagueId: request.leagueId || null,
+        });
         writeDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
@@ -3028,6 +3099,11 @@ async function handleApi(req, res, url) {
       request.resolvedAt = new Date().toISOString();
       request.resolvedById = user.id;
       resolveMatchingLeagueRequests(db, u);
+      recordStaff(db, user, "resolve_request", {
+        summary: `Marked ${request.kind} request from ${u.name} done`,
+        targetUserId: u.id,
+        leagueId: request.leagueId || null,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -3043,6 +3119,11 @@ async function handleApi(req, res, url) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
       resolveMatchingLeagueRequests(db, u);
+      recordStaff(db, user, "place_player", {
+        summary: `Placed ${u.name} in ${leagueTitle(db, league)}`,
+        leagueId: league.id,
+        targetUserId: u.id,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db), fullyPlaced: isFullyPlaced(db, u) });
     }
@@ -3068,6 +3149,11 @@ async function handleApi(req, res, url) {
         weekStart: body.date || new Date().toISOString().slice(0, 10),
       });
       db.fixtures.push(fixture);
+      recordStaff(db, user, "create_fixture", {
+        summary: `Created ${shotByName(db, home.id)} vs ${shotByName(db, away.id)} (week ${fixture.week})`,
+        leagueId,
+        fixtureId: fixture.id,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
@@ -3133,6 +3219,10 @@ async function handleApi(req, res, url) {
           created.push(fixture);
         }
       });
+      recordStaff(db, user, "generate_fixtures", {
+        summary: `Generated ${created.length} fixture${created.length === 1 ? "" : "s"} (${weeks.length} weeks) in ${leagueTitle(db, league)}`,
+        leagueId,
+      });
       writeDb(db);
       return json(res, 200, {
         ok: true,
@@ -3166,6 +3256,15 @@ async function handleApi(req, res, url) {
         fixture.overwrittenBy = user.id;
         fixture.overwrittenAt = fixture.confirmedAt;
       }
+      const pair = `${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`;
+      const score = `${Number(body.homeLegs)}–${Number(body.awayLegs)}`;
+      recordStaff(db, user, wasPlayed ? "override_result" : "approve_result", {
+        summary: wasPlayed
+          ? `Changed result for ${pair} to ${score}`
+          : `Approved ${pair} ${score}`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
@@ -3208,6 +3307,11 @@ async function handleApi(req, res, url) {
         avatarUpdatedAt: null,
       };
       db.users.push(created);
+      recordStaff(db, user, "create_player", {
+        summary: `Created player ${created.name}`,
+        targetUserId: created.id,
+        leagueId: created.leagueId || null,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(created, db) });
     }
@@ -3228,6 +3332,11 @@ async function handleApi(req, res, url) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
       resolveMatchingLeagueRequests(db, u);
+      recordStaff(db, user, "unplace_player", {
+        summary: leagueId ? `Unplaced ${u.name} from ${leagueTitle(db, db.leagues.find((l) => l.id === leagueId) || { name: "league" })}` : `Unplaced ${u.name} from all leagues`,
+        targetUserId: u.id,
+        leagueId: leagueId || null,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, user: publicUser(u, db) });
     }
@@ -3241,6 +3350,10 @@ async function handleApi(req, res, url) {
       db.applications = db.applications.filter((a) => a.userId !== u.id);
       db.adminProfiles = (db.adminProfiles || []).filter((p) => Number(p.userId) !== Number(u.id));
       db.users = db.users.filter((x) => x.id !== u.id);
+      recordStaff(db, user, "delete_player", {
+        summary: `Deleted player ${u.name}`,
+        targetUserId: u.id,
+      });
       persistDb(db);
       return json(res, 200, { ok: true });
     }
@@ -3254,6 +3367,11 @@ async function handleApi(req, res, url) {
       fixture.status = shotCount(fixture) >= 2 ? "submitted" : "scheduled";
       fixture.confirmedBy = null;
       fixture.confirmedAt = null;
+      recordStaff(db, user, "clear_result", {
+        summary: `Cleared result for ${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
@@ -3270,6 +3388,10 @@ async function handleApi(req, res, url) {
       }
       const ids = new Set(toRemove.map((f) => f.id));
       db.fixtures = db.fixtures.filter((f) => !ids.has(f.id));
+      recordStaff(db, user, "clear_league", {
+        summary: `Cleared ${toRemove.length} fixture${toRemove.length === 1 ? "" : "s"} from ${leagueTitle(db, league)}${season ? ` season ${season}` : ""}`,
+        leagueId,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, removed: toRemove.length });
     }
@@ -3279,6 +3401,11 @@ async function handleApi(req, res, url) {
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
       fixture.skipVisitorAccept = flagOn(body.skipVisitorAccept);
+      recordStaff(db, user, "skip_accept", {
+        summary: `${fixture.skipVisitorAccept ? "Skipped" : "Restored"} visitor accept for ${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
@@ -3290,6 +3417,11 @@ async function handleApi(req, res, url) {
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       removeUpload(shotFile(fixture, 1));
       removeUpload(shotFile(fixture, 2));
+      recordStaff(db, user, "delete_fixture", {
+        summary: `Deleted ${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
       db.fixtures = db.fixtures.filter((f) => f.id !== id);
       writeDb(db);
       return json(res, 200, { ok: true });
@@ -3307,6 +3439,9 @@ async function handleApi(req, res, url) {
         postedById: user.id,
       };
       db.announcements.unshift(item);
+      recordStaff(db, user, "post_news", {
+        summary: `Posted news “${title.slice(0, 80)}”`,
+      });
       writeDb(db);
       return json(res, 200, { ok: true, announcement: item });
     }
@@ -3317,6 +3452,9 @@ async function handleApi(req, res, url) {
       const found = db.announcements.find((a) => a.id === id);
       if (!found) return json(res, 404, { ok: false, error: "Announcement not found" });
       db.announcements = db.announcements.filter((a) => a.id !== id);
+      recordStaff(db, user, "delete_news", {
+        summary: `Deleted news “${String(found.title || "").slice(0, 80)}”`,
+      });
       writeDb(db);
       return json(res, 200, { ok: true });
     }
