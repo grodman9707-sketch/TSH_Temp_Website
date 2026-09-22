@@ -597,6 +597,7 @@ function screenshotUploader(f) {
   const ready = Boolean(draft[1] && draft[2]);
   return `<form class="space-y-3" data-form="UPLOADBOTH" data-id="${f.id}">
     <p class="text-xs text-muted">Upload both DartCounter screenshots and type the match stats. The other player then verifies the numbers. They only hit the league table after an admin approves.</p>
+    ${f.resubmitRequested ? `<p class="text-xs gold">An admin declined the last stats${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}. Submit them again.</p>` : ""}
     ${f.statsDisputeNote ? `<p class="text-xs gold">Last submission was sent back${f.statsDisputeNote ? `: ${esc(f.statsDisputeNote)}` : "."} Submit again.</p>` : ""}
     <label class="shot-card block">
       <div class="text-[11px] font-bold tracking-widest text-muted">SCREENSHOT 1 OF 2</div>
@@ -1388,6 +1389,7 @@ async function pageLeague(slug, id) {
                           <div class="min-w-0">
                             <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
                             <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                            ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
                             ${proposalLine}
                             ${actions}
                           </div>
@@ -1826,6 +1828,7 @@ async function pageMyMatches() {
             return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_260px] md:items-start ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · ${esc(fixtureWhen(f))}</div>
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ". Submit the screenshots and stats again."}</div>` : ""}
                 <div class="mt-1 text-xs text-muted">${
                   isByeFixture(f)
                     ? "Bye week. No match to arrange."
@@ -2249,7 +2252,7 @@ function manageFixturesDesk(d, allLeagueOptions) {
             .map(
               (f) =>
                 `<div class="structure-div-row">
-                  <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}</span>
+                  <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}${f.resubmitRequested ? " · resubmit requested" : ""}</span>
                   <div class="flex flex-wrap gap-2">
                     ${
                       f.status !== "played"
@@ -2517,7 +2520,15 @@ async function pageAdmin() {
       ${headAdminSection}
       ${panel(`<h2 class="text-lg font-bold">Approve match stats</h2>
         <p class="mt-1 text-sm text-muted">Pick a match after both players have agreed the numbers. Screenshots are on the left. Check them, then save. Stats only hit the league table, 180s, and averages after you approve.</p>
-        ${statsDesk(review, state.selectedResultId, { formKind: "CONFIRM", buttonLabel: "APPROVE & SAVE TO TABLE", emptyText: "No player-verified results waiting." })}`, "mt-6")}
+        ${statsDesk(review, state.selectedResultId, {
+          formKind: "CONFIRM",
+          buttonLabel: "APPROVE & SAVE TO TABLE",
+          emptyText: "No player-verified results waiting.",
+          actions: (f) => `<form class="mt-3 space-y-2" data-form="DECLINESTATS" data-id="${f.id}">
+            <input name="note" maxlength="400" placeholder="Optional note for the players">
+            <button class="btn-ghost w-full">DECLINE & REQUEST RESUBMIT</button>
+          </form>`,
+        })}`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Pending sign-ups</h2>${
         pending.length
           ? pending
@@ -3260,6 +3271,11 @@ document.addEventListener("submit", async (e) => {
       if (!window.confirm("Delete this player and all of their matches? This cannot be undone.")) return;
       await api("/api/admin/delete-player", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Player deleted.";
+      render();
+    } else if (kind === "DECLINESTATS") {
+      await api(`/api/admin/fixtures/${form.dataset.id}/decline-stats`, { method: "POST", body: JSON.stringify({ note: fd.note || "" }) });
+      state.selectedResultId = null;
+      state.notice = "Stats declined. That fixture now has a resubmit request.";
       render();
     } else if (kind === "OVERRIDE" || kind === "SAVE STATS") {
       await api(`/api/admin/fixtures/${form.dataset.id}/result`, { method: "POST", body: JSON.stringify(fd) });

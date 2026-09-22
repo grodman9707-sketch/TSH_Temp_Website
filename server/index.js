@@ -1451,6 +1451,10 @@ function migrate(db) {
       f.statsDisputeNote = "";
       changed = true;
     }
+    if (!("resubmitRequest" in f) || (f.resubmitRequest && typeof f.resubmitRequest !== "object")) {
+      f.resubmitRequest = null;
+      changed = true;
+    }
     if (!("bye" in f)) {
       f.bye = false;
       changed = true;
@@ -1597,6 +1601,10 @@ function withNames(db, f) {
     awaitingOpponentVerify: f.status === "pending_verify",
     opponentVerified: Boolean(f.opponentVerifiedAt) || f.status === "submitted",
     resultSubmittedByName: shotByName(db, f.resultSubmittedBy),
+    resubmitRequested: Boolean(f.resubmitRequest),
+    resubmitNote: f.resubmitRequest?.note || "",
+    resubmitRequestedAt: f.resubmitRequest?.requestedAt || "",
+    resubmitRequestedByName: shotByName(db, f.resubmitRequest?.requestedBy),
     needsConfirm: f.status === "submitted",
     scheduleAcceptRequired: !skipsVisitorAccept(db, f),
     scheduleAgreed: f.scheduleStatus === "agreed" || skipsVisitorAccept(db, f),
@@ -1655,6 +1663,7 @@ function newFixture(partial) {
     opponentVerifiedBy: null,
     opponentVerifiedAt: null,
     statsDisputeNote: "",
+    resubmitRequest: null,
     bye: false,
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
@@ -2526,6 +2535,7 @@ async function handleApi(req, res, url) {
     fixture.opponentVerifiedBy = null;
     fixture.opponentVerifiedAt = null;
     fixture.statsDisputeNote = "";
+    fixture.resubmitRequest = null;
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
@@ -3265,6 +3275,30 @@ async function handleApi(req, res, url) {
         fixtures: created.map((f) => withNames(db, f)),
       });
     }
+    const declineStats = p.match(/^\/api\/admin\/fixtures\/(\d+)\/decline-stats$/);
+    if (method === "POST" && declineStats) {
+      const fixture = db.fixtures.find((f) => f.id === Number(declineStats[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      if (fixture.status !== "submitted") {
+        return json(res, 400, { ok: false, error: "Only player-verified stats can be declined" });
+      }
+      const note = String(body.note || "").trim().slice(0, 400);
+      clearResultSubmission(fixture);
+      fixture.resubmitRequest = {
+        requestedBy: user.id,
+        requestedAt: new Date().toISOString(),
+        note,
+      };
+      const pair = `${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`;
+      recordStaff(db, user, "decline_stats", {
+        summary: `Declined stats for ${pair} and asked them to resubmit`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    }
     const confirmMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/result$/);
     if (method === "POST" && confirmMatch) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
@@ -3286,6 +3320,7 @@ async function handleApi(req, res, url) {
       fixture.confirmedBy = user.id;
       fixture.confirmedAt = new Date().toISOString();
       fixture.extractedStats = fixture.extractedStats ? { ...fixture.extractedStats, pending: false, verifiedBy: user.id, verifiedAt: fixture.confirmedAt } : null;
+      fixture.resubmitRequest = null;
       if (canOverride(user) && wasPlayed) {
         fixture.overwrittenBy = user.id;
         fixture.overwrittenAt = fixture.confirmedAt;
