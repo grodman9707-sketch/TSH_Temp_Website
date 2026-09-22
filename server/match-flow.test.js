@@ -280,8 +280,65 @@ try {
   });
   check("opponent can send a result back", dispute.status === 200 && dispute.data.fixture?.status === "scheduled" && dispute.data.fixture?.hasBothScreenshots !== true);
 
+  const declineFix = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 9, week: 3, homeId, awayId, date: "2026-09-10", skipVisitorAccept: true },
+  });
+  check("create fixture for an admin decline", declineFix.status === 200 && declineFix.data.fixture?.id);
+  const declineId = declineFix.data.fixture.id;
+  const declineShot = await api(port, `/api/my-fixtures/${declineId}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG, ...STATS },
+  });
+  check("home submits stats that an admin can decline", declineShot.status === 200 && declineShot.data.fixture?.status === "pending_verify");
+  const declineVerify = await api(port, `/api/fixtures/${declineId}/verify-stats`, { method: "POST", token: awayTok, body: {} });
+  check("opponent verifies stats before admin decline", declineVerify.status === 200 && declineVerify.data.fixture?.status === "submitted");
+  const tooSoonDecline = await api(port, `/api/admin/fixtures/${week1Id}/decline-stats`, { method: "POST", token: ownerTok, body: {} });
+  check("decline only applies to player-verified stats", tooSoonDecline.status === 400);
+
+  const outsiderAdmin = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: { name: "Other Admin", email: "other-admin-flow@test.com", password: "pass1234", regional: "international", dartcounterName: "OtherAdminDC", avg: 40 },
+  });
+  const assignOther = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: outsiderAdmin.data.user.id, leagueId: 10 },
+  });
+  check("assign an admin of another division", assignOther.status === 200);
+  const foreignDecline = await api(port, `/api/admin/fixtures/${declineId}/decline-stats`, {
+    method: "POST",
+    token: outsiderAdmin.data.token,
+    body: { note: "Not your division" },
+  });
+  check("another division's admin cannot decline", foreignDecline.status === 403);
+
+  const declined = await api(port, `/api/admin/fixtures/${declineId}/decline-stats`, {
+    method: "POST",
+    token: ownerTok,
+    body: { note: "Checkout does not match the screenshot" },
+  });
+  check(
+    "admin decline clears the result and adds a resubmit request",
+    declined.status === 200 &&
+      declined.data.fixture?.status === "scheduled" &&
+      declined.data.fixture?.resubmitRequested === true &&
+      declined.data.fixture?.resubmitNote === "Checkout does not match the screenshot" &&
+      declined.data.fixture?.hasBothScreenshots !== true &&
+      declined.data.fixture?.needsConfirm === false
+  );
+  const again = await api(port, `/api/my-fixtures/${declineId}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: PNG, image2: PNG, ...STATS },
+  });
+  check("player can resubmit after a decline", again.status === 200 && again.data.fixture?.status === "pending_verify" && again.data.fixture?.resubmitRequested === false);
+
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   check("My Matches still has a propose form", appJs.includes('data-form="PROPOSE"') && appJs.includes("Propose date & time"));
+  check("approve desk can decline and request a resubmit", appJs.includes("DECLINE & REQUEST RESUBMIT") && appJs.includes("decline-stats") && appJs.includes("Resubmit requested"));
   check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
   check("admin can mark skip accept on one existing match", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("/skip-accept"));
   check("result form asks for screenshots and stats", appJs.includes("SUBMIT RESULT") && appJs.includes('data-form="VERIFYSTATS"') && appJs.includes("verify-stats"));
