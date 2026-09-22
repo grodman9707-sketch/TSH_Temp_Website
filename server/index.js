@@ -1455,6 +1455,10 @@ function migrate(db) {
       f.resubmitRequest = null;
       changed = true;
     }
+    if (!("bye" in f)) {
+      f.bye = false;
+      changed = true;
+    }
   }
   if (ensureAdminProfiles(db)) changed = true;
   if (db.preseasonBounty || db.bountyClaims || db.bonusAwards || db.bounty) {
@@ -1573,8 +1577,9 @@ function withNames(db, f) {
   const shot2 = shotFile(f, 2);
   const named = {
     ...f,
-    homeName: db.users.find((u) => u.id === f.homeId)?.name,
-    awayName: db.users.find((u) => u.id === f.awayId)?.name,
+    bye: Boolean(f.bye) || f.status === "bye",
+    homeName: f.homeId ? db.users.find((u) => u.id === f.homeId)?.name : f.bye || f.status === "bye" ? "Bye" : undefined,
+    awayName: f.awayId ? db.users.find((u) => u.id === f.awayId)?.name : f.bye || f.status === "bye" ? "Bye" : undefined,
     homeTz: db.users.find((u) => u.id === f.homeId)?.timezone || "",
     awayTz: db.users.find((u) => u.id === f.awayId)?.timezone || "",
     leagueName: leagueTitle(db, db.leagues.find((l) => l.id === f.leagueId) || { name: "", regionalId: 0 }),
@@ -1659,6 +1664,7 @@ function newFixture(partial) {
     opponentVerifiedAt: null,
     statsDisputeNote: "",
     resubmitRequest: null,
+    bye: false,
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
   };
@@ -1702,6 +1708,7 @@ function pickExtractedStats(body) {
 }
 
 function screenshotUploadError(fixture, db) {
+  if (isByeFixture(fixture)) return "This week is a bye — there is no match to submit";
   if (fixture.status === "played") return "This match is already confirmed";
   if (fixture.status === "submitted" || fixture.status === "pending_verify") {
     return "This result is already submitted. The other player must verify it, or dispute it so it can be sent again";
@@ -1712,6 +1719,9 @@ function screenshotUploadError(fixture, db) {
   return null;
 }
 
+function isByeFixture(fixture) {
+  return Boolean(fixture && (fixture.bye || fixture.status === "bye"));
+}
 function playerResultLocked(fixture) {
   return ["played", "submitted", "pending_verify"].includes(fixture?.status);
 }
@@ -2564,6 +2574,7 @@ async function handleApi(req, res, url) {
     const owned = playerOwnedFixture(db, user, proposeMatch[1]);
     if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
     const fixture = owned.fixture;
+    if (isByeFixture(fixture)) return json(res, 400, { ok: false, error: "This week is a bye — there is no match to schedule" });
     if (fixture.homeId !== user.id) return json(res, 403, { ok: false, error: "Only the home player can propose a date and time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
     if (playerResultLocked(fixture) || shotCount(fixture) > 0) {
@@ -2595,6 +2606,7 @@ async function handleApi(req, res, url) {
     const owned = playerOwnedFixture(db, user, acceptTime[1]);
     if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
     const fixture = owned.fixture;
+    if (isByeFixture(fixture)) return json(res, 400, { ok: false, error: "This week is a bye — there is no match to schedule" });
     if (fixture.awayId !== user.id) return json(res, 403, { ok: false, error: "Only the visiting player can accept the proposed time" });
     if (fixture.status === "played") return json(res, 400, { ok: false, error: "This match is already completed" });
     if (!fixture.proposedDate || !fixture.proposedTime || !fixture.proposedBy) {
@@ -2621,6 +2633,7 @@ async function handleApi(req, res, url) {
     const owned = playerOwnedFixture(db, user, verifyStats[1]);
     if (owned.error) return json(res, owned.status, { ok: false, error: owned.error });
     const fixture = owned.fixture;
+    if (isByeFixture(fixture)) return json(res, 400, { ok: false, error: "This week is a bye — there is no match to verify" });
     if (fixture.status !== "pending_verify") {
       return json(res, 400, { ok: false, error: "There is no submitted result waiting for you to verify" });
     }
@@ -3140,27 +3153,47 @@ async function handleApi(req, res, url) {
     if (method === "POST" && p === "/api/admin/fixtures") {
       const leagueId = Number(body.leagueId);
       if (!managesLeague(user, leagueId)) return json(res, 403, { ok: false, error: "You can only create fixtures in your league" });
-      const home = db.users.find((x) => x.id === Number(body.homeId));
-      const away = db.users.find((x) => x.id === Number(body.awayId));
-      if (!home || !away || home.id === away.id) return json(res, 400, { ok: false, error: "Choose two different players" });
-      if (!inLeague(home, leagueId) || !inLeague(away, leagueId)) {
-        return json(res, 400, { ok: false, error: "Both players must already be placed in that league" });
+      const homeBye = String(body.homeId || "").trim().toLowerCase() === "bye";
+      const awayBye = String(body.awayId || "").trim().toLowerCase() === "bye";
+      if (homeBye && awayBye) return json(res, 400, { ok: false, error: "A bye needs one player" });
+      let home = null;
+      let away = null;
+      if (homeBye || awayBye) {
+        const player = db.users.find((x) => x.id === Number(homeBye ? body.awayId : body.homeId));
+        if (!player) return json(res, 400, { ok: false, error: "Choose the player who has the bye" });
+        if (!inLeague(player, leagueId)) return json(res, 400, { ok: false, error: "That player must already be placed in that league" });
+        if (homeBye) away = player;
+        else home = player;
+      } else {
+        home = db.users.find((x) => x.id === Number(body.homeId));
+        away = db.users.find((x) => x.id === Number(body.awayId));
+        if (!home || !away || home.id === away.id) return json(res, 400, { ok: false, error: "Choose two different players" });
+        if (!inLeague(home, leagueId) || !inLeague(away, leagueId)) {
+          return json(res, 400, { ok: false, error: "Both players must already be placed in that league" });
+        }
       }
+      const bye = homeBye || awayBye;
       const fixture = newFixture({
         id: Math.max(0, ...db.fixtures.map((f) => f.id)) + 1,
         leagueId,
         week: Number(body.week) || 1,
         season: Number(body.season) || 1,
-        homeId: home.id,
-        awayId: away.id,
+        homeId: home?.id || null,
+        awayId: away?.id || null,
+        bye,
+        status: bye ? "bye" : "scheduled",
         date: body.date || new Date().toISOString().slice(0, 10),
-        time: String(body.time || "").slice(0, 5),
-        skipVisitorAccept: flagOn(body.skipVisitorAccept),
+        time: bye ? "" : String(body.time || "").slice(0, 5),
+        skipVisitorAccept: bye ? false : flagOn(body.skipVisitorAccept),
         weekStart: body.date || new Date().toISOString().slice(0, 10),
       });
       db.fixtures.push(fixture);
+      const homeLabel = homeBye ? "Bye" : shotByName(db, home.id);
+      const awayLabel = awayBye ? "Bye" : shotByName(db, away.id);
       recordStaff(db, user, "create_fixture", {
-        summary: `Created ${shotByName(db, home.id)} vs ${shotByName(db, away.id)} (week ${fixture.week})`,
+        summary: bye
+          ? `Added a bye for ${home?.name || away?.name} (week ${fixture.week})`
+          : `Created ${homeLabel} vs ${awayLabel} (week ${fixture.week})`,
         leagueId,
         fixtureId: fixture.id,
       });
@@ -3271,6 +3304,7 @@ async function handleApi(req, res, url) {
       const fixture = db.fixtures.find((f) => f.id === Number(confirmMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      if (isByeFixture(fixture)) return json(res, 400, { ok: false, error: "This week is a bye — there is no match to score" });
       if (!canOverride(user) && fixture.status !== "submitted") {
         return json(res, 400, { ok: false, error: "Wait for the opposing player to verify the submitted stats" });
       }

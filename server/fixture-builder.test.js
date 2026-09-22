@@ -144,6 +144,51 @@ try {
     body: { leagueId: 9, homeId: players[0], awayId: outsider.data.user.id, week: 10 },
   });
   check("individual fixture rejects a player from another division", cross.status === 400);
+
+  check("individual form offers a Bye option", appJs.includes('value="bye"') && appJs.includes(">Bye<") && appJs.includes("Choose Bye on one side"));
+
+  const bye = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 9, homeId: players[0], awayId: "bye", week: 4, date: "2026-08-02" },
+  });
+  check(
+    "individual fixture can be a bye",
+    bye.status === 200 && bye.data.fixture?.bye === true && bye.data.fixture?.status === "bye" && bye.data.fixture?.homeName === "Alpha Player" && bye.data.fixture?.awayName === "Bye" && bye.data.fixture?.awayId == null
+  );
+  const bothBye = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 9, homeId: "bye", awayId: "bye", week: 4, date: "2026-08-02" },
+  });
+  check("a bye needs one player", bothBye.status === 400);
+  const outsiderBye = await api(port, "/api/admin/fixtures", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: 9, homeId: "bye", awayId: outsider.data.user.id, week: 4 },
+  });
+  check("bye rejects a player from another division", outsiderBye.status === 400);
+
+  const byeId = bye.data.fixture.id;
+  const homeTok = (await api(port, "/api/auth/login", { method: "POST", body: { email: "alpha-fix@test.com", password: "pass1234" } })).data.token;
+  const mine = await api(port, "/api/my-fixtures", { token: homeTok });
+  const byeRow = (mine.data.fixtures || []).find((f) => f.id === byeId);
+  check("player sees the bye once that week is released", byeRow?.bye === true && byeRow?.awayName === "Bye");
+  const proposeBye = await api(port, `/api/fixtures/${byeId}/propose`, {
+    method: "POST",
+    token: homeTok,
+    body: { datetime: "2026-08-02T19:00", tz: "Europe/London" },
+  });
+  check("a bye cannot be scheduled", proposeBye.status === 400 && /bye/i.test(proposeBye.data.error || ""));
+  const shotBye = await api(port, `/api/my-fixtures/${byeId}/screenshots`, {
+    method: "POST",
+    token: homeTok,
+    body: { image1: "data:image/png;base64,aaaa", image2: "data:image/png;base64,bbbb", homeLegs: 5, awayLegs: 0 },
+  });
+  check("a bye cannot take a result", shotBye.status === 400 && /bye/i.test(shotBye.data.error || ""));
+  const table = await api(port, "/api/leagues/9");
+  const alpha = (table.data.standings || []).find((r) => r.playerId === players[0]);
+  check("a bye does not add a played match", alpha && alpha.played === 0 && alpha.points === 0);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
