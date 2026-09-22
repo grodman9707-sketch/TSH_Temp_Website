@@ -97,7 +97,7 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
   const weekAhead = startOfToday + WEEK_AHEAD_DAYS * 86400000;
 
   for (const f of db.fixtures || []) {
-    if (f.status === "played") continue;
+    if (f.status === "played" || f.bye || f.status === "bye") continue;
     if (!isFixtureReleased(f, now)) continue;
     if (!f.notify || typeof f.notify !== "object") {
       f.notify = { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
