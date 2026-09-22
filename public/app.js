@@ -2371,7 +2371,8 @@ async function pageAdmin() {
   if (selectedReview && selectedReview.hasBothScreenshots && !hasNumericExtracted(selectedReview.extractedStats)) {
     state._pendingScanId = selectedReview.id;
   }
-  const leagueOptions = d.leagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
+  const deskLeagues = d.canOverride ? d.allLeagues || d.leagues : d.leagues;
+  const leagueOptions = deskLeagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
   const structurePanel = d.isOwner
@@ -2425,7 +2426,7 @@ async function pageAdmin() {
                 .map(
                   (a) =>
                     `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}" data-role="admin" data-league="${a.adminLeagueId || ""}">
-                      <span>${esc(a.name)}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
+                      <span>${esc(a.name)}${hasRole(a, "owner") ? " · Owner" : ""}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
                       <button class="btn-ghost">REMOVE ADMIN</button>
                     </form>`
                 )
@@ -2479,7 +2480,7 @@ async function pageAdmin() {
                 .map(
                   (a) =>
                     `<form class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 py-2 text-sm" data-form="REVOKE" data-id="${a.id}" data-role="admin" data-league="${a.adminLeagueId || ""}">
-                      <span>${esc(a.name)}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
+                      <span>${esc(a.name)}${hasRole(a, "owner") ? " · Owner" : ""}${hasRole(a, "head_admin") ? " · Head Admin" : ""} · ${esc(a.adminLeagueTitle || "Unassigned")}</span>
                       <button class="btn-ghost">REQUEST REMOVAL</button>
                     </form>`
                 )
@@ -2494,7 +2495,7 @@ async function pageAdmin() {
       <h1 class="page-title font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
       <p class="mt-2 text-muted">${
         d.isOwner
-          ? "Promote owners (max 3), add or remove regions and divisions, assign Head Admins and Division Admins, generate seasons, and run the league."
+          ? "You control every division, even when you are also a Division Admin. Promote owners (max 3), add or remove regions and divisions, assign staff, generate seasons, and run the league."
           : d.isHeadAdmin
             ? "Approve player-verified match stats, generate fixtures, and override another admin’s confirmed result when needed."
             : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
@@ -2589,7 +2590,7 @@ async function pageAdmin() {
           const today = new Date().toISOString().slice(0, 10);
           const divisionPlayers = leagueId ? everyone.filter((p) => userLeagueIds(p).includes(Number(leagueId))) : [];
           const pick = (p, selectedId) => playerOption(p).replace("<option ", `<option ${String(p.id) === String(selectedId) ? "selected " : ""}`);
-          const leagueSelect = `<select name="leagueId" data-act="fixture-league" required><option value="">Division</option>${d.leagues
+          const leagueSelect = `<select name="leagueId" data-act="fixture-league" required><option value="">Division</option>${deskLeagues
             .map((l) => `<option value="${l.id}"${String(l.id) === leagueId ? " selected" : ""}>${esc(l.title || l.name)}</option>`)
             .join("")}</select>`;
           const modeSelect = `<select name="mode" data-act="fixture-mode" required>

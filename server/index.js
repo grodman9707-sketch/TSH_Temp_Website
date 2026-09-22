@@ -519,7 +519,7 @@ function normalizeStaffEmail(value) {
 }
 function managesLeague(u, leagueId) {
   if (!u) return false;
-  if (canOverride(u)) return true;
+  if (isOwner(u) || isHeadAdmin(u)) return true;
   return isDivisionAdmin(u) && adminLeagueIds(u).includes(Number(leagueId));
 }
 function ownerCount(db) {
@@ -1902,12 +1902,12 @@ function serveStatic(req, res, urlPath) {
 }
 
 function scopedLeagues(db, user) {
+  if (isOwner(user) || isHeadAdmin(user)) return [...db.leagues].sort(compareLeagueOrder);
   const ids = new Set(adminLeagueIds(user));
-  const scoped = canOverride(user) ? [...db.leagues] : db.leagues.filter((l) => ids.has(l.id));
-  return scoped.sort(compareLeagueOrder);
+  return db.leagues.filter((l) => ids.has(l.id)).sort(compareLeagueOrder);
 }
 function scopedFixtures(db, user) {
-  if (canOverride(user)) return db.fixtures;
+  if (isOwner(user) || isHeadAdmin(user)) return db.fixtures;
   const ids = new Set(adminLeagueIds(user));
   return db.fixtures.filter((f) => ids.has(f.leagueId));
 }
