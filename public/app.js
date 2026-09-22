@@ -525,7 +525,11 @@ async function ocrFixtureStats(fixture, extraSrcs = []) {
   if (!merged.rawText) merged.rawText = joined.slice(0, 4000);
   return merged;
 }
+function isByeFixture(f) {
+  return Boolean(f && (f.bye || f.status === "bye"));
+}
 function fixtureStatus(f) {
+  if (isByeFixture(f)) return `<div class="text-xs font-bold tracking-widest gold">BYE</div>`;
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
   if (f.status === "submitted") return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
   if (f.status === "pending_verify") {
@@ -555,6 +559,9 @@ function shotDraftFor(id) {
   return state.shotDrafts?.[id] || {};
 }
 function screenshotUploader(f) {
+  if (isByeFixture(f)) {
+    return `<div class="text-left sm:text-right"><div class="text-xs font-bold tracking-widest gold">BYE</div><div class="mt-1 text-xs text-muted">No match this week.</div></div>`;
+  }
   if (f.status === "played") return fixtureStatus(f);
   if (f.status === "submitted") {
     return `<div class="text-left sm:text-right"><div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div><div class="mt-1 text-xs text-muted">The other player verified these stats. A division admin will approve them before they count on the table.</div></div>`;
@@ -606,6 +613,7 @@ function screenshotUploader(f) {
   </form>`;
 }
 function scheduleActions(f) {
+  if (isByeFixture(f)) return "";
   if (!inThisMatch(f) || f.status === "played" || f.hasBothScreenshots || f.status === "submitted" || f.status === "pending_verify") return "";
   const home = isHomePlayer(f);
   const away = isAwayPlayer(f);
@@ -1348,16 +1356,20 @@ async function pageLeague(slug, id) {
                     .sort((a, b) => Number(a.week || 0) - Number(b.week || 0) || String(a.date || "").localeCompare(String(b.date || "")))
                     .map((f) => {
                       const mine = inThisMatch(f);
-                      const proposed = f.scheduleStatus === "proposed" && f.proposedDate;
-                      const proposalLine = proposed
+                      const bye = isByeFixture(f);
+                      const proposed = !bye && f.scheduleStatus === "proposed" && f.proposedDate;
+                      const proposalLine = bye
+                        ? `<div class="mt-1 text-xs text-muted">Bye week. No match to play.</div>`
+                        : proposed
                         ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
                             isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
                           }</div>`
                         : scheduleUnlocked(f)
                           ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed: ${esc(scheduleWhen(f))}` : "Week 1 — the result can be submitted without accepting a time."}</div>`
                           : "";
-                      const actions =
-                        mine && f.status !== "played"
+                      const actions = bye
+                        ? ""
+                        : mine && f.status !== "played"
                           ? `<div class="mt-3 flex flex-wrap items-end gap-2">
                               ${scheduleActions(f)}
                               ${
@@ -1815,7 +1827,9 @@ async function pageMyMatches() {
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · ${esc(fixtureWhen(f))}</div>
                 <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
                 <div class="mt-1 text-xs text-muted">${
-                  f.status === "pending_verify"
+                  isByeFixture(f)
+                    ? "Bye week. No match to arrange."
+                    : f.status === "pending_verify"
                     ? needsMyVerify(f)
                       ? "Check the screenshots and stats, then verify or send them back."
                       : "Waiting for the other player to verify these stats."
@@ -1824,7 +1838,9 @@ async function pageMyMatches() {
                     : `${f.screenshotCount || 0}/2 screenshots uploaded`
                 }</div>
                 ${
-                  f.status === "submitted"
+                  isByeFixture(f)
+                    ? ""
+                    : f.status === "submitted"
                     ? `<div class="mt-1 text-xs gold">Awaiting admin approval. Stats hit the table after that.</div>`
                     : f.status === "pending_verify"
                     ? ""
@@ -1866,7 +1882,7 @@ async function pagePlayer(id) {
         <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
       ${Number(state.user?.id) === Number(d.player?.id) ? panel(`<h2 class="text-lg font-bold">Player profile</h2>${leagueChangeInner(state.user)}`, "mt-6") : ""}
       <div class="mt-4 space-y-3">${d.fixtures
-        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 font-bold gold">${f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div>`))
+        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div>`))
         .join("")}</div>
     </div>`,
     { arena: true }
@@ -2552,7 +2568,7 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Fixtures</h2>
         <p class="mt-1 text-sm text-muted">${
           (state.fixtureBuilder?.mode || "season") === "individual"
-            ? "Create one match between two players already placed in the chosen division."
+            ? "Create one match between two players already placed in the chosen division. Choose Bye on one side to give a player that week off."
             : "Builds a round-robin so every player in the division meets every other player. Odd numbers get a bye that week. Weeks are seven days apart. Players only see each week from 12:00am GMT on that week's Sunday. Existing pairings for that season are skipped unless you replace unplayed matches."
         }</p>
         ${(() => {
@@ -2578,14 +2594,16 @@ async function pageAdmin() {
               <label class="check-row"><input type="checkbox" name="replaceScheduled" value="1"${fb.replaceScheduled ? " checked" : ""}> Replace unplayed fixtures this season</label>
             `;
           } else if (leagueId) {
+            const byeOption = (selectedId) => `<option value="bye"${String(selectedId) === "bye" ? " selected" : ""}>Bye</option>`;
             extra = `
-              <select name="homeId" required><option value="">Home player</option>${divisionPlayers.map((p) => pick(p, fb.homeId)).join("")}</select>
-              <select name="awayId" required><option value="">Away player</option>${divisionPlayers.map((p) => pick(p, fb.awayId)).join("")}</select>
+              <select name="homeId" required><option value="">Home player</option>${byeOption(fb.homeId)}${divisionPlayers.map((p) => pick(p, fb.homeId)).join("")}</select>
+              <select name="awayId" required><option value="">Away player</option>${byeOption(fb.awayId)}${divisionPlayers.map((p) => pick(p, fb.awayId)).join("")}</select>
               <input name="week" value="${esc(fb.week || "1")}" placeholder="Week">
               <input name="date" type="date" value="${esc(fb.date || "")}">
               <input name="season" type="hidden" value="${esc(fb.season || "1")}">
               <label class="check-row md:col-span-2"><input type="checkbox" name="skipVisitorAccept" value="1"${fb.skipVisitorAccept ? " checked" : ""}> Skip visitor accept for this match only (the result can be submitted without ACCEPT TIME)</label>
-              ${divisionPlayers.length < 2 ? `<p class="text-sm text-muted md:col-span-2">Place at least two players in this division first.</p>` : ""}
+              <p class="text-sm text-muted md:col-span-2">Choose Bye on one side to give that player a week off.</p>
+              ${divisionPlayers.length < 1 ? `<p class="text-sm text-muted md:col-span-2">Place at least one player in this division first.</p>` : ""}
             `;
           } else {
             extra = `<p class="text-sm text-muted md:col-span-2">Choose a division to pick the two players.</p>`;
@@ -2594,7 +2612,7 @@ async function pageAdmin() {
             ${modeSelect}
             ${leagueSelect}
             ${extra}
-            <button class="btn-gold md:col-span-2"${mode === "individual" && (!leagueId || divisionPlayers.length < 2) ? " disabled" : ""}>${mode === "individual" ? "ADD FIXTURE" : "GENERATE FIXTURES"}</button>
+            <button class="btn-gold md:col-span-2"${mode === "individual" && (!leagueId || divisionPlayers.length < 1) ? " disabled" : ""}>${mode === "individual" ? "ADD FIXTURE" : "GENERATE FIXTURES"}</button>
           </form>`;
         })()}`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
@@ -3218,7 +3236,12 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE" || (kind === "FIXTURES" && fd.mode === "individual")) {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = fd.skipVisitorAccept ? "Fixture created. Visitor accept is skipped for this match only." : "Fixture created.";
+      const bye = String(fd.homeId) === "bye" || String(fd.awayId) === "bye";
+      state.notice = bye
+        ? "Bye added for that week."
+        : fd.skipVisitorAccept
+          ? "Fixture created. Visitor accept is skipped for this match only."
+          : "Fixture created.";
       render();
     } else if (kind === "SKIPACCEPT") {
       await api(`/api/admin/fixtures/${form.dataset.id}/skip-accept`, { method: "POST", body: JSON.stringify(fd) });
