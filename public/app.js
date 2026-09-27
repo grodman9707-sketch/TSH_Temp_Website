@@ -2080,11 +2080,12 @@ function staffWhen(iso) {
 }
 function staffActivityPanel(activity) {
   if (!activity) {
-    return panel(
-      `<h2 class="text-lg font-bold">Staff activity</h2>
-      <p class="mt-1 text-sm text-muted">Owners only. Could not load the private admin log.</p>`,
-      "mt-6"
-    );
+    return collapsiblePanel({
+      id: "staff-activity",
+      title: "Staff activity",
+      extra: "mt-6",
+      body: `<p class="mt-1 text-sm text-muted">Owners only. Could not load the private admin log.</p>`,
+    });
   }
   const summary = activity.summary || {};
   const byActor = Array.isArray(summary.byActor) ? summary.byActor : [];
@@ -2119,20 +2120,27 @@ function staffActivityPanel(activity) {
         )
         .join("")
     : `<p class="text-sm text-muted">No admin work logged yet. Approvals, stat changes, placements, and other desk actions will show here.</p>`;
-  return panel(
-    `<h2 class="text-lg font-bold">Staff activity</h2>
-      <p class="mt-1 text-sm text-muted">Private to owners. Head Admins and Division Admins cannot see this. Use it to check how often staff are approving matches, changing stats, and keeping the league moving.</p>
-      <p class="mt-2 text-xs text-muted">${summary.approvals7d || 0} match approval${summary.approvals7d === 1 ? "" : "s"} in 7 days · ${summary.approvals30d || 0} in 30 days · ${summary.totalEntries || 0} logged action${summary.totalEntries === 1 ? "" : "s"}</p>
+  const approvals7d = summary.approvals7d || 0;
+  return collapsiblePanel({
+    id: "staff-activity",
+    title: "Staff activity",
+    extra: "mt-6",
+    meta: `${approvals7d} approval${approvals7d === 1 ? "" : "s"} in 7 days`,
+    body: `<p class="mt-1 text-sm text-muted">Private to owners. Head Admins and Division Admins cannot see this. Use it to check how often staff are approving matches, changing stats, and keeping the league moving.</p>
+      <p class="mt-2 text-xs text-muted">${approvals7d} match approval${approvals7d === 1 ? "" : "s"} in 7 days · ${summary.approvals30d || 0} in 30 days · ${summary.totalEntries || 0} logged action${summary.totalEntries === 1 ? "" : "s"}</p>
       <div class="table-wrap staff-activity mt-4 rounded-lg">
         <table>
           <thead><tr>${["Staff", "Role", "Last action", "Approvals 7d", "Approvals 30d", "Stat changes 30d", "Actions 7d / 30d"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <h3 class="mt-5 text-sm font-bold tracking-widest text-muted">RECENT LOG</h3>
-      <div class="staff-log mt-2">${log}</div>`,
-    "mt-6"
-  );
+      <div class="mt-5">${deskFold({
+        id: "staff-recent-log",
+        title: "Recent log",
+        meta: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}`,
+        body: `<div class="staff-log">${log}</div>`,
+      })}</div>`,
+  });
 }
 function rememberStructureOpen(id) {
   const n = Number(id);
@@ -2190,8 +2198,7 @@ function structureDeskHtml(regionals, openIds, addOpen) {
   const folds = regionals.length
     ? regionals.map((r) => structureRegionFold(r, ids)).join("")
     : `<p class="text-sm text-muted">No regions yet.</p>`;
-  return `<h2 class="text-lg font-bold">Regions, leagues &amp; divisions</h2>
-    <p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Open a dropdown to manage one. The International League cannot be removed, and it must keep at least one division.</p>
+  return `<p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Open a dropdown to manage one. The International League cannot be removed, and it must keep at least one division.</p>
     <div class="structure-folds">${folds}</div>
     <details class="structure-fold structure-add-region"${addOpen ? " open" : ""}>
       <summary><span class="structure-fold-title">Add a region or league</span></summary>
@@ -2206,6 +2213,23 @@ function structureDeskHtml(regionals, openIds, addOpen) {
 }
 function deskFoldOpen(id) {
   return Boolean(state.deskFolds?.[id]);
+}
+function deskBoxOpen(id, fallback = false) {
+  const folds = state.deskFolds || {};
+  if (Object.prototype.hasOwnProperty.call(folds, id)) return Boolean(folds[id]);
+  return fallback;
+}
+function collapsiblePanel({ id, title, body, extra = "", meta = "", startOpen = false }) {
+  const open = deskBoxOpen(id, startOpen);
+  return `<details class="glass rounded-xl desk-box ${extra}" data-desk-fold="${esc(id)}"${open ? " open" : ""}>
+    <summary class="desk-box-summary">
+      <span class="desk-box-heading">
+        <h2 class="text-lg font-bold">${title}</h2>
+        ${meta ? `<span class="desk-box-meta">${meta}</span>` : ""}
+      </span>
+    </summary>
+    <div class="desk-box-body">${body}</div>
+  </details>`;
 }
 function fixtureDeskStatus(f) {
   if (f.status === "played") return `${f.homeLegs}–${f.awayLegs}`;
@@ -2376,11 +2400,20 @@ async function pageAdmin() {
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
   const structurePanel = d.isOwner
-    ? panel(structureDeskHtml(structureRegionals, state.structureOpenIds, state.structureAddOpen), "mt-6")
+    ? collapsiblePanel({
+        id: "regions",
+        title: "Regions, leagues &amp; divisions",
+        extra: "mt-6",
+        meta: `${structureRegionals.length} region${structureRegionals.length === 1 ? "" : "s"}`,
+        body: structureDeskHtml(structureRegionals, state.structureOpenIds, state.structureAddOpen),
+      })
     : "";
-  const ownerSection = d.isOwner
-    ? `${structurePanel}${panel(`<h2 class="text-lg font-bold">Owners (${d.ownerSlots.used}/${d.ownerSlots.max})</h2>
-        <p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
+  const ownersPanel = d.isOwner
+    ? collapsiblePanel({
+        id: "owners",
+        title: `Owners (${d.ownerSlots.used}/${d.ownerSlots.max})`,
+        extra: "mt-6",
+        body: `<p class="mt-1 text-sm text-muted">Only these ${d.ownerSlots.max} people can assign Head Admins and Division Admins.</p>
         <div class="mt-3 space-y-2">${d.owners
           .map(
             (o) =>
@@ -2398,7 +2431,11 @@ async function pageAdmin() {
                 <button class="btn-gold">MAKE OWNER</button>
               </form>`
             : `<p class="mt-3 text-sm text-muted">All three owner slots are filled.</p>`
-        }`, "mt-6")}
+        }`,
+      })
+    : "";
+  const ownerSection = d.isOwner
+    ? `${structurePanel}
       ${panel(`<h2 class="text-lg font-bold">Head Admins</h2>
         <p class="mt-1 text-sm text-muted">Head Admins can override a confirmed result entered by another admin. They can also hold a Division Admin post at the same time. Only owners can add or remove Head Admins.</p>
         <div class="mt-3 space-y-2">${
@@ -2418,8 +2455,12 @@ async function pageAdmin() {
           <select name="userId" required><option value="">Registered player</option>${registered.filter((p) => !hasRole(p, "head_admin") && !hasRole(p, "owner")).map((p) => `<option value="${p.id}">${esc(p.name)}${hasRole(p, "admin") ? " · Division Admin" : ""}</option>`).join("")}</select>
           <button class="btn-gold">MAKE HEAD ADMIN</button>
         </form>`, "mt-4")}
-      ${panel(`<h2 class="text-lg font-bold">Division Admins</h2>
-        <p class="mt-1 text-sm text-muted">Each division lists this person as The Admin for player issues. Head Admins can also be assigned here.</p>
+      ${collapsiblePanel({
+        id: "division-admins",
+        title: "Division Admins",
+        extra: "mt-4",
+        meta: `${d.leagueAdmins.length} assigned`,
+        body: `<p class="mt-1 text-sm text-muted">Each division lists this person as The Admin for player issues. Head Admins can also be assigned here.</p>
         <div class="mt-3 space-y-2">${
           d.leagueAdmins.length
             ? d.leagueAdmins
@@ -2437,7 +2478,8 @@ async function pageAdmin() {
           <select name="userId" required><option value="">Registered player</option>${registered.map((p) => `<option value="${p.id}">${esc(p.name)}${hasRole(p, "head_admin") ? " · Head Admin" : ""}${hasRole(p, "admin") ? " · Division Admin" : ""}</option>`).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
           <button class="btn-gold">ASSIGN ADMIN</button>
-        </form>`, "mt-4")}`
+        </form>`,
+      })}`
     : "";
   const approvalCard = (a) => {
     const label =
@@ -2471,9 +2513,12 @@ async function pageAdmin() {
       : "";
   const headAdminSection =
     d.isHeadAdmin && !d.isOwner
-      ? panel(
-          `<h2 class="text-lg font-bold">Division Admins</h2>
-        <p class="mt-1 text-sm text-muted">You can request the removal of a Division Admin — an owner must approve it before it takes effect. Only owners can assign Division Admins or manage Head Admins.</p>
+      ? collapsiblePanel({
+          id: "division-admins",
+          title: "Division Admins",
+          extra: "mt-6",
+          meta: `${d.leagueAdmins.length} assigned`,
+          body: `<p class="mt-1 text-sm text-muted">You can request the removal of a Division Admin — an owner must approve it before it takes effect. Only owners can assign Division Admins or manage Head Admins.</p>
         <div class="mt-3 space-y-2">${
           d.leagueAdmins.length
             ? d.leagueAdmins
@@ -2487,9 +2532,49 @@ async function pageAdmin() {
                 .join("")
             : `<p class="text-sm text-muted">None assigned yet.</p>`
         }</div>`,
-          "mt-6"
-        )
+        })
       : "";
+  const publishedCount = (state.announcements || []).length;
+  const announcementPanel = collapsiblePanel({
+    id: "post-announcement",
+    title: "Post announcement",
+    extra: "mt-4",
+    meta: d.isOwner || d.isHeadAdmin ? `${publishedCount} published` : "",
+    body: `<p class="mt-1 text-sm text-muted">Owners, Head Admins, and Division Admins can publish. Only owners and Head Admins can delete. Use the buttons to center, indent, add paragraphs, or drop in emojis.</p>
+        <form class="mt-3 space-y-3" data-form="NEWS">
+          <input name="title" placeholder="Title" required>
+          ${newsComposeTools()}
+          <textarea name="body" rows="8" class="news-body-input" placeholder="Write the announcement…" required></textarea>
+          <div class="news-preview-wrap">
+            <p class="news-preview-label">Preview</p>
+            <div class="news-body news-preview" data-news-preview><p class="text-muted">Your formatted announcement will appear here.</p></div>
+          </div>
+          <button class="btn-gold">PUBLISH</button>
+        </form>
+        ${
+          d.isOwner || d.isHeadAdmin
+            ? `<div class="mt-6 space-y-3"><h3 class="text-sm font-bold tracking-widest uppercase text-muted">Published</h3>${
+                publishedCount
+                  ? (state.announcements || []).map((item) => newsCard(item, { canDelete: true, compact: true })).join("")
+                  : `<p class="text-sm text-muted">No announcements yet.</p>`
+              }</div>`
+            : ""
+        }`,
+  });
+  const pendingSignupsPanel = collapsiblePanel({
+    id: "pending-signups",
+    title: "Pending sign-ups",
+    extra: "mt-6",
+    meta: pending.length ? `${pending.length} waiting` : "none",
+    body: pending.length
+      ? pending
+          .map(
+            (a) =>
+              `<div class="split-row border-b border-white/10 py-2 text-sm"><span class="min-w-0 break-words">${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}${a.placedLeagues?.length ? ` · already in ${esc(a.placedLeagues.join(" · "))}` : ""}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
+          )
+          .join("")
+      : `<p class="mt-3 text-muted">None yet.</p>`,
+  });
   return layout(
     `<div class="mx-auto max-w-7xl px-4 py-10">
       <h1 class="page-title font-extrabold">${d.isOwner ? "Owner desk" : [d.isHeadAdmin ? "Head Admin" : "", hasRole(d.me, "admin") ? "Division Admin" : ""].filter(Boolean).join(" · ") || "Division Admin"}</h1>
@@ -2502,9 +2587,11 @@ async function pageAdmin() {
       }</p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
+      ${ownersPanel}
       ${panel(`<h2 class="text-lg font-bold">Contact cards</h2>
         <p class="mt-1 text-sm text-muted">Each staff member has one Contact card. Owners who also run a league show Owner and Admin together. Edit the contact email from the Player Hub. The cards appear on About Us.</p>
-        <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, "mt-6")}
+        <a href="/dashboard" class="mt-3 inline-block text-sm font-bold tracking-widest gold">EDIT MY CONTACT CARD →</a>`, ownersPanel ? "mt-4" : "mt-6")}
+      ${announcementPanel}
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
@@ -2530,16 +2617,7 @@ async function pageAdmin() {
             <button class="btn-ghost w-full">DECLINE & REQUEST RESUBMIT</button>
           </form>`,
         })}`, "mt-6")}
-      ${panel(`<h2 class="text-lg font-bold">Pending sign-ups</h2>${
-        pending.length
-          ? pending
-              .map(
-                (a) =>
-                  `<div class="split-row border-b border-white/10 py-2 text-sm"><span class="min-w-0 break-words">${esc(a.name)}${a.nickname ? ` “${esc(a.nickname)}”` : ""} · 3DA ${a.avg} · ${esc(a.regionalChoice || a.status)}${a.placedLeagues?.length ? ` · already in ${esc(a.placedLeagues.join(" · "))}` : ""}</span><span class="text-muted">${esc(a.dartcounterName || "")}</span></div>`
-              )
-              .join("")
-          : `<p class="mt-3 text-muted">None yet.</p>`
-      }`, "mt-6")}
+      ${pendingSignupsPanel}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
         <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league. Every admin and owner is emailed. Owners and Head Admins can drop a player here.</p>
         ${
@@ -2670,30 +2748,6 @@ async function pageAdmin() {
         ${panel(overwriteStatsDesk(d), "mt-4")}`
           : ""
       }
-      ${panel(
-        `<h2 class="text-lg font-bold">Post announcement</h2>
-        <p class="mt-1 text-sm text-muted">Owners, Head Admins, and Division Admins can publish. Only owners and Head Admins can delete. Use the buttons to center, indent, add paragraphs, or drop in emojis.</p>
-        <form class="mt-3 space-y-3" data-form="NEWS">
-          <input name="title" placeholder="Title" required>
-          ${newsComposeTools()}
-          <textarea name="body" rows="8" class="news-body-input" placeholder="Write the announcement…" required></textarea>
-          <div class="news-preview-wrap">
-            <p class="news-preview-label">Preview</p>
-            <div class="news-body news-preview" data-news-preview><p class="text-muted">Your formatted announcement will appear here.</p></div>
-          </div>
-          <button class="btn-gold">PUBLISH</button>
-        </form>
-        ${
-          d.isOwner || d.isHeadAdmin
-            ? `<div class="mt-6 space-y-3"><h3 class="text-sm font-bold tracking-widest uppercase text-muted">Published</h3>${
-                (state.announcements || []).length
-                  ? (state.announcements || []).map((item) => newsCard(item, { canDelete: true, compact: true })).join("")
-                  : `<p class="text-sm text-muted">No announcements yet.</p>`
-              }</div>`
-            : ""
-        }`,
-        "mt-4"
-      )}
     </div>`,
     { arena: true }
   );
