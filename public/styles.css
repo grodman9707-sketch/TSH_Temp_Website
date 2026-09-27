@@ -1272,6 +1272,9 @@ input, select, textarea {
 .desk-box-body {
   padding: 0 1.25rem 1.25rem;
 }
+.desk-box:not([open]) > .desk-box-body {
+  display: none;
+}
 .desk-fold-body {
   padding-top: 0.75rem;
 }

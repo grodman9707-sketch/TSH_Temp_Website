@@ -277,11 +277,16 @@ try {
       const owners = document.querySelector('[data-desk-fold="owners"]');
       owners.querySelector("summary").click();
       const body = owners.querySelector(".desk-box-body");
-      const rects = body.getClientRects().length;
-      return { open: owners.open, rects };
+      const rect = body.getBoundingClientRect();
+      const detailsH = owners.getBoundingClientRect().height;
+      const summaryH = owners.querySelector("summary").getBoundingClientRect().height;
+      return { open: owners.open, h: rect.height, detailsH, summaryH };
     })()`
   );
-  check("closing owners hides its body", closed.open === false && closed.rects === 0);
+  check(
+    "closing owners hides its body",
+    closed.open === false && closed.h === 0 && closed.detailsH <= closed.summaryH + 4
+  );
 
   ws.close();
 } finally {
