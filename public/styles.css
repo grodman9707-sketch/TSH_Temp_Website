@@ -1122,6 +1122,21 @@ input, select, textarea {
   .glass.p-6 {
     padding: 1rem;
   }
+  .desk-box-summary,
+  .desk-box-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .desk-box-summary {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+  .desk-box[open] > .desk-box-summary {
+    padding-bottom: 0.35rem;
+  }
+  .desk-box-body {
+    padding-bottom: 1rem;
+  }
   .news-indent {
     padding-left: 1rem;
   }
@@ -1210,6 +1225,52 @@ input, select, textarea {
   display: grid;
   gap: 0.5rem;
   margin-top: 0.75rem;
+}
+.desk-box > summary {
+  list-style: none;
+}
+.desk-box-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  touch-action: manipulation;
+}
+.desk-box-summary::-webkit-details-marker,
+.desk-box-summary::marker {
+  display: none;
+  content: "";
+}
+.desk-box-summary::after {
+  content: "▾";
+  color: #e8b425;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.desk-box[open] > .desk-box-summary::after {
+  transform: rotate(180deg);
+}
+.desk-box[open] > .desk-box-summary {
+  padding-bottom: 0.35rem;
+}
+.desk-box-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  min-width: 0;
+}
+.desk-box-heading h2 {
+  margin: 0;
+}
+.desk-box-meta {
+  color: #999999;
+  font-size: 0.75rem;
+}
+.desk-box-body {
+  padding: 0 1.25rem 1.25rem;
 }
 .desk-fold-body {
   padding-top: 0.75rem;
