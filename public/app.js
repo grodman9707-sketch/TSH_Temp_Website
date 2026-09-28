@@ -2649,7 +2649,17 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Place players in the International League. Regional leagues are coming soon.</p>
+        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the unplayed fixtures left behind. Opponents have a bye until then.</p>
+        ${
+          (d.openSeats || []).length
+            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${d.openSeats
+                .map(
+                  (seat) =>
+                    `<li>${esc(seat.leagueTitle)} — open seat for ${esc(seat.playerName)} (${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"})</li>`
+                )
+                .join("")}</ul>`
+            : ""
+        }
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
           <select name="userId" required><option value="">Player</option>${everyone.map(playerOption).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
@@ -2731,14 +2741,14 @@ async function pageAdmin() {
           <button class="btn-gold">ADD PLAYER</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">REMOVE FROM LEAGUE</h3>
-        <p class="mt-1 text-xs text-muted">Choose one league, or keep “All of their leagues” to unplace them from every regional they play in.</p>
+        <p class="mt-1 text-xs text-muted">Choose one league, or keep “All of their leagues” to unplace them from every division. Unplayed matches become byes for the opponent until another player is placed in that division. Played results stay on the record.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="UNPLACE">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
           <button class="btn-ghost">UNPLACE</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
-        <p class="mt-1 text-xs text-muted">Deletes the account and their fixtures. Owners cannot be deleted here.</p>
+        <p class="mt-1 text-xs text-muted">Deletes the account. Unplayed matches become byes for the opponent until another player is placed in that division. Played results stay on the record. Owners cannot be deleted here.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="DELETEPLAYER">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => !hasRole(p, "owner")).map(playerOption).join("")}</select>
           <button class="btn-ghost">DELETE</button>
@@ -3260,8 +3270,14 @@ document.addEventListener("submit", async (e) => {
       state.notice = "Request cancelled.";
       render();
     } else if (kind === "LEAGUERESOLVE") {
-      await api("/api/admin/league-requests/resolve", { method: "POST", body: JSON.stringify({ id: fd.id, action: fd.action }) });
-      state.notice = fd.action === "done" ? "Player dropped from the requested league(s)." : "Request dismissed.";
+      const d = await api("/api/admin/league-requests/resolve", { method: "POST", body: JSON.stringify({ id: fd.id, action: fd.action }) });
+      const byeCount = Number(d.byes) || 0;
+      state.notice =
+        fd.action === "done"
+          ? byeCount
+            ? `Player dropped. ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"} until someone is placed in that division.`
+            : "Player dropped from the requested league(s)."
+          : "Request dismissed.";
       render();
     } else if (kind === "STAFFPROFILE") {
       const d = await api("/api/account/staff-profile", {
@@ -3295,10 +3311,15 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "PLACE") {
       const d = await api("/api/admin/place-player", { method: "POST", body: JSON.stringify(fd) });
       const titles = d.user?.leagueTitles || [];
-      state.notice =
-        (d.user?.regionalIds || []).length > 1 && !d.fullyPlaced
-          ? `Placed in ${titles[titles.length - 1] || "that league"}. They can still be placed in their other league.`
-          : "Player placed.";
+      const seat = d.filledSeat;
+      const placedIn = titles[titles.length - 1] || "that division";
+      if (seat?.matches) {
+        state.notice = `Placed in ${placedIn}. They took over ${seat.replacedName}'s ${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}.`;
+      } else if ((d.user?.regionalIds || []).length > 1 && !d.fullyPlaced) {
+        state.notice = `Placed in ${placedIn}. They can still be placed in their other league.`;
+      } else {
+        state.notice = "Player placed.";
+      }
       render();
     } else if (kind === "ADD FIXTURE" || kind === "FIXTURE" || (kind === "FIXTURES" && fd.mode === "individual")) {
       await api("/api/admin/fixtures", { method: "POST", body: JSON.stringify(fd) });
@@ -3315,17 +3336,27 @@ document.addEventListener("submit", async (e) => {
       state.notice = fd.skipVisitorAccept === "1" ? "Visitor accept skipped for this match only." : "Visitor accept is required again for this match.";
       render();
     } else if (kind === "ADDPLAYER") {
-      await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Player added.";
+      const d = await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });
+      const seat = d.filledSeat;
+      state.notice = seat?.matches
+        ? `Player added. They took over ${seat.replacedName}'s ${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}.`
+        : "Player added.";
       render();
     } else if (kind === "UNPLACE") {
-      await api("/api/admin/unplace-player", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = fd.leagueId ? "Player removed from that league." : "Player removed from their leagues.";
+      const d = await api("/api/admin/unplace-player", { method: "POST", body: JSON.stringify(fd) });
+      const byeCount = Number(d.byes) || 0;
+      const byeNote = byeCount
+        ? ` ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"} until someone is placed in that division.`
+        : "";
+      state.notice = (fd.leagueId ? "Player removed from that league." : "Player removed from their leagues.") + byeNote;
       render();
     } else if (kind === "DELETEPLAYER") {
-      if (!window.confirm("Delete this player and all of their matches? This cannot be undone.")) return;
-      await api("/api/admin/delete-player", { method: "POST", body: JSON.stringify(fd) });
-      state.notice = "Player deleted.";
+      if (!window.confirm("Delete this player? Their unplayed matches become byes until someone else is placed in the division. This cannot be undone.")) return;
+      const d = await api("/api/admin/delete-player", { method: "POST", body: JSON.stringify(fd) });
+      const byeCount = Number(d.byes) || 0;
+      state.notice = byeCount
+        ? `Player deleted. ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"} until someone is placed in that division.`
+        : "Player deleted.";
       render();
     } else if (kind === "DECLINESTATS") {
       await api(`/api/admin/fixtures/${form.dataset.id}/decline-stats`, { method: "POST", body: JSON.stringify({ note: fd.note || "" }) });

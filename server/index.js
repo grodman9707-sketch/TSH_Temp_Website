@@ -850,6 +850,10 @@ function wipeLeague(db, leagueId) {
   const beforeFixtures = (db.fixtures || []).length;
   db.fixtures = (db.fixtures || []).filter((f) => Number(f.leagueId) !== id);
   if ((db.fixtures || []).length !== beforeFixtures) changed = true;
+  if (Array.isArray(db.vacantSlots) && db.vacantSlots.some((slot) => Number(slot.leagueId) === id)) {
+    dropLeagueVacancies(db, id);
+    changed = true;
+  }
   for (const row of [...(db.applications || []), ...(db.leagueRequests || []), ...(db.approvals || [])]) {
     if (Number(row.leagueId) === id) {
       row.leagueId = null;
@@ -1161,6 +1165,166 @@ function placeUserInLeague(db, u, league) {
   u.leagueId = next[0] || null;
   return null;
 }
+function ensureVacantSlots(db) {
+  if (!Array.isArray(db.vacantSlots)) db.vacantSlots = [];
+}
+function freshFixtureNotify() {
+  return { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
+}
+function fixtureSideForUser(fixture, userId) {
+  const id = Number(userId);
+  if (Number(fixture?.homeId) === id) return "home";
+  if (Number(fixture?.awayId) === id) return "away";
+  return null;
+}
+function otherFixtureSide(side) {
+  return side === "home" ? "away" : "home";
+}
+function fixtureSidePlayerId(fixture, side) {
+  return side === "home" ? fixture?.homeId : fixture?.awayId;
+}
+function vacantSeatHolds(db, fixtureId, side) {
+  const id = Number(fixtureId);
+  return (db.vacantSlots || []).some((slot) =>
+    (slot.seats || []).some((seat) => Number(seat.fixtureId) === id && seat.side === side)
+  );
+}
+function forgetFixtureSeats(db, fixtureIds) {
+  if (!Array.isArray(db.vacantSlots) || !fixtureIds?.length) return;
+  const drop = new Set(fixtureIds.map(Number));
+  for (const slot of db.vacantSlots) {
+    slot.seats = (slot.seats || []).filter((seat) => !drop.has(Number(seat.fixtureId)));
+  }
+  db.vacantSlots = db.vacantSlots.filter((slot) => (slot.seats || []).length);
+}
+function dropLeagueVacancies(db, leagueId) {
+  if (!Array.isArray(db.vacantSlots)) return;
+  db.vacantSlots = db.vacantSlots.filter((slot) => Number(slot.leagueId) !== Number(leagueId));
+}
+function releaseOpenMatch(fixture) {
+  clearResultSubmission(fixture);
+  clearMatchStats(fixture);
+  fixture.proposedDate = "";
+  fixture.proposedTime = "";
+  fixture.proposedBy = null;
+  fixture.proposedAt = null;
+  fixture.agreedAt = null;
+  fixture.scheduleStatus = null;
+  fixture.startAt = null;
+  fixture.proposedTz = "";
+  fixture.time = "";
+  if (fixture.weekStart) fixture.date = fixture.weekStart;
+  fixture.skipVisitorAccept = false;
+  fixture.resubmitRequest = null;
+  fixture.confirmedBy = null;
+  fixture.confirmedAt = null;
+  fixture.bye = true;
+  fixture.status = "bye";
+  fixture.notify = freshFixtureNotify();
+}
+function vacatePlayerFixtures(db, user, leagueId) {
+  ensureVacantSlots(db);
+  const uid = Number(user?.id);
+  const onlyLeague = Number(leagueId) || 0;
+  const byLeague = new Map();
+  const dropped = [];
+  for (const fixture of db.fixtures || []) {
+    const side = fixtureSideForUser(fixture, uid);
+    if (!side) continue;
+    if (onlyLeague && Number(fixture.leagueId) !== onlyLeague) continue;
+    if (fixture.status === "played") {
+      const label = user.nickname || user.name || "Player";
+      if (side === "home") fixture.homeArchiveName = label;
+      else fixture.awayArchiveName = label;
+      continue;
+    }
+    const otherSide = otherFixtureSide(side);
+    const otherId = fixtureSidePlayerId(fixture, otherSide);
+    if (!otherId && !vacantSeatHolds(db, fixture.id, otherSide)) {
+      removeUpload(shotFile(fixture, 1));
+      removeUpload(shotFile(fixture, 2));
+      dropped.push(fixture.id);
+      continue;
+    }
+    releaseOpenMatch(fixture);
+    if (side === "home") fixture.homeId = null;
+    else fixture.awayId = null;
+    const lid = Number(fixture.leagueId);
+    const bucket = byLeague.get(lid) || [];
+    bucket.push({ fixtureId: fixture.id, side });
+    byLeague.set(lid, bucket);
+  }
+  if (dropped.length) {
+    const gone = new Set(dropped);
+    db.fixtures = db.fixtures.filter((fixture) => !gone.has(fixture.id));
+    forgetFixtureSeats(db, dropped);
+  }
+  let byes = 0;
+  for (const [lid, seats] of byLeague) {
+    if (!seats.length) continue;
+    db.vacantSlots.push({
+      id: nextId(db.vacantSlots),
+      leagueId: lid,
+      userId: uid,
+      name: user.nickname || user.name || "Player",
+      createdAt: new Date().toISOString(),
+      seats,
+    });
+    byes += seats.length;
+  }
+  return byes;
+}
+function claimVacantSeat(db, user, leagueId) {
+  ensureVacantSlots(db);
+  const lid = Number(leagueId);
+  const mine = db.vacantSlots.filter((slot) => Number(slot.leagueId) === lid && Number(slot.userId) === Number(user.id));
+  const pool = mine.length ? mine : db.vacantSlots.filter((slot) => Number(slot.leagueId) === lid);
+  const slot = pool
+    .slice()
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || Number(a.id) - Number(b.id))[0];
+  if (!slot) return null;
+  let matches = 0;
+  for (const seat of slot.seats || []) {
+    const fixture = (db.fixtures || []).find((item) => Number(item.id) === Number(seat.fixtureId));
+    if (!fixture || Number(fixture.leagueId) !== lid) continue;
+    if (seat.side !== "home" && seat.side !== "away") continue;
+    if (seat.side === "home") {
+      fixture.homeId = user.id;
+      fixture.homeArchiveName = "";
+    } else {
+      fixture.awayId = user.id;
+      fixture.awayArchiveName = "";
+    }
+    const opponentId = fixtureSidePlayerId(fixture, otherFixtureSide(seat.side));
+    if (opponentId) {
+      fixture.bye = false;
+      if (fixture.status === "bye" || fixture.status === "scheduled") fixture.status = "scheduled";
+      fixture.notify = freshFixtureNotify();
+    } else {
+      fixture.bye = true;
+      fixture.status = "bye";
+    }
+    matches += 1;
+  }
+  db.vacantSlots = db.vacantSlots.filter((item) => item.id !== slot.id);
+  if (!matches) return null;
+  return { replacedName: slot.name || "Player", matches, leagueId: lid };
+}
+function publicOpenSeats(db, user) {
+  ensureVacantSlots(db);
+  return db.vacantSlots
+    .filter((slot) => managesLeague(user, slot.leagueId))
+    .slice()
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || Number(a.id) - Number(b.id))
+    .map((slot) => ({
+      id: slot.id,
+      leagueId: slot.leagueId,
+      leagueTitle: leagueTitle(db, db.leagues.find((l) => Number(l.id) === Number(slot.leagueId)) || { name: "Division", regionalId: 0 }),
+      playerName: slot.name || "Player",
+      matches: (slot.seats || []).length,
+      createdAt: slot.createdAt || "",
+    }));
+}
 function isJasonJacksonAccount(u) {
   const name = normIdent(u?.name);
   const dc = normIdent(u?.dartcounterName);
@@ -1226,6 +1390,10 @@ function migrate(db) {
   }
   if (!Array.isArray(db.staffLog)) {
     db.staffLog = [];
+    changed = true;
+  }
+  if (!Array.isArray(db.vacantSlots)) {
+    db.vacantSlots = [];
     changed = true;
   }
   for (const u of db.users) {
@@ -1572,14 +1740,26 @@ function flagOn(v) {
 function skipsVisitorAccept(db, f) {
   return Boolean(f && flagOn(f.skipVisitorAccept));
 }
+function fixtureSideLabel(db, f, side) {
+  const id = side === "home" ? f.homeId : f.awayId;
+  const archive = side === "home" ? f.homeArchiveName : f.awayArchiveName;
+  if (id) {
+    const player = db.users.find((u) => u.id === id);
+    if (player?.name) return player.name;
+    if (archive) return archive;
+    return undefined;
+  }
+  if (f.bye || f.status === "bye") return "Bye";
+  return archive || undefined;
+}
 function withNames(db, f) {
   const shot1 = shotFile(f, 1);
   const shot2 = shotFile(f, 2);
   const named = {
     ...f,
     bye: Boolean(f.bye) || f.status === "bye",
-    homeName: f.homeId ? db.users.find((u) => u.id === f.homeId)?.name : f.bye || f.status === "bye" ? "Bye" : undefined,
-    awayName: f.awayId ? db.users.find((u) => u.id === f.awayId)?.name : f.bye || f.status === "bye" ? "Bye" : undefined,
+    homeName: fixtureSideLabel(db, f, "home"),
+    awayName: fixtureSideLabel(db, f, "away"),
     homeTz: db.users.find((u) => u.id === f.homeId)?.timezone || "",
     awayTz: db.users.find((u) => u.id === f.awayId)?.timezone || "",
     leagueName: leagueTitle(db, db.leagues.find((l) => l.id === f.leagueId) || { name: "", regionalId: 0 }),
@@ -2810,6 +2990,7 @@ async function handleApi(req, res, url) {
           : null,
         leagues,
         allLeagues: [...db.leagues].sort(compareLeagueOrder).map((l) => ({ ...l, title: leagueTitle(db, l) })),
+        openSeats: publicOpenSeats(db, user),
         fixtures,
         structure: isOwner(user) ? publicStructure(db) : null,
       });
@@ -3102,13 +3283,18 @@ async function handleApi(req, res, url) {
         writeDb(db);
         return json(res, 200, { ok: true, user: publicUser(u, db) });
       }
+      let droppedByes = 0;
       if (request.kind === "drop") {
         if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can drop a player from a league" });
         if (isDropAllRequest(request)) {
           unplaceUserFromLeagues(u);
+          droppedByes = vacatePlayerFixtures(db, u, 0);
         } else {
           const leagueId = Number(request.leagueId);
-          if (userLeagueIds(u).includes(leagueId)) unplaceUserFromLeagues(u, leagueId);
+          if (userLeagueIds(u).includes(leagueId)) {
+            unplaceUserFromLeagues(u, leagueId);
+            droppedByes = vacatePlayerFixtures(db, u, leagueId);
+          }
         }
         for (const appn of db.applications.filter((a) => a.userId === u.id)) {
           appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
@@ -3128,27 +3314,36 @@ async function handleApi(req, res, url) {
         leagueId: request.leagueId || null,
       });
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u, db) });
+      return json(res, 200, { ok: true, user: publicUser(u, db), byes: droppedByes });
     }
     if (method === "POST" && p === "/api/admin/place-player") {
       const u = db.users.find((x) => x.id === Number(body.userId));
       const league = db.leagues.find((l) => l.id === Number(body.leagueId));
       if (!u || !league) return json(res, 400, { ok: false, error: "Invalid player or league" });
       if (!managesLeague(user, league.id)) return json(res, 403, { ok: false, error: "You can only place players in your league" });
+      const beforeLeagues = userLeagueIds(u);
+      const alreadyThere = beforeLeagues.includes(Number(league.id));
       const placeError = placeUserInLeague(db, u, league);
       if (placeError) return json(res, 400, { ok: false, error: placeError });
+      const afterLeagues = userLeagueIds(u);
+      for (const id of beforeLeagues) {
+        if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id);
+      }
+      const filledSeat = alreadyThere ? null : claimVacantSeat(db, u, league.id);
       const apps = db.applications.filter((a) => a.userId === u.id || a.id === Number(body.applicationId));
       for (const appn of apps) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
       resolveMatchingLeagueRequests(db, u);
       recordStaff(db, user, "place_player", {
-        summary: `Placed ${u.name} in ${leagueTitle(db, league)}`,
+        summary: filledSeat
+          ? `Placed ${u.name} in ${leagueTitle(db, league)}, taking over ${filledSeat.replacedName}'s ${filledSeat.matches} unplayed fixture${filledSeat.matches === 1 ? "" : "s"}`
+          : `Placed ${u.name} in ${leagueTitle(db, league)}`,
         leagueId: league.id,
         targetUserId: u.id,
       });
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u, db), fullyPlaced: isFullyPlaced(db, u) });
+      return json(res, 200, { ok: true, user: publicUser(u, db), fullyPlaced: isFullyPlaced(db, u), filledSeat });
     }
     if (method === "POST" && p === "/api/admin/fixtures") {
       const leagueId = Number(body.leagueId);
@@ -3225,13 +3420,16 @@ async function handleApi(req, res, url) {
       const weekGapDays = 7;
       if (replaceScheduled) {
         const keep = [];
+        const removedIds = [];
         for (const f of db.fixtures) {
           if (f.leagueId === leagueId && Number(f.season || 1) === season && f.status === "scheduled" && shotCount(f) === 0) {
+            removedIds.push(f.id);
             continue;
           }
           keep.push(f);
         }
         db.fixtures = keep;
+        forgetFixtureSeats(db, removedIds);
       }
       const existing = new Set(
         db.fixtures
@@ -3375,14 +3573,17 @@ async function handleApi(req, res, url) {
         avatarFile: null,
         avatarUpdatedAt: null,
       };
+      const filledSeat = league ? claimVacantSeat(db, created, league.id) : null;
       db.users.push(created);
       recordStaff(db, user, "create_player", {
-        summary: `Created player ${created.name}`,
+        summary: filledSeat
+          ? `Created player ${created.name}, taking over ${filledSeat.replacedName}'s ${filledSeat.matches} unplayed fixture${filledSeat.matches === 1 ? "" : "s"}`
+          : `Created player ${created.name}`,
         targetUserId: created.id,
         leagueId: created.leagueId || null,
       });
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(created, db) });
+      return json(res, 200, { ok: true, user: publicUser(created, db), filledSeat });
     }
     if (method === "POST" && p === "/api/admin/unplace-player") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove players from a league" });
@@ -3397,17 +3598,19 @@ async function handleApi(req, res, url) {
       } else {
         unplaceUserFromLeagues(u);
       }
+      const byes = vacatePlayerFixtures(db, u, leagueId);
       for (const appn of db.applications.filter((a) => a.userId === u.id)) {
         appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
       }
       resolveMatchingLeagueRequests(db, u);
+      const byeNote = byes ? ` ${byes} unplayed match${byes === 1 ? "" : "es"} now a bye until that seat is filled.` : "";
       recordStaff(db, user, "unplace_player", {
-        summary: leagueId ? `Unplaced ${u.name} from ${leagueTitle(db, db.leagues.find((l) => l.id === leagueId) || { name: "league" })}` : `Unplaced ${u.name} from all leagues`,
+        summary: (leagueId ? `Unplaced ${u.name} from ${leagueTitle(db, db.leagues.find((l) => l.id === leagueId) || { name: "league" })}` : `Unplaced ${u.name} from all leagues`) + byeNote,
         targetUserId: u.id,
         leagueId: leagueId || null,
       });
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u, db) });
+      return json(res, 200, { ok: true, user: publicUser(u, db), byes });
     }
     if (method === "POST" && p === "/api/admin/delete-player") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete players" });
@@ -3415,16 +3618,17 @@ async function handleApi(req, res, url) {
       if (!u) return json(res, 400, { ok: false, error: "Player not found" });
       if (isOwner(u)) return json(res, 400, { ok: false, error: "Owners cannot be deleted here" });
       if (u.avatarFile) removeUpload(u.avatarFile);
-      db.fixtures = db.fixtures.filter((f) => f.homeId !== u.id && f.awayId !== u.id);
+      const byes = vacatePlayerFixtures(db, u, 0);
       db.applications = db.applications.filter((a) => a.userId !== u.id);
       db.adminProfiles = (db.adminProfiles || []).filter((p) => Number(p.userId) !== Number(u.id));
       db.users = db.users.filter((x) => x.id !== u.id);
+      const byeNote = byes ? ` ${byes} unplayed match${byes === 1 ? "" : "es"} now a bye until that seat is filled.` : "";
       recordStaff(db, user, "delete_player", {
-        summary: `Deleted player ${u.name}`,
+        summary: `Deleted player ${u.name}.${byeNote}`,
         targetUserId: u.id,
       });
       persistDb(db);
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, byes });
     }
     const clearMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/clear$/);
     if (method === "POST" && clearMatch) {
@@ -3457,6 +3661,7 @@ async function handleApi(req, res, url) {
       }
       const ids = new Set(toRemove.map((f) => f.id));
       db.fixtures = db.fixtures.filter((f) => !ids.has(f.id));
+      forgetFixtureSeats(db, [...ids]);
       recordStaff(db, user, "clear_league", {
         summary: `Cleared ${toRemove.length} fixture${toRemove.length === 1 ? "" : "s"} from ${leagueTitle(db, league)}${season ? ` season ${season}` : ""}`,
         leagueId,
@@ -3492,6 +3697,7 @@ async function handleApi(req, res, url) {
         leagueId: fixture.leagueId,
       });
       db.fixtures = db.fixtures.filter((f) => f.id !== id);
+      forgetFixtureSeats(db, [id]);
       writeDb(db);
       return json(res, 200, { ok: true });
     }
