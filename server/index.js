@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fillMissingRosterByes } from "./rosterFixtures.js";
+import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
@@ -1692,6 +1693,13 @@ function migrate(db) {
       delete u.bountyHunt;
       changed = true;
     }
+  }
+  // One pass: a division regenerated a week late (Division 2, 28 Sep 2026)
+  // has its unplayed weeks pulled onto the same Sunday grid as the others.
+  // Played results are not moved. A later manual date edit is left as saved.
+  if (!structureState(db).weekGridAligned) {
+    if (alignLaggingDivisionWeeks(db.fixtures)) changed = true;
+    if (setStructureFlag(db, "weekGridAligned")) changed = true;
   }
   if (changed) writeDb(db);
 }
