@@ -1352,6 +1352,15 @@ async function pageLeague(slug, id) {
           : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from About Us.</p>`,
         "mt-4"
       )}
+      ${
+        d.review?.paragraphs?.length
+          ? panel(
+              `<div class="text-xs font-bold tracking-widest gold">${esc(d.review.title || "What's happening")}</div>
+              <div class="mt-3 space-y-3 text-sm leading-relaxed">${d.review.paragraphs.map((paragraph) => `<p>${esc(paragraph)}</p>`).join("")}</div>`,
+              "mt-4"
+            )
+          : ""
+      }
       <div class="mt-4 flex gap-2">
         <a href="/regionals/${slug}/leagues/${id}" class="${tab === "table" ? "btn-gold" : "btn-ghost"}">TABLE</a>
         <a href="/regionals/${slug}/leagues/${id}?tab=fixtures" class="${tab === "fixtures" ? "btn-gold" : "btn-ghost"}">FIXTURES</a>

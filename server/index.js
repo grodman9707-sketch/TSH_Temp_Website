@@ -7,6 +7,7 @@ import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fillMissingRosterByes } from "./rosterFixtures.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
+import { divisionReview } from "./divisionReview.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
@@ -2266,13 +2267,16 @@ async function handleApi(req, res, url) {
     if (!league) return json(res, 404, { ok: false, error: "Not found" });
     const regional = db.regionals.find((r) => r.id === league.regionalId);
     const leagueFixtures = db.fixtures.filter((f) => f.leagueId === league.id);
+    const standings = standingsForLeague(db, league.id);
+    const fixtures = playerVisibleFixtures(db, leagueFixtures);
     return json(res, 200, {
       ok: true,
       league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) },
       regional,
-      standings: standingsForLeague(db, league.id),
+      standings,
       divisionAdmins: divisionAdminsForLeague(db, league.id),
-      fixtures: playerVisibleFixtures(db, leagueFixtures),
+      fixtures,
+      review: divisionReview({ divisionName: divisionName(league), standings, fixtures }),
       ...fixturePublishMeta(leagueFixtures),
     });
   }
