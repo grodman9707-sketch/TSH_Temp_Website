@@ -67,7 +67,7 @@ try {
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   check("place form explains open seats", appJs.includes("takes over the fixtures left behind"));
-  check("played results keep their score under the new name", appJs.includes("Played results stay exactly as they are"));
+  check("played results pass on legs only", appJs.includes("they inherit only the legs"));
   check("remove form explains byes", appJs.includes("Unplayed matches become byes for the opponent"));
   check("delete form keeps played results", appJs.includes("Played results stay on the record"));
 
@@ -148,7 +148,16 @@ try {
   const scored = await api(port, `/api/admin/fixtures/${playedId}/result`, {
     method: "POST",
     token: ownerTok,
-    body: { homeLegs: 5, awayLegs: 2 },
+    body: {
+      homeLegs: 5,
+      awayLegs: 2,
+      homeAvg: 61.2,
+      awayAvg: 55.4,
+      homeOneEighties: 1,
+      awayOneEighties: 2,
+      homeCheckout: 120,
+      awayCheckout: 40,
+    },
   });
   check("owner confirms a played result", scored.status === 200 && scored.data.fixture?.status === "played");
 
@@ -216,16 +225,27 @@ try {
       inherited?.week === 2
   );
   check(
-    "played result keeps its score and shows the replacement's name",
+    "replacement inherits the legs and the name, not the performance stats",
     playedAfter?.homeId === delta.id &&
       playedAfter?.homeName === "Delta Seat" &&
       playedAfter?.awayId === bravo.id &&
+      playedAfter?.awayName === "Bravo Seat" &&
       playedAfter?.status === "played" &&
       playedAfter?.homeLegs === 5 &&
-      playedAfter?.awayLegs === 2
+      playedAfter?.awayLegs === 2 &&
+      !playedAfter?.homeAvg &&
+      !playedAfter?.homeOneEighties &&
+      !playedAfter?.homeCheckout &&
+      playedAfter?.awayAvg === 55.4 &&
+      playedAfter?.awayOneEighties === 2 &&
+      playedAfter?.awayCheckout === 40 &&
+      playedAfter?.topCheckout === 40
   );
-  const deltaRow = (await api(port, `/api/leagues/${leagueId}`)).data.standings?.find((row) => row.playerId === delta.id);
-  check("the replacement is credited with that played result", deltaRow?.played === 1 && deltaRow?.won === 1);
+  const table = (await api(port, `/api/leagues/${leagueId}`)).data.standings || [];
+  const deltaRow = table.find((row) => row.playerId === delta.id);
+  const bravoRow = table.find((row) => row.playerId === bravo.id);
+  check("the replacement is credited with the legs and the win only", deltaRow?.played === 1 && deltaRow?.won === 1 && deltaRow?.legsFor === 5 && deltaRow?.oneEighties === 0 && deltaRow?.avg === 48);
+  check("the opponent keeps the average, 180s, and checkout from that match", bravoRow?.played === 1 && bravoRow?.lost === 1 && bravoRow?.legsFor === 2 && bravoRow?.oneEighties === 2 && bravoRow?.avg === 55.4);
   check("open seat closes after it is filled", !(afterSeat.data.openSeats || []).some((s) => s.leagueId === leagueId));
 
   const deltaMatches = await api(port, "/api/my-fixtures", { token: delta.token });

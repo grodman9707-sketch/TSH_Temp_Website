@@ -214,7 +214,7 @@ function takenSeatNote(seat) {
   const played = Number(seat.playedRenamed) || 0;
   const bits = [];
   if (open) bits.push(`${open} unplayed match${open === 1 ? "" : "es"}`);
-  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} now in their name, score unchanged`);
+  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} in their name, legs only`);
   if (!bits.length) return "";
   return `They took over ${seat.replacedName}'s ${bits.join(" and ")}.`;
 }
@@ -2659,7 +2659,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. Played results stay exactly as they are, except their name replaces the player who left. Opponents have a bye until then.</p>
+        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
         ${
           (d.openSeats || []).length
             ? `<ul class="mt-3 space-y-1 text-sm text-muted">${d.openSeats

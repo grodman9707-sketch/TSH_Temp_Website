@@ -1303,6 +1303,10 @@ function claimVacantSeat(db, user, leagueId) {
         fixture.awayId = user.id;
         fixture.awayArchiveName = "";
       }
+      // The scoreline stays. The replacement takes only the legs on their
+      // side. Average, 180s, checkout, and visit bands from the player who
+      // left do not move. The opponent's side is left untouched.
+      clearSidePerformance(fixture, seat.side);
       playedRenamed += 1;
       continue;
     }
@@ -1328,12 +1332,26 @@ function claimVacantSeat(db, user, leagueId) {
   if (!matches && !playedRenamed) return null;
   return { replacedName: slot.name || "Player", matches, playedRenamed, leagueId: lid };
 }
+function clearSidePerformance(fixture, side) {
+  const prefix = side === "home" ? "home" : "away";
+  fixture[`${prefix}Avg`] = 0;
+  fixture[`${prefix}Checkout`] = 0;
+  fixture[`${prefix}BestLeg`] = null;
+  for (const band of [60, 80, 100, 120, 140, 160, 180]) fixture[`${prefix}${band}`] = 0;
+  fixture[`${prefix}OneEighties`] = 0;
+  if (prefix === "home") fixture.home180 = 0;
+  else fixture.away180 = 0;
+  const home180s = Number(fixture.home180 || fixture.homeOneEighties) || 0;
+  const away180s = Number(fixture.away180 || fixture.awayOneEighties) || 0;
+  fixture.oneEighties = home180s + away180s;
+  fixture.topCheckout = Math.max(Number(fixture.homeCheckout) || 0, Number(fixture.awayCheckout) || 0);
+}
 function takenSeatPhrase(filledSeat) {
   const open = Number(filledSeat?.matches) || 0;
   const played = Number(filledSeat?.playedRenamed) || 0;
   const bits = [];
   if (open) bits.push(`${open} unplayed fixture${open === 1 ? "" : "s"}`);
-  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} (score unchanged)`);
+  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} (legs only)`);
   return `${filledSeat?.replacedName || "Player"}'s ${bits.join(" and ") || "open seat"}`;
 }
 function publicOpenSeats(db, user) {
