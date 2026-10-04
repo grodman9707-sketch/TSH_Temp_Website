@@ -2275,28 +2275,64 @@ function deskFold({ id, title, meta, body }) {
     <div class="structure-fold-body desk-fold-body">${body}</div>
   </details>`;
 }
+function manageFixturePlayerOptions(players, selectedId) {
+  const selected = selectedId == null || selectedId === "" ? "bye" : String(selectedId);
+  const bye = `<option value="bye"${selected === "bye" ? " selected" : ""}>Bye</option>`;
+  const rest = (players || [])
+    .map((p) => `<option value="${p.id}"${String(p.id) === selected ? " selected" : ""}>${esc(p.name)}</option>`)
+    .join("");
+  return `${bye}${rest}`;
+}
+function manageFixtureEditForm(f, players) {
+  const played = f.status === "played";
+  return `<form class="manage-fixture-edit" data-form="EDITFIXTURE" data-id="${f.id}">
+      <label>Week<input name="week" type="number" min="1" required value="${esc(f.week || 1)}"></label>
+      <label>Week starts<input name="weekStart" type="date" required value="${esc(String(f.weekStart || f.date || "").slice(0, 10))}"></label>
+      <label>Match date<input name="date" type="date" value="${esc(String(f.date || "").slice(0, 10))}"></label>
+      <label>Time<input name="time" type="time" value="${esc(f.time || "")}"></label>
+      <label>Home<select name="homeId" required>${manageFixturePlayerOptions(players, f.homeId)}</select></label>
+      <label>Away<select name="awayId" required>${manageFixturePlayerOptions(players, f.awayId)}</select></label>
+      ${
+        played
+          ? `<label>Home legs<input name="homeLegs" inputmode="numeric" value="${esc(f.homeLegs ?? "")}"></label>
+             <label>Away legs<input name="awayLegs" inputmode="numeric" value="${esc(f.awayLegs ?? "")}"></label>`
+          : ""
+      }
+      <div class="manage-fixture-edit-actions">
+        <button class="btn-gold" type="submit">SAVE</button>
+        <button class="btn-ghost" type="button" data-act="edit-fixture" data-id="${f.id}">CLOSE</button>
+      </div>
+    </form>
+    ${played ? `<p class="manage-fixture-edit-note">Saving keeps this result. Change the legs here if the score should change. Remove deletes the match.</p>` : `<p class="manage-fixture-edit-note">Choose Bye on one side to give that player the week off. Week starts is the Sunday the fixture is released.</p>`}`;
+}
 function manageFixturesDesk(d, allLeagueOptions) {
   const groups = fixturesGroupedByLeague(d.fixtures, d.allLeagues || d.leagues);
   const openIds = new Set((state.manageLeagueOpenIds || []).map(Number));
+  const editingId = Number(state.editingFixtureId) || 0;
   const folds = groups.length
     ? groups
         .map((g) => {
           const title = g.league.title || g.league.name || "League";
+          const players = (d.users || []).filter((p) => userLeagueIds(p).includes(Number(g.league.id)));
           const rows = g.fixtures
-            .map(
-              (f) =>
-                `<div class="structure-div-row">
-                  <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}${f.resubmitRequested ? " · resubmit requested" : ""}</span>
-                  <div class="flex flex-wrap gap-2">
-                    ${
-                      f.status !== "played"
-                        ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
-                        : ""
-                    }
-                    <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">DELETE</button></form>
+            .map((f) => {
+              const open = editingId === Number(f.id);
+              return `<div class="structure-div-row manage-fixture-row">
+                  <div class="manage-fixture-main">
+                    <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}${f.resubmitRequested ? " · resubmit requested" : ""}</span>
+                    <div class="flex flex-wrap gap-2">
+                      <button type="button" class="btn-ghost" data-act="edit-fixture" data-id="${f.id}">${open ? "CLOSE" : "EDIT"}</button>
+                      ${
+                        f.status !== "played"
+                          ? `<form data-form="SKIPACCEPT" data-id="${f.id}"><input type="hidden" name="skipVisitorAccept" value="${f.scheduleAcceptRequired === false ? "0" : "1"}"><button class="btn-ghost">${f.scheduleAcceptRequired === false ? "REQUIRE ACCEPT" : "SKIP ACCEPT (THIS MATCH)"}</button></form>`
+                          : ""
+                      }
+                      <form data-form="DELETEFIXTURE" data-id="${f.id}"><button class="btn-ghost">REMOVE</button></form>
+                    </div>
                   </div>
-                </div>`
-            )
+                  ${open ? manageFixtureEditForm(f, players) : ""}
+                </div>`;
+            })
             .join("");
           return `<details class="structure-fold" data-manage-league-id="${g.league.id}"${openIds.has(Number(g.league.id)) ? " open" : ""}>
             <summary>
@@ -2314,7 +2350,7 @@ function manageFixturesDesk(d, allLeagueOptions) {
     id: "manage-fixtures",
     title: "Manage fixtures",
     meta: `${d.fixtures.length} match${d.fixtures.length === 1 ? "" : "es"}`,
-    body: `<p class="text-sm text-muted">Open a league to skip accept or delete a match. Clear a whole league (optionally one season) before generating a new season — only one season per league is allowed.</p>
+    body: `<p class="text-sm text-muted">Open a league, then edit or remove a match. Played matches can be edited or removed. The score stays unless you change the legs. Clear a whole league (optionally one season) before generating a new season — only one season per league is allowed.</p>
       <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="CLEARLEAGUE">
         <select name="leagueId" required><option value="">League</option>${allLeagueOptions}</select>
         <input name="season" type="number" min="1" placeholder="Season (blank = all)">
@@ -2893,6 +2929,15 @@ document.addEventListener("click", async (e) => {
     toggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
     return;
   }
+  const editFixture = e.target.closest("[data-act=edit-fixture]");
+  if (editFixture) {
+    e.preventDefault();
+    const id = Number(editFixture.dataset.id);
+    state.editingFixtureId = Number(state.editingFixtureId) === id ? null : id;
+    state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
+    render();
+    return;
+  }
   const pick = e.target.closest("[data-act=pick-result]");
   if (pick) {
     e.preventDefault();
@@ -3385,8 +3430,14 @@ document.addEventListener("submit", async (e) => {
       state.deskFolds = { ...(state.deskFolds || {}), "overwrite-stats": true };
       state.notice = "Result cleared.";
       render();
+    } else if (kind === "EDITFIXTURE") {
+      await api(`/api/admin/fixtures/${form.dataset.id}`, { method: "POST", body: JSON.stringify(fd) });
+      state.editingFixtureId = null;
+      state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
+      state.notice = "Fixture updated.";
+      render();
     } else if (kind === "DELETEFIXTURE") {
-      if (!window.confirm("Delete this match?")) return;
+      if (!window.confirm("Remove this match? This cannot be undone.")) return;
       await api(`/api/admin/fixtures/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
       if (Number(state.overrideFixtureId) === Number(form.dataset.id)) state.overrideFixtureId = null;
       state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true, "overwrite-stats": deskFoldOpen("overwrite-stats") };
