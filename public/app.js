@@ -1110,6 +1110,25 @@ async function loadNewsMeta() {
   }
 }
 
+function homeHighlights(highlights) {
+  if (!highlights?.paragraphs?.length) return "";
+  const body = highlights.paragraphs
+    .map(
+      (parts) =>
+        `<p>${parts
+          .map((part) => (part.href ? `<a class="gold" href="${esc(part.href)}">${esc(part.text)}</a>` : esc(part.text)))
+          .join("")}</p>`
+    )
+    .join("");
+  return `<section class="bg-background px-4 pt-10 sm:px-6">
+    <div class="mx-auto max-w-3xl">
+      ${panel(
+        `<div class="text-xs font-bold tracking-widest gold">${esc(highlights.title || "Around the league")}</div>
+        <div class="mt-3 space-y-3 text-sm leading-relaxed">${body}</div>`
+      )}
+    </div>
+  </section>`;
+}
 async function pageHome() {
   const [stats, content, regionals, tickerData] = await Promise.all([
     api("/api/stats"),
@@ -1152,6 +1171,7 @@ async function pageHome() {
         </div>
       </div>
     </section>
+    ${homeHighlights(stats.highlights)}
     ${homeNewsSection}
     <section class="bg-background px-4 py-12 sm:px-6 sm:py-20">
       <div class="mx-auto max-w-5xl text-center">
@@ -1352,6 +1372,15 @@ async function pageLeague(slug, id) {
           : `<div class="text-xs font-bold tracking-widest gold">THE ADMIN</div><p class="mt-1 text-sm text-muted">No division admin assigned yet. Players can still reach league staff from About Us.</p>`,
         "mt-4"
       )}
+      ${
+        d.review?.paragraphs?.length
+          ? panel(
+              `<div class="text-xs font-bold tracking-widest gold">${esc(d.review.title || "What's happening")}</div>
+              <div class="mt-3 space-y-3 text-sm leading-relaxed">${d.review.paragraphs.map((paragraph) => `<p>${esc(paragraph)}</p>`).join("")}</div>`,
+              "mt-4"
+            )
+          : ""
+      }
       <div class="mt-4 flex gap-2">
         <a href="/regionals/${slug}/leagues/${id}" class="${tab === "table" ? "btn-gold" : "btn-ghost"}">TABLE</a>
         <a href="/regionals/${slug}/leagues/${id}?tab=fixtures" class="${tab === "fixtures" ? "btn-gold" : "btn-ghost"}">FIXTURES</a>

@@ -7,6 +7,8 @@ import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fillMissingRosterByes } from "./rosterFixtures.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
+import { divisionReview } from "./divisionReview.js";
+import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
 import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
@@ -1768,6 +1770,18 @@ function standingsForLeague(db, leagueId) {
     })
     .sort((a, b) => b.points - a.points || b.diff - a.diff || b.legsFor - a.legsFor);
 }
+function publicLeagueHighlights(db) {
+  const divisions = [...(db.leagues || [])].sort(compareLeagueOrder).map((league) => {
+    const regional = db.regionals.find((item) => item.id === league.regionalId);
+    return {
+      name: divisionName(league),
+      href: `/regionals/${regional?.slug || "international"}/leagues/${league.id}`,
+      standings: standingsForLeague(db, league.id),
+      fixtures: playerVisibleFixtures(db, (db.fixtures || []).filter((fixture) => fixture.leagueId === league.id)),
+    };
+  });
+  return leagueHighlights(divisions);
+}
 function stats(db) {
   const played = db.fixtures.filter((f) => f.status === "played");
   return {
@@ -2193,7 +2207,7 @@ async function handleApi(req, res, url) {
       profiles: publicStaffProfiles(db),
     });
   }
-  if (method === "GET" && p === "/api/stats") return json(res, 200, stats(db));
+  if (method === "GET" && p === "/api/stats") return json(res, 200, { ...stats(db), highlights: publicLeagueHighlights(db) });
   if (method === "GET" && p === "/api/regionals") {
     const regionals = sortedRegionals(db).map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
     return json(res, 200, { ok: true, regionals });
@@ -2266,13 +2280,16 @@ async function handleApi(req, res, url) {
     if (!league) return json(res, 404, { ok: false, error: "Not found" });
     const regional = db.regionals.find((r) => r.id === league.regionalId);
     const leagueFixtures = db.fixtures.filter((f) => f.leagueId === league.id);
+    const standings = standingsForLeague(db, league.id);
+    const fixtures = playerVisibleFixtures(db, leagueFixtures);
     return json(res, 200, {
       ok: true,
       league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) },
       regional,
-      standings: standingsForLeague(db, league.id),
+      standings,
       divisionAdmins: divisionAdminsForLeague(db, league.id),
-      fixtures: playerVisibleFixtures(db, leagueFixtures),
+      fixtures,
+      review: divisionReview({ divisionName: divisionName(league), standings, fixtures }),
       ...fixturePublishMeta(leagueFixtures),
     });
   }
