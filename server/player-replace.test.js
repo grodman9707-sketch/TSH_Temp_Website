@@ -66,7 +66,8 @@ try {
   await waitHealth(port, child);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  check("place form explains open seats", appJs.includes("takes over the unplayed fixtures left behind"));
+  check("place form explains open seats", appJs.includes("takes over the fixtures left behind"));
+  check("played results keep their score under the new name", appJs.includes("Played results stay exactly as they are"));
   check("remove form explains byes", appJs.includes("Unplayed matches become byes for the opponent"));
   check("delete form keeps played results", appJs.includes("Played results stay on the record"));
 
@@ -181,7 +182,10 @@ try {
       removedPlayed?.awayLegs === 2
   );
   const seat = (afterRemove.data.openSeats || []).find((s) => s.leagueId === leagueId);
-  check("admin desk lists the open seat", seat?.playerName === "Alpha Seat" && seat?.matches === 1);
+  check(
+    "admin desk lists the open seat",
+    seat?.playerName === "Alpha Seat" && seat?.matches === 1 && seat?.playedMatches === 1
+  );
 
   const charlieMatches = await api(port, "/api/my-fixtures", { token: charlie.token });
   const charlieBye = (charlieMatches.data.fixtures || []).find((f) => f.id === openId);
@@ -212,9 +216,16 @@ try {
       inherited?.week === 2
   );
   check(
-    "replacement does not inherit the played result",
-    playedAfter?.homeId === alpha.id && playedAfter?.status === "played" && playedAfter?.homeLegs === 5
+    "played result keeps its score and shows the replacement's name",
+    playedAfter?.homeId === delta.id &&
+      playedAfter?.homeName === "Delta Seat" &&
+      playedAfter?.awayId === bravo.id &&
+      playedAfter?.status === "played" &&
+      playedAfter?.homeLegs === 5 &&
+      playedAfter?.awayLegs === 2
   );
+  const deltaRow = (await api(port, `/api/leagues/${leagueId}`)).data.standings?.find((row) => row.playerId === delta.id);
+  check("the replacement is credited with that played result", deltaRow?.played === 1 && deltaRow?.won === 1);
   check("open seat closes after it is filled", !(afterSeat.data.openSeats || []).some((s) => s.leagueId === leagueId));
 
   const deltaMatches = await api(port, "/api/my-fixtures", { token: delta.token });
@@ -324,12 +335,20 @@ try {
   );
   check("deleted player's open match is a bye", deletedOpen?.bye === true && deletedOpen?.awayId === quinn.id && deletedOpen?.homeName === "Bye");
   const samIn = await place(sam.id, deleteLeague);
-  check("a placed player fills the deleted player's seat", samIn.data.filledSeat?.replacedName === "Pat Seat" && samIn.data.filledSeat?.matches === 1);
-  const afterSam = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), deleteLeague);
   check(
-    "new player is in the open fixture only",
+    "a placed player fills the deleted player's seat",
+    samIn.data.filledSeat?.replacedName === "Pat Seat" && samIn.data.filledSeat?.matches === 1 && samIn.data.filledSeat?.playedRenamed === 1
+  );
+  const afterSam = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), deleteLeague);
+  const samPlayed = afterSam.find((f) => f.id === patPlayed.data.fixture.id);
+  check(
+    "new player takes the open fixture and the name on the played result",
     afterSam.find((f) => f.id === patOpen.data.fixture.id)?.homeId === sam.id &&
-      afterSam.find((f) => f.id === patPlayed.data.fixture.id)?.homeName === "Pat Seat"
+      samPlayed?.homeId === sam.id &&
+      samPlayed?.homeName === "Sam Seat" &&
+      samPlayed?.status === "played" &&
+      samPlayed?.homeLegs === 5 &&
+      samPlayed?.awayLegs === 3
   );
 
   const dropLeague = await addDivision("Seat Drop");
@@ -409,6 +428,28 @@ try {
   check(
     "adding a player into the division fills the open seat",
     created.status === 200 && created.data.filledSeat?.replacedName === "Mover Seat" && createdRow?.homeId === created.data.user?.id && createdRow?.awayId === stay.id && createdRow?.status === "scheduled"
+  );
+
+  const byeLeague = await addDivision("Seat Bye");
+  const byePlayer = await addPlayer("Bye Holder");
+  const byeMate = await addPlayer("Bye Mate");
+  await place(byePlayer.id, byeLeague);
+  await place(byeMate.id, byeLeague);
+  const weekBye = await addFixture(byeLeague, byePlayer.id, "bye", 1);
+  const weekMatch = await addFixture(byeLeague, byePlayer.id, byeMate.id, 2);
+  check("bye week created", weekBye.status === 200 && weekBye.data.fixture?.bye === true);
+  const byeId = weekBye.data.fixture.id;
+  await api(port, "/api/admin/unplace-player", { method: "POST", token: ownerTok, body: { userId: byePlayer.id, leagueId: byeLeague } });
+  const parked = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), byeLeague).find((f) => f.id === byeId);
+  check("a solo bye stays in the draw while that seat is open", parked?.bye === true && parked?.status === "bye" && parked?.homeId == null && parked?.week === 1);
+  const byeBack = await place(byePlayer.id, byeLeague);
+  const restoredBye = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), byeLeague);
+  check(
+    "the same player gets the bye week back with the other match",
+    byeBack.data.filledSeat?.matches === 2 &&
+      restoredBye.find((f) => f.id === byeId)?.homeId === byePlayer.id &&
+      restoredBye.find((f) => f.id === byeId)?.bye === true &&
+      restoredBye.find((f) => f.id === weekMatch.data.fixture.id)?.awayId === byeMate.id
   );
 } catch (err) {
   failures++;

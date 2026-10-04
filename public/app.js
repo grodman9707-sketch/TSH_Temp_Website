@@ -208,6 +208,16 @@ function userLeagueIds(u) {
   if (u?.leagueId) return [Number(u.leagueId)];
   return [];
 }
+function takenSeatNote(seat) {
+  if (!seat) return "";
+  const open = Number(seat.matches) || 0;
+  const played = Number(seat.playedRenamed) || 0;
+  const bits = [];
+  if (open) bits.push(`${open} unplayed match${open === 1 ? "" : "es"}`);
+  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} now in their name, score unchanged`);
+  if (!bits.length) return "";
+  return `They took over ${seat.replacedName}'s ${bits.join(" and ")}.`;
+}
 function screenshotUrl(id, slot = 1) {
   return `/api/fixtures/${id}/screenshot?slot=${slot}&token=${encodeURIComponent(token())}`;
 }
@@ -2649,13 +2659,13 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the unplayed fixtures left behind. Opponents have a bye until then.</p>
+        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. Played results stay exactly as they are, except their name replaces the player who left. Opponents have a bye until then.</p>
         ${
           (d.openSeats || []).length
             ? `<ul class="mt-3 space-y-1 text-sm text-muted">${d.openSeats
                 .map(
                   (seat) =>
-                    `<li>${esc(seat.leagueTitle)} — open seat for ${esc(seat.playerName)} (${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"})</li>`
+                    `<li>${esc(seat.leagueTitle)} — open seat for ${esc(seat.playerName)} (${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}${seat.playedMatches ? `, ${seat.playedMatches} played result${seat.playedMatches === 1 ? "" : "s"} keeping the score` : ""})</li>`
                 )
                 .join("")}</ul>`
             : ""
@@ -3313,8 +3323,9 @@ document.addEventListener("submit", async (e) => {
       const titles = d.user?.leagueTitles || [];
       const seat = d.filledSeat;
       const placedIn = titles[titles.length - 1] || "that division";
-      if (seat?.matches) {
-        state.notice = `Placed in ${placedIn}. They took over ${seat.replacedName}'s ${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}.`;
+      const seatNote = takenSeatNote(seat);
+      if (seatNote) {
+        state.notice = `Placed in ${placedIn}. ${seatNote}`;
       } else if ((d.user?.regionalIds || []).length > 1 && !d.fullyPlaced) {
         state.notice = `Placed in ${placedIn}. They can still be placed in their other league.`;
       } else {
@@ -3338,9 +3349,8 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "ADDPLAYER") {
       const d = await api("/api/admin/create-player", { method: "POST", body: JSON.stringify(fd) });
       const seat = d.filledSeat;
-      state.notice = seat?.matches
-        ? `Player added. They took over ${seat.replacedName}'s ${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}.`
-        : "Player added.";
+      const seatNote = takenSeatNote(seat);
+      state.notice = seatNote ? `Player added. ${seatNote}` : "Player added.";
       render();
     } else if (kind === "UNPLACE") {
       const d = await api("/api/admin/unplace-player", { method: "POST", body: JSON.stringify(fd) });
