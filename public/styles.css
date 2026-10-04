@@ -1220,6 +1220,44 @@ input, select, textarea {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.875rem;
 }
+.manage-fixture-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.manage-fixture-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+  width: 100%;
+}
+.manage-fixture-edit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.55rem;
+}
+.manage-fixture-edit label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #999999;
+}
+.manage-fixture-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+}
+.manage-fixture-edit-note {
+  margin: 0.35rem 0 0.15rem;
+  font-size: 0.75rem;
+  color: #999999;
+}
 .structure-add-div,
 .structure-add-region-form {
   display: grid;

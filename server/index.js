@@ -3683,6 +3683,71 @@ async function handleApi(req, res, url) {
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
+    const editMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)$/);
+    if (method === "POST" && editMatch) {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can edit fixtures" });
+      const fixture = db.fixtures.find((f) => f.id === Number(editMatch[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      const week = Number(body.week);
+      if (!Number.isInteger(week) || week < 1) return json(res, 400, { ok: false, error: "Enter a week number" });
+      const weekStart = String(body.weekStart || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) return json(res, 400, { ok: false, error: "Enter the week start date" });
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "").slice(0, 10)) ? String(body.date).slice(0, 10) : weekStart;
+      const homeBye = String(body.homeId || "").trim().toLowerCase() === "bye";
+      const awayBye = String(body.awayId || "").trim().toLowerCase() === "bye";
+      if (homeBye && awayBye) return json(res, 400, { ok: false, error: "A bye needs one player" });
+      const played = fixture.status === "played";
+      if (played && (homeBye || awayBye)) return json(res, 400, { ok: false, error: "A played match needs both players" });
+      const resolveSide = (raw, isBye) => {
+        if (isBye) return { user: null };
+        const player = db.users.find((x) => x.id === Number(raw));
+        if (!player) return { error: "Choose both players" };
+        if (!inLeague(player, fixture.leagueId)) return { error: "Both players must already be placed in that league" };
+        return { user: player };
+      };
+      const homeSide = resolveSide(body.homeId, homeBye);
+      const awaySide = resolveSide(body.awayId, awayBye);
+      if (homeSide.error) return json(res, 400, { ok: false, error: homeSide.error });
+      if (awaySide.error) return json(res, 400, { ok: false, error: awaySide.error });
+      if (homeSide.user && awaySide.user && homeSide.user.id === awaySide.user.id) {
+        return json(res, 400, { ok: false, error: "Choose two different players" });
+      }
+      const legsSent = body.homeLegs !== undefined && body.homeLegs !== "" && body.awayLegs !== undefined && body.awayLegs !== "";
+      if (played && legsSent) {
+        const legsError = validateLegs(body.homeLegs, body.awayLegs);
+        if (legsError) return json(res, 400, { ok: false, error: legsError });
+      }
+      fixture.week = week;
+      fixture.weekStart = weekStart;
+      fixture.date = date;
+      fixture.time = homeBye || awayBye ? "" : String(body.time || "").slice(0, 5);
+      fixture.homeId = homeSide.user?.id || null;
+      fixture.awayId = awaySide.user?.id || null;
+      if (homeBye || awayBye) {
+        releaseOpenMatch(fixture);
+        fixture.homeId = homeSide.user?.id || null;
+        fixture.awayId = awaySide.user?.id || null;
+      } else if (fixture.status === "bye") {
+        fixture.bye = false;
+        fixture.status = "scheduled";
+        fixture.notify = freshFixtureNotify();
+      }
+      if (played && legsSent) {
+        fixture.homeLegs = Number(body.homeLegs);
+        fixture.awayLegs = Number(body.awayLegs);
+        fixture.status = "played";
+        fixture.bye = false;
+      }
+      const homeLabel = homeBye ? "Bye" : homeSide.user.name;
+      const awayLabel = awayBye ? "Bye" : awaySide.user.name;
+      recordStaff(db, user, "edit_fixture", {
+        summary: `Edited ${homeLabel} vs ${awayLabel} (week ${fixture.week})`,
+        fixtureId: fixture.id,
+        leagueId: fixture.leagueId,
+      });
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    }
     const deleteMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/delete$/);
     if (method === "POST" && deleteMatch) {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can delete fixtures" });

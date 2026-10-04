@@ -23,8 +23,9 @@ check("app.js parses", parsed.status === 0);
 if (parsed.status !== 0 && parsed.stderr) console.error(parsed.stderr);
 
 check("Manage fixtures is a collapsed desk fold", appJs.includes('id: "manage-fixtures"') && appJs.includes("manageFixturesDesk") && appJs.includes("data-manage-league-id"));
-check("Manage fixtures groups matches by league", appJs.includes("fixturesGroupedByLeague") && appJs.includes("Open a league to skip accept"));
+check("Manage fixtures groups matches by league", appJs.includes("fixturesGroupedByLeague") && appJs.includes("Open a league, then edit or remove a match"));
 check("skip-accept still exists inside the fold", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("CLEAR FIXTURES"));
+check("each fixture box can be edited or removed, including played matches", appJs.includes('data-act="edit-fixture"') && appJs.includes("EDITFIXTURE") && appJs.includes("Played matches can be edited or removed"));
 check("Overwrite stats uses league and match selects", appJs.includes('data-act="override-league"') && appJs.includes('data-act="override-match"') && appJs.includes("overwriteStatsDesk"));
 check("Overwrite stats does not dump every match as chips", !appJs.includes("statsDesk(d.fixtures, state.selectedResultId") && appJs.includes("hidePicker: true"));
 check("Approve match stats still uses the waiting-list picker", appJs.includes("statsDesk(review, state.selectedResultId"));
