@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
+import { fillMissingRosterByes } from "./rosterFixtures.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
@@ -1223,25 +1224,33 @@ function releaseOpenMatch(fixture) {
   fixture.status = "bye";
   fixture.notify = freshFixtureNotify();
 }
+function rememberVacatedSeat(byLeague, leagueId, seat) {
+  const lid = Number(leagueId);
+  const bucket = byLeague.get(lid) || [];
+  bucket.push(seat);
+  byLeague.set(lid, bucket);
+}
 function vacatePlayerFixtures(db, user, leagueId) {
   ensureVacantSlots(db);
   const uid = Number(user?.id);
   const onlyLeague = Number(leagueId) || 0;
   const byLeague = new Map();
   const dropped = [];
+  const label = user.nickname || user.name || "Player";
   for (const fixture of db.fixtures || []) {
     const side = fixtureSideForUser(fixture, uid);
     if (!side) continue;
     if (onlyLeague && Number(fixture.leagueId) !== onlyLeague) continue;
     if (fixture.status === "played") {
-      const label = user.nickname || user.name || "Player";
       if (side === "home") fixture.homeArchiveName = label;
       else fixture.awayArchiveName = label;
+      rememberVacatedSeat(byLeague, fixture.leagueId, { fixtureId: fixture.id, side, played: true });
       continue;
     }
     const otherSide = otherFixtureSide(side);
     const otherId = fixtureSidePlayerId(fixture, otherSide);
-    if (!otherId && !vacantSeatHolds(db, fixture.id, otherSide)) {
+    const soloBye = !otherId && !vacantSeatHolds(db, fixture.id, otherSide) && (fixture.bye || fixture.status === "bye");
+    if (!otherId && !vacantSeatHolds(db, fixture.id, otherSide) && !soloBye) {
       removeUpload(shotFile(fixture, 1));
       removeUpload(shotFile(fixture, 2));
       dropped.push(fixture.id);
@@ -1250,10 +1259,7 @@ function vacatePlayerFixtures(db, user, leagueId) {
     releaseOpenMatch(fixture);
     if (side === "home") fixture.homeId = null;
     else fixture.awayId = null;
-    const lid = Number(fixture.leagueId);
-    const bucket = byLeague.get(lid) || [];
-    bucket.push({ fixtureId: fixture.id, side });
-    byLeague.set(lid, bucket);
+    rememberVacatedSeat(byLeague, fixture.leagueId, { fixtureId: fixture.id, side, played: false });
   }
   if (dropped.length) {
     const gone = new Set(dropped);
@@ -1267,11 +1273,11 @@ function vacatePlayerFixtures(db, user, leagueId) {
       id: nextId(db.vacantSlots),
       leagueId: lid,
       userId: uid,
-      name: user.nickname || user.name || "Player",
+      name: label,
       createdAt: new Date().toISOString(),
       seats,
     });
-    byes += seats.length;
+    byes += seats.filter((seat) => !seat.played).length;
   }
   return byes;
 }
@@ -1285,10 +1291,26 @@ function claimVacantSeat(db, user, leagueId) {
     .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || Number(a.id) - Number(b.id))[0];
   if (!slot) return null;
   let matches = 0;
+  let playedRenamed = 0;
   for (const seat of slot.seats || []) {
     const fixture = (db.fixtures || []).find((item) => Number(item.id) === Number(seat.fixtureId));
     if (!fixture || Number(fixture.leagueId) !== lid) continue;
     if (seat.side !== "home" && seat.side !== "away") continue;
+    if (seat.played || fixture.status === "played") {
+      if (seat.side === "home") {
+        fixture.homeId = user.id;
+        fixture.homeArchiveName = "";
+      } else {
+        fixture.awayId = user.id;
+        fixture.awayArchiveName = "";
+      }
+      // The scoreline stays. The replacement takes only the legs on their
+      // side. Average, 180s, checkout, and visit bands from the player who
+      // left do not move. The opponent's side is left untouched.
+      clearSidePerformance(fixture, seat.side);
+      playedRenamed += 1;
+      continue;
+    }
     if (seat.side === "home") {
       fixture.homeId = user.id;
       fixture.homeArchiveName = "";
@@ -1308,8 +1330,30 @@ function claimVacantSeat(db, user, leagueId) {
     matches += 1;
   }
   db.vacantSlots = db.vacantSlots.filter((item) => item.id !== slot.id);
-  if (!matches) return null;
-  return { replacedName: slot.name || "Player", matches, leagueId: lid };
+  if (!matches && !playedRenamed) return null;
+  return { replacedName: slot.name || "Player", matches, playedRenamed, leagueId: lid };
+}
+function clearSidePerformance(fixture, side) {
+  const prefix = side === "home" ? "home" : "away";
+  fixture[`${prefix}Avg`] = 0;
+  fixture[`${prefix}Checkout`] = 0;
+  fixture[`${prefix}BestLeg`] = null;
+  for (const band of [60, 80, 100, 120, 140, 160, 180]) fixture[`${prefix}${band}`] = 0;
+  fixture[`${prefix}OneEighties`] = 0;
+  if (prefix === "home") fixture.home180 = 0;
+  else fixture.away180 = 0;
+  const home180s = Number(fixture.home180 || fixture.homeOneEighties) || 0;
+  const away180s = Number(fixture.away180 || fixture.awayOneEighties) || 0;
+  fixture.oneEighties = home180s + away180s;
+  fixture.topCheckout = Math.max(Number(fixture.homeCheckout) || 0, Number(fixture.awayCheckout) || 0);
+}
+function takenSeatPhrase(filledSeat) {
+  const open = Number(filledSeat?.matches) || 0;
+  const played = Number(filledSeat?.playedRenamed) || 0;
+  const bits = [];
+  if (open) bits.push(`${open} unplayed fixture${open === 1 ? "" : "s"}`);
+  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} (legs only)`);
+  return `${filledSeat?.replacedName || "Player"}'s ${bits.join(" and ") || "open seat"}`;
 }
 function publicOpenSeats(db, user) {
   ensureVacantSlots(db);
@@ -1322,7 +1366,8 @@ function publicOpenSeats(db, user) {
       leagueId: slot.leagueId,
       leagueTitle: leagueTitle(db, db.leagues.find((l) => Number(l.id) === Number(slot.leagueId)) || { name: "Division", regionalId: 0 }),
       playerName: slot.name || "Player",
-      matches: (slot.seats || []).length,
+      matches: (slot.seats || []).filter((seat) => !seat.played).length,
+      playedMatches: (slot.seats || []).filter((seat) => seat.played).length,
       createdAt: slot.createdAt || "",
     }));
 }
@@ -1555,6 +1600,12 @@ function migrate(db) {
         changed = true;
       }
     }
+  }
+  // One pass: a roster player who is the only name missing from an existing
+  // week gets that week as a bye. Played scores are not rewritten here.
+  if (!structureState(db).rosterWeekByesFilled) {
+    if (fillMissingRosterByes(db)) changed = true;
+    if (setStructureFlag(db, "rosterWeekByesFilled")) changed = true;
   }
   for (const f of db.fixtures) {
     if (!("screenshot1File" in f)) {
@@ -3345,7 +3396,7 @@ async function handleApi(req, res, url) {
       resolveMatchingLeagueRequests(db, u);
       recordStaff(db, user, "place_player", {
         summary: filledSeat
-          ? `Placed ${u.name} in ${leagueTitle(db, league)}, taking over ${filledSeat.replacedName}'s ${filledSeat.matches} unplayed fixture${filledSeat.matches === 1 ? "" : "s"}`
+          ? `Placed ${u.name} in ${leagueTitle(db, league)}, taking over ${takenSeatPhrase(filledSeat)}`
           : `Placed ${u.name} in ${leagueTitle(db, league)}`,
         leagueId: league.id,
         targetUserId: u.id,
@@ -3585,7 +3636,7 @@ async function handleApi(req, res, url) {
       db.users.push(created);
       recordStaff(db, user, "create_player", {
         summary: filledSeat
-          ? `Created player ${created.name}, taking over ${filledSeat.replacedName}'s ${filledSeat.matches} unplayed fixture${filledSeat.matches === 1 ? "" : "s"}`
+          ? `Created player ${created.name}, taking over ${takenSeatPhrase(filledSeat)}`
           : `Created player ${created.name}`,
         targetUserId: created.id,
         leagueId: created.leagueId || null,
