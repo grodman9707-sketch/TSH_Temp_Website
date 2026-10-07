@@ -1,5 +1,6 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
+import { placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "./placePlayers.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -2464,6 +2465,22 @@ async function pageAdmin() {
     const tag = tags.length ? ` · ${tags.join(" · ")}` : "";
     return `<option value="${p.id}">${esc(p.name)}${tag}${choiceLabel} · ${esc(where)}</option>`;
   };
+  const placeChoices = unplacedPlaceChoices(everyone);
+  const placeNameCounts = new Map();
+  for (const p of placeChoices) {
+    const key = String(p.name || "").trim().toLowerCase();
+    placeNameCounts.set(key, (placeNameCounts.get(key) || 0) + 1);
+  }
+  const placePlayerOption = (p) => {
+    const tags = [];
+    if (hasRole(p, "owner")) tags.push("Owner");
+    if (hasRole(p, "head_admin")) tags.push("Head Admin");
+    if (hasRole(p, "admin")) tags.push("Division Admin");
+    const nameKey = String(p.name || "").trim().toLowerCase();
+    const crowded = (placeNameCounts.get(nameKey) || 0) > 1;
+    return `<option value="${p.id}">${esc(placePlayerOptionLabel(p, { duplicateName: crowded, roles: tags }))}</option>`;
+  };
+  const openSeatRows = uniqueOpenSeats(d.openSeats);
   const pending = d.applications;
   const review = d.fixtures.filter((f) => f.needsConfirm);
   const selectedReview = review.find((f) => f.id === Number(state.selectedResultId)) || review[0];
@@ -2724,10 +2741,10 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Place players in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
+        <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
         ${
-          (d.openSeats || []).length
-            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${d.openSeats
+          openSeatRows.length
+            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${openSeatRows
                 .map(
                   (seat) =>
                     `<li>${esc(seat.leagueTitle)} — open seat for ${esc(seat.playerName)} (${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}${seat.playedMatches ? `, ${seat.playedMatches} played result${seat.playedMatches === 1 ? "" : "s"} keeping the score` : ""})</li>`
@@ -2735,11 +2752,15 @@ async function pageAdmin() {
                 .join("")}</ul>`
             : ""
         }
-        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
-          <select name="userId" required><option value="">Player</option>${everyone.map(playerOption).join("")}</select>
+        ${
+          placeChoices.length
+            ? `<form class="mt-3 grid gap-3 md:grid-cols-3" data-form="PLACE">
+          <select name="userId" required><option value="">Player</option>${placeChoices.map(placePlayerOption).join("")}</select>
           <select name="leagueId" required><option value="">League</option>${leagueOptions}</select>
           <button class="btn-gold">PLACE</button>
-        </form>`, "mt-4")}
+        </form>`
+            : `<p class="mt-3 text-sm text-muted">Every registered player is already in a division.</p>`
+        }`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Fixtures</h2>
         <p class="mt-1 text-sm text-muted">${
           (state.fixtureBuilder?.mode || "season") === "individual"

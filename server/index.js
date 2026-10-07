@@ -1169,8 +1169,50 @@ function placeUserInLeague(db, u, league) {
   u.leagueId = next[0] || null;
   return null;
 }
+function vacantSeatKey(seat) {
+  const side = seat?.side === "away" ? "away" : "home";
+  return `${Number(seat?.fixtureId)}:${side}`;
+}
+function vacantPlayerKey(slot) {
+  const uid = Number(slot?.userId);
+  const who = uid ? `id:${uid}` : `name:${normIdent(slot?.name)}`;
+  return `${Number(slot?.leagueId)}:${who}`;
+}
 function ensureVacantSlots(db) {
   if (!Array.isArray(db.vacantSlots)) db.vacantSlots = [];
+  const ordered = db.vacantSlots
+    .slice()
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || Number(a.id) - Number(b.id));
+  const groups = new Map();
+  const next = [];
+  const seenSeat = new Set();
+  for (const slot of ordered) {
+    const key = vacantPlayerKey(slot);
+    let target = groups.get(key);
+    if (!target) {
+      target = {
+        id: slot.id,
+        leagueId: Number(slot.leagueId),
+        userId: Number(slot.userId) || null,
+        name: slot.name || "Player",
+        createdAt: slot.createdAt || "",
+        seats: [],
+      };
+      groups.set(key, target);
+      next.push(target);
+    } else if (!target.name && slot.name) {
+      target.name = slot.name;
+    }
+    for (const seat of slot.seats || []) {
+      const side = seat?.side === "away" ? "away" : seat?.side === "home" ? "home" : "";
+      if (!side) continue;
+      const unique = `${Number(slot.leagueId)}:${vacantSeatKey({ ...seat, side })}`;
+      if (seenSeat.has(unique)) continue;
+      seenSeat.add(unique);
+      target.seats.push({ fixtureId: Number(seat.fixtureId), side, played: Boolean(seat.played) });
+    }
+  }
+  db.vacantSlots = next.filter((slot) => (slot.seats || []).length);
 }
 function freshFixtureNotify() {
   return { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
@@ -1271,15 +1313,30 @@ function vacatePlayerFixtures(db, user, leagueId) {
   let byes = 0;
   for (const [lid, seats] of byLeague) {
     if (!seats.length) continue;
-    db.vacantSlots.push({
-      id: nextId(db.vacantSlots),
-      leagueId: lid,
-      userId: uid,
-      name: label,
-      createdAt: new Date().toISOString(),
-      seats,
-    });
-    byes += seats.filter((seat) => !seat.played).length;
+    const existing = db.vacantSlots.find((slot) => Number(slot.leagueId) === Number(lid) && Number(slot.userId) === uid);
+    const added = [];
+    if (existing) {
+      const seen = new Set((existing.seats || []).map((seat) => vacantSeatKey(seat)));
+      for (const seat of seats) {
+        const key = vacantSeatKey(seat);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        existing.seats.push(seat);
+        added.push(seat);
+      }
+      if (label && existing.name === "Player") existing.name = label;
+    } else {
+      db.vacantSlots.push({
+        id: nextId(db.vacantSlots),
+        leagueId: lid,
+        userId: uid,
+        name: label,
+        createdAt: new Date().toISOString(),
+        seats,
+      });
+      added.push(...seats);
+    }
+    byes += added.filter((seat) => !seat.played).length;
   }
   return byes;
 }
@@ -1366,6 +1423,7 @@ function publicOpenSeats(db, user) {
     .map((slot) => ({
       id: slot.id,
       leagueId: slot.leagueId,
+      userId: Number(slot.userId) || null,
       leagueTitle: leagueTitle(db, db.leagues.find((l) => Number(l.id) === Number(slot.leagueId)) || { name: "Division", regionalId: 0 }),
       playerName: slot.name || "Player",
       matches: (slot.seats || []).filter((seat) => !seat.played).length,
