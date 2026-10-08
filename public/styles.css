@@ -332,6 +332,12 @@ td { padding: .75rem; border-top: 1px solid rgba(255,255,255,.06); }
   z-index: 1;
   background: rgba(16, 21, 34, 0.96);
 }
+tr.is-injured td {
+  background: rgba(232, 180, 37, 0.16);
+}
+.table-wrap tr.is-injured td:nth-child(1) {
+  background: #2c2616;
+}
 .staff-activity table { min-width: 48rem; font-size: 0.85rem; }
 .staff-activity tr.staff-idle td { color: #c9a227; }
 .staff-log {

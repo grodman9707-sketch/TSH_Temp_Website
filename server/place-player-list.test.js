@@ -67,8 +67,8 @@ const spotRows = openSpotsByDivision(
   ]
 );
 check("duplicate departed players count as one open spot", spotRows.find((row) => row.leagueId === 9)?.openSpots === 2);
-check("a division with nobody to replace shows zero", spotRows.find((row) => row.leagueId === 11)?.openSpots === 0 && openSpotLabel(0) === "0 open spots");
-check("one open spot uses the singular", openSpotLabel(1) === "1 open spot" && spotRows.find((row) => row.leagueId === 10)?.openSpots === 1);
+check("a division with nobody to replace shows zero", spotRows.find((row) => row.leagueId === 11)?.openSpots === 0 && openSpotLabel(0) === "0 spots to fill");
+check("one open spot uses the singular", openSpotLabel(1) === "1 spot to fill" && spotRows.find((row) => row.leagueId === 10)?.openSpots === 1);
 check("open-spot rows do not carry the replaced player's name", spotRows.every((row) => !("playerName" in row)));
 
 async function waitHealth(port, child) {

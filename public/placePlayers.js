@@ -119,7 +119,7 @@ export function uniqueOpenSeats(seats) {
 
 export function openSpotLabel(count) {
   const n = Number(count) || 0;
-  return n === 1 ? "1 open spot" : `${n} open spots`;
+  return n === 1 ? "1 spot to fill" : `${n} spots to fill`;
 }
 
 // One open spot is one player who can still be replaced in that division.

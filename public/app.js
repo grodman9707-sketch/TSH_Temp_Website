@@ -213,6 +213,13 @@ function userLeagueIds(u) {
 function isInjuredIn(u, leagueId) {
   return Array.isArray(u?.injuredLeagueIds) && u.injuredLeagueIds.map(Number).includes(Number(leagueId));
 }
+function standingRows(rows) {
+  let place = 0;
+  return (rows || []).map((row) => {
+    const injured = Boolean(row.injured);
+    return { ...row, injured, rank: injured ? "*" : String(++place) };
+  });
+}
 function takenSeatNote(seat) {
   if (!seat) return "";
   const open = Number(seat.matches) || 0;
@@ -1586,12 +1593,12 @@ async function pageLeague(slug, id) {
                     emptyFallback: "No fixtures yet. Division admins can generate a season from the Admin desk.",
                   })
             }</div>`
-          : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
+          : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${standingRows(d.standings)
               .map(
-                (row, i) =>
-                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a>${row.injured ? ` <span class="text-xs uppercase tracking-widest text-muted">Injured</span>` : ""}</td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg || 0).toFixed(1)}</td><td>${row.oneEighties || 0}</td></tr>`
+                (row) =>
+                  `<tr${row.injured ? ' class="is-injured"' : ""}><td class="gold">${row.rank}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a>${row.injured ? ` <span class="text-xs uppercase tracking-widest text-muted">Injured</span>` : ""}</td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg || 0).toFixed(1)}</td><td>${row.oneEighties || 0}</td></tr>`
               )
-              .join("")}</tbody></table></div>`
+              .join("")}</tbody></table>${(d.standings || []).some((row) => row.injured) ? `<p class="mt-2 text-xs text-muted">* is an injured player and is not given a place. Admin shows how many of those spots still need to be filled.</p>` : ""}</div>`
       }
     </div>`,
     { arena: true }
@@ -2928,7 +2935,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None yet.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
+        <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. Injured players are the shaded * rows on the division table. The number below is how many spots still need to be filled. If that division has a spot to fill, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
         ${
           openSpotRows.length
             ? `<ul class="mt-3 space-y-1 text-sm text-muted">${openSpotRows
