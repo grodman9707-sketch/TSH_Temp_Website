@@ -1,5 +1,7 @@
 // Optional Airtable staff spreadsheet. Never includes passwords or reset codes.
 
+import { standingsForLeague } from "./standings.js";
+
 const API = "https://api.airtable.com/v0";
 const META = "https://api.airtable.com/v0/meta";
 
@@ -51,70 +53,22 @@ function num(value) {
 export function standingsRows(db) {
   const out = [];
   for (const league of db.leagues || []) {
-    const players = (db.users || []).filter((u) => userLeagueIds(u).includes(league.id));
-    const rows = players.map((p) => ({
-      playerId: p.id,
-      name: p.nickname || p.name,
-      avg: num(p.avg),
-      played: 0,
-      won: 0,
-      lost: 0,
-      legsFor: 0,
-      legsAgainst: 0,
-      points: 0,
-      oneEighties: 0,
-      matchAvgSum: 0,
-      matchAvgCount: 0,
-    }));
-    const byId = Object.fromEntries(rows.map((r) => [r.playerId, r]));
-    for (const f of (db.fixtures || []).filter((x) => x.leagueId === league.id && x.status === "played")) {
-      const home = byId[f.homeId];
-      const away = byId[f.awayId];
-      if (!home || !away) continue;
-      home.played += 1;
-      away.played += 1;
-      home.legsFor += Number(f.homeLegs) || 0;
-      home.legsAgainst += Number(f.awayLegs) || 0;
-      away.legsFor += Number(f.awayLegs) || 0;
-      away.legsAgainst += Number(f.homeLegs) || 0;
-      home.oneEighties += f.home180 || f.homeOneEighties || 0;
-      away.oneEighties += f.away180 || f.awayOneEighties || 0;
-      if (Number(f.homeAvg)) {
-        home.matchAvgSum += Number(f.homeAvg);
-        home.matchAvgCount += 1;
-      }
-      if (Number(f.awayAvg)) {
-        away.matchAvgSum += Number(f.awayAvg);
-        away.matchAvgCount += 1;
-      }
-      home.points += Number(f.homeLegs) || 0;
-      away.points += Number(f.awayLegs) || 0;
-      if (f.homeLegs > f.awayLegs) {
-        home.won += 1;
-        home.points += 2;
-        away.lost += 1;
-      } else if (f.awayLegs > f.homeLegs) {
-        away.won += 1;
-        away.points += 2;
-        home.lost += 1;
-      }
-    }
     const regional = (db.regionals || []).find((r) => r.id === league.regionalId);
-    for (const r of rows) {
+    for (const row of standingsForLeague(db, league.id)) {
       out.push({
-        key: `${league.id}:${r.playerId}`,
-        player: r.name,
+        key: `${league.id}:${row.playerId}`,
+        player: row.nickname || row.name,
         division: leagueTitle(db, league),
         regional: regional?.fullTitle || regional?.name || "",
-        played: r.played,
-        won: r.won,
-        lost: r.lost,
-        legsFor: r.legsFor,
-        legsAgainst: r.legsAgainst,
-        diff: r.legsFor - r.legsAgainst,
-        points: r.points,
-        oneEighties: r.oneEighties,
-        avg: r.matchAvgCount ? Math.round((r.matchAvgSum / r.matchAvgCount) * 10) / 10 : r.avg,
+        played: row.played,
+        won: row.won,
+        lost: row.lost,
+        legsFor: row.legsFor,
+        legsAgainst: row.legsAgainst,
+        diff: row.diff,
+        points: row.points,
+        oneEighties: row.oneEighties,
+        avg: row.avg,
       });
     }
   }
