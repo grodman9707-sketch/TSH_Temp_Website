@@ -43,6 +43,21 @@ function displayName(u) {
 function wantsEmail(u) {
   return !!u && !!u.email && (!u.notifyPrefs || u.notifyPrefs.email !== false);
 }
+export function wantsMatchEmail(u) {
+  return wantsEmail(u);
+}
+export function matchChatEmail(to, fromUser, fixture, leagueName, preview) {
+  const fromName = displayName(fromUser);
+  const snippet = String(preview || "").trim();
+  const subject = `New message from ${fromName} about your TSH match`;
+  const html =
+    `<p>Hi ${esc(displayName(to))},</p>` +
+    `<p><b>${esc(fromName)}</b> sent you a message about your match in <b>${esc(leagueName)}</b> (Week ${esc(fixture.week)}).</p>` +
+    (snippet ? `<p>${esc(snippet)}</p>` : "") +
+    `<p>Open <b>My Matches</b> to read it and reply. The arrange chat stays open until the result is sent for admin approval.</p>` +
+    `<p>— TSH Darts League</p>`;
+  return { to: to.email, subject, html, userId: to.id, type: "match_chat", fixtureId: fixture.id };
+}
 
 function newMatchEmail(to, opp, f, leagueName) {
   const oppName = displayName(opp);
