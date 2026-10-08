@@ -656,6 +656,103 @@ function fixtureWhen(f) {
   else if (f.when) bits.push(f.when);
   return bits.join(" · ");
 }
+function chatUnreadTotal() {
+  return (state.chatUnread || []).reduce((sum, item) => sum + Number(item.count || 0), 0);
+}
+function consumeShownChats(chats) {
+  const shown = new Set((chats || []).map((chat) => Number(chat.fixtureId)));
+  state.chatUnread = (state.chatUnread || []).filter((item) => !shown.has(Number(item.fixtureId)));
+}
+function chatNoticeBanner() {
+  const items = state.chatUnread || [];
+  if (!items.length) return "";
+  return panel(
+    `<div class="chat-notice">${items
+      .map(
+        (item) =>
+          `<a href="/my-matches?fixture=${item.fixtureId}"><span class="text-xs font-bold tracking-widest gold">NEW MESSAGE</span><span class="mt-1 block text-sm">${esc(item.fromName)} messaged you about Week ${esc(item.week)}${item.leagueName ? ` · ${esc(item.leagueName)}` : ""}. Open the chat to arrange the match.</span></a>`
+      )
+      .join("")}</div>`,
+    "mt-6"
+  );
+}
+function matchChatBox(chat) {
+  if (!chat) return "";
+  const draft = state.chatDrafts?.[chat.fixtureId] || "";
+  const mine = inThisMatch(chat);
+  const opponent = mine ? (isHomePlayer(chat) ? chat.awayName : chat.homeName) : "";
+  const log = chat.messages?.length
+    ? `<div class="match-chat-log" aria-live="polite">${chat.messages
+        .map(
+          (m) => `<div class="match-chat-msg ${m.mine ? "mine" : "theirs"}${m.unread ? " unread" : ""}">
+            <div class="match-chat-meta">${esc(m.name)}${m.unread ? ` <span class="match-chat-new">New</span>` : ""} · ${esc(fmtInstant(m.createdAt) || "")}</div>
+            <div class="match-chat-body">${esc(m.body)}</div>
+          </div>`
+        )
+        .join("")}</div>`
+    : `<p class="match-chat-empty">${chat.canPost ? "No messages yet. Suggest a day and time." : "No messages yet."}</p>`;
+  const locked = chat.locked
+    ? `<p class="mt-1 text-xs text-muted">This chat is locked while the result waits for admin approval. It is removed when the result is published.</p>`
+    : `<p class="mt-1 text-xs text-muted">Only the two players can post while the match is still pending. ${mine ? "Your opponent is notified when you send a message." : "Players are notified when the other person sends a message."} Division admins can read their division. Owners can read every chat.</p>`;
+  const form = chat.canPost
+    ? `<form class="mt-2 space-y-2" data-form="MATCHCHAT" data-id="${chat.fixtureId}">
+        <textarea name="body" maxlength="500" rows="2" required placeholder="Suggest a day and time">${esc(draft)}</textarea>
+        <button class="btn-gold">SEND</button>
+      </form>
+      <p class="mt-1 text-xs text-muted">Sending notifies ${esc(opponent || "your opponent")} on My Matches, and by email if they have match emails on.</p>`
+    : "";
+  return `<div class="match-chat" data-match-chat="${chat.fixtureId}">
+      <div class="text-xs font-bold tracking-widest gold">${chat.locked ? "ARRANGE CHAT · LOCKED" : "ARRANGE THIS MATCH"}</div>
+      ${locked}
+      ${log}
+      ${form}
+    </div>`;
+}
+function fixtureChatSlot(f, chat) {
+  if (isByeFixture(f) || f.status === "played") return "";
+  if (chat) return matchChatBox(chat);
+  if (inThisMatch(f) && f.status === "submitted") {
+    return `<div class="match-chat match-chat-locked" data-match-chat="${f.id}">
+      <div class="text-xs font-bold tracking-widest gold">CHAT LOCKED</div>
+      <p class="mt-1 text-xs text-muted">This result is with the admin. The arrange chat is locked, and it is removed once the result is published.</p>
+    </div>`;
+  }
+  return "";
+}
+function matchChatsPanel(chats, d) {
+  const intro = d.isOwner
+    ? "You can read every division’s arrange chats, even when you are also a division admin."
+    : d.isHeadAdmin
+      ? "You can read arrange chats in every division."
+      : "You can read the arrange chats in your division only.";
+  const groups = new Map();
+  for (const chat of chats || []) {
+    const key = chat.leagueName || "Division";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(chat);
+  }
+  const body = chats?.length
+    ? [...groups.entries()]
+        .map(
+          ([name, rows]) => `<h3 class="mt-4 text-sm font-bold tracking-widest gold">${esc(name)}</h3>
+        <div class="mt-2 space-y-3">${rows
+          .map(
+            (chat) => `<div class="border-b border-white/10 pb-3">
+            <div class="text-sm font-semibold">Week ${esc(chat.week)} · ${esc(chat.homeName)} vs ${esc(chat.awayName)}${chat.locked ? " · locked" : ""}</div>
+            ${matchChatBox(chat)}
+          </div>`
+          )
+          .join("")}</div>`
+        )
+        .join("")
+    : `<p class="mt-3 text-sm text-muted">No arrange chats yet. Players message each other from a pending fixture.</p>`;
+  return panel(
+    `<h2 class="text-lg font-bold">Match chats</h2>
+      <p class="mt-1 text-sm text-muted">${intro} A chat locks when the result is sent for admin approval, and it is deleted when the result is published. Sending a message notifies the opponent.</p>
+      ${body}`,
+    "mt-6"
+  );
+}
 function weeklyReleaseNote(payload, { empty = false, emptyFallback = "No fixtures yet." } = {}) {
   if (!payload?.nextFixtureReleaseAt) {
     return empty ? `<p class="text-sm text-muted">${emptyFallback}</p>` : "";
@@ -956,8 +1053,14 @@ function layout(inner, { arena = false, home = false } = {}) {
               if (href === "/regionals") return navRegionalsBlock();
               const glow = href === "/announcements" && state.newsGlow;
               const tone = glow ? "nav-news-glow" : navActive(href) ? "gold" : "text-white/80 hover:text-primary";
-              const extra = glow ? ` aria-label="${esc(label)} — new announcement"` : "";
-              return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${tone}"${extra}>${label}</a>`;
+              const unread = href === "/my-matches" ? chatUnreadTotal() : 0;
+              const text = unread ? `${label} <span class="nav-unread">${unread > 9 ? "9+" : unread}</span>` : label;
+              const extra = unread
+                ? ` aria-label="${esc(label)} — ${unread} new arrange message${unread === 1 ? "" : "s"}"`
+                : glow
+                  ? ` aria-label="${esc(label)} — new announcement"`
+                  : "";
+              return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${tone}"${extra}>${text}</a>`;
             })
             .join("")}
           ${communityNavLinks()}
@@ -1353,6 +1456,17 @@ async function pageRegional(slug) {
 async function pageLeague(slug, id) {
   const d = await api(`/api/leagues/${id}`);
   const tab = new URLSearchParams(location.search).get("tab") || "table";
+  let chatsById = {};
+  if (state.user && tab === "fixtures") {
+    try {
+      const listed = await api("/api/fixtures/chats");
+      const visible = (listed.chats || []).filter((chat) => Number(chat.leagueId) === Number(id));
+      consumeShownChats(visible);
+      chatsById = Object.fromEntries(visible.map((chat) => [chat.fixtureId, chat]));
+    } catch {
+      chatsById = {};
+    }
+  }
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10">
       <div class="flex flex-wrap items-center gap-2 text-sm font-bold">
@@ -1434,15 +1548,18 @@ async function pageLeague(slug, id) {
                             ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT A RESULT</a></div>`
                             : "";
                       return panel(
-                        `<div id="fixture-${f.id}" class="split-row">
-                          <div class="min-w-0">
-                            <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
-                            <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
-                            ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
-                            ${proposalLine}
-                            ${actions}
+                        `<div id="fixture-${f.id}">
+                          <div class="split-row">
+                            <div class="min-w-0">
+                              <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
+                              <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                              ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
+                              ${proposalLine}
+                              ${actions}
+                            </div>
+                            <div class="shrink-0">${fixtureStatus(f)}</div>
                           </div>
-                          <div class="shrink-0">${fixtureStatus(f)}</div>
+                          ${fixtureChatSlot(f, chatsById[f.id])}
                         </div>`
                       );
                     })
@@ -1769,6 +1886,7 @@ async function pageDashboard() {
       </div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
+      ${chatNoticeBanner()}
       ${
         u.communityJoinPending
           ? panel(
@@ -1844,7 +1962,7 @@ async function pageDashboard() {
       ${panel(`<h2 class="text-lg font-bold">Match notifications</h2>
         <p class="mt-1 text-sm text-muted">Get an email when you have a match coming up this week, and again shortly before it starts.</p>
         <form class="mt-4" data-form="NOTIFY">
-          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches</label>
+          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches and arrange-chat messages</label>
           <button class="btn-gold mt-4">SAVE PREFERENCES</button>
         </form>`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
@@ -1861,10 +1979,20 @@ async function pageDashboard() {
 }
 async function pageMyMatches() {
   const d = await api("/api/my-fixtures");
+  let chatsById = {};
+  try {
+    const listed = await api("/api/fixtures/chats");
+    const mine = (listed.chats || []).filter((chat) => inThisMatch(chat));
+    consumeShownChats(mine);
+    chatsById = Object.fromEntries(mine.map((chat) => [chat.fixtureId, chat]));
+  } catch {
+    chatsById = {};
+  }
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, either player uploads both DartCounter screenshots and types the match stats. The other player verifies those numbers. A division admin then approves them onto the league table.</p>
+      <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, either player uploads both DartCounter screenshots and types the match stats. The other player verifies those numbers. A division admin then approves them onto the league table. Use the arrange chat on a pending match to agree when to play. Your opponent is notified when you send a message.</p>
+      ${chatNoticeBanner()}
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
       ${weeklyReleaseNote(d)}
@@ -1905,7 +2033,8 @@ async function pageMyMatches() {
                 ${scheduleActions(f)}
                 </div>
                 ${action}
-              </div>`);
+              </div>
+              ${fixtureChatSlot(f, chatsById[f.id])}`);
           })
           .join("")
             : d.nextFixtureReleaseAt
@@ -2445,6 +2574,14 @@ function overwriteStatsDesk(d) {
 }
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
+  let matchChats = [];
+  try {
+    const listed = await api("/api/fixtures/chats");
+    matchChats = listed.chats || [];
+    consumeShownChats(matchChats);
+  } catch {
+    matchChats = [];
+  }
   let activity = null;
   if (d.isOwner) {
     try {
@@ -2718,6 +2855,7 @@ async function pageAdmin() {
             <button class="btn-ghost w-full">DECLINE & REQUEST RESUBMIT</button>
           </form>`,
         })}`, "mt-6")}
+      ${matchChatsPanel(matchChats, d)}
       ${pendingSignupsPanel}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
         <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league. Every admin and owner is emailed. Owners and Head Admins can drop a player here.</p>
@@ -2821,7 +2959,7 @@ async function pageAdmin() {
           </form>`;
         })()}`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
-        <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
+        <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
       ${
         d.canOverride
@@ -2887,7 +3025,55 @@ function matchRoute(path) {
   return ["home"];
 }
 
+function chatNoticeKey(items) {
+  return (items || []).map((item) => `${item.fixtureId}:${item.count}:${item.latestAt || ""}`).join("|");
+}
+let chatPollGen = 0;
+function stopChatWatch() {
+  chatPollGen += 1;
+  if (state.chatPoll) clearInterval(state.chatPoll);
+  state.chatPoll = null;
+}
+async function loadChatNotices() {
+  if (!state.user) {
+    state.chatUnread = [];
+    return;
+  }
+  try {
+    const data = await api("/api/fixtures/chats?summary=1");
+    state.chatUnread = data.unread || [];
+  } catch {
+    state.chatUnread = state.chatUnread || [];
+  }
+}
+function startChatWatch() {
+  stopChatWatch();
+  if (!state.user) return;
+  const gen = chatPollGen;
+  state.chatPoll = setInterval(() => refreshChatNotices(gen), 12000);
+}
+async function refreshChatNotices(gen) {
+  if (gen !== chatPollGen || !state.user || state.rendering) return;
+  const active = document.activeElement;
+  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+  try {
+    const data = await api("/api/fixtures/chats?summary=1");
+    if (gen !== chatPollGen) return;
+    const next = data.unread || [];
+    if (chatNoticeKey(next) === chatNoticeKey(state.chatUnread)) return;
+    state.chatUnread = next;
+    render();
+  } catch {
+    /* leave the current notices in place */
+  }
+}
 async function render() {
+  if (state.rendering) {
+    state.renderAgain = true;
+    return;
+  }
+  state.rendering = true;
+  stopChatWatch();
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
@@ -2905,6 +3091,7 @@ async function render() {
     }
     await loadNavTree();
     await loadNewsMeta();
+    await loadChatNotices();
     const map = {
       home: pageHome,
       regionals: pageRegionals,
@@ -2934,8 +3121,18 @@ async function render() {
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     if (route[0] === "admin") queueAdminScan();
+    document.querySelectorAll(".match-chat-log").forEach((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    startChatWatch();
   } catch (err) {
     app.innerHTML = layout(`<div class="px-4 py-20 text-center sm:px-6"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
+  } finally {
+    state.rendering = false;
+    if (state.renderAgain) {
+      state.renderAgain = false;
+      render();
+    }
   }
 }
 
@@ -3108,6 +3305,10 @@ document.addEventListener("input", (e) => {
   if (e.target.matches("textarea.news-body-input")) {
     refreshNewsPreview(e.target.closest("form"));
   }
+  const chatForm = e.target.closest("form[data-form=MATCHCHAT]");
+  if (chatForm && e.target.name === "body") {
+    state.chatDrafts = { ...(state.chatDrafts || {}), [chatForm.dataset.id]: e.target.value };
+  }
 });
 
 document.addEventListener("change", async (e) => {
@@ -3279,6 +3480,13 @@ document.addEventListener("submit", async (e) => {
       if (!hasNumericExtracted(extracted)) throw new Error("Read text from the screenshots but could not map it to the fields. Enter the stats by hand from the shots.");
       state.selectedResultId = fixture.id;
       state.notice = "Stats extracted. Check every number, then verify to add them to the table.";
+      render();
+    } else if (kind === "MATCHCHAT") {
+      const text = String(fd.body || "").trim();
+      if (!text) throw new Error("Write a message first");
+      await api(`/api/fixtures/${form.dataset.id}/chat`, { method: "POST", body: JSON.stringify({ body: text }) });
+      if (state.chatDrafts) delete state.chatDrafts[form.dataset.id];
+      state.notice = "Message sent. Your opponent has been notified.";
       render();
     } else if (kind === "PROPOSE") {
       await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });

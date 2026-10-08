@@ -11,7 +11,20 @@ import { divisionReview } from "./divisionReview.js";
 import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
-import { runDueNotifications, sendEmail, emailConfigStatus } from "./notifications.js";
+import { runDueNotifications, sendEmail, emailConfigStatus, wantsMatchEmail, matchChatEmail } from "./notifications.js";
+import {
+  CHAT_MAX_MESSAGES,
+  chatPhase,
+  sweepMatchChats,
+  cleanChatBody,
+  canViewFixtureChat,
+  canPostFixtureChat,
+  messagesForFixture,
+  unreadForUser,
+  markChatRead,
+  chatEmailDue,
+  noteChatEmail,
+} from "./fixtureChat.js";
 import { wallStringToUtc, isValidTimeZone, defaultTimezoneForRegional } from "./timezones.js";
 import { EXTRACT_STAT_FIELDS, hasNumericExtracted, overlayExtractedStats } from "../public/ocrParse.js";
 import { airtableConfigured, backupOverview, loadPostgresSnapshot, postgresConfigured, runOffsiteSync, scheduleOffsiteSync } from "./offsite.js";
@@ -220,9 +233,12 @@ function readDb() {
   if (!Array.isArray(db.approvals)) db.approvals = [];
   if (!Array.isArray(db.adminProfiles)) db.adminProfiles = [];
   if (!Array.isArray(db.leagueRequests)) db.leagueRequests = [];
+  if (!Array.isArray(db.matchChats)) db.matchChats = [];
+  if (!Array.isArray(db.matchChatReads)) db.matchChatReads = [];
   return db;
 }
 function writeDb(db) {
+  sweepMatchChats(db);
   writeJson(dbPath, db);
   scheduleOffsiteSync(() => readDb());
 }
@@ -2033,6 +2049,113 @@ function playerOwnedFixture(db, user, id) {
   return { fixture };
 }
 
+function chatViewerScope(user, fixture) {
+  return {
+    owner: isOwner(user),
+    headAdmin: isHeadAdmin(user),
+    adminLeagueIds: adminLeagueIds(user),
+    released: fixture ? isFixtureReleased(fixture) : false,
+  };
+}
+function chatPlayerName(db, userId) {
+  const found = db.users.find((u) => Number(u.id) === Number(userId));
+  return (found && (found.nickname || found.name)) || "Player";
+}
+function userInFixture(fixture, user) {
+  return Boolean(user && fixture && (Number(fixture.homeId) === Number(user.id) || Number(fixture.awayId) === Number(user.id)));
+}
+function publicFixtureChat(db, user, fixture, { markRead = false } = {}) {
+  const phase = chatPhase(fixture);
+  const scope = chatViewerScope(user, fixture);
+  const participant = userInFixture(fixture, user);
+  const unread = participant ? unreadForUser(db, fixture.id, user.id) : [];
+  const unreadIds = new Set(unread.map((message) => Number(message.id)));
+  const named = withNames(db, fixture);
+  const messages = messagesForFixture(db, fixture.id).map((message) => ({
+    id: message.id,
+    userId: message.userId,
+    name: chatPlayerName(db, message.userId),
+    body: message.body,
+    createdAt: message.createdAt,
+    mine: Number(message.userId) === Number(user.id),
+    unread: unreadIds.has(Number(message.id)),
+  }));
+  if (markRead && participant && phase === "open") markChatRead(db, fixture.id, user.id);
+  return {
+    fixtureId: fixture.id,
+    leagueId: fixture.leagueId,
+    leagueName: named.leagueName,
+    week: fixture.week,
+    season: fixture.season || 1,
+    homeId: fixture.homeId,
+    awayId: fixture.awayId,
+    homeName: named.homeName,
+    awayName: named.awayName,
+    status: fixture.status,
+    locked: phase === "locked",
+    canPost: canPostFixtureChat(fixture, user, scope),
+    unread: unread.length,
+    messages,
+  };
+}
+function chatListFor(db, user, { markRead = false } = {}) {
+  const chats = [];
+  let dirty = false;
+  for (const fixture of db.fixtures || []) {
+    const scope = chatViewerScope(user, fixture);
+    if (!canViewFixtureChat(fixture, user, scope)) continue;
+    const existing = messagesForFixture(db, fixture.id);
+    if (scope.released === false && !existing.length) continue;
+    const before = (db.matchChatReads || []).find(
+      (stamp) => Number(stamp.fixtureId) === Number(fixture.id) && Number(stamp.userId) === Number(user.id)
+    )?.readAt;
+    const chat = publicFixtureChat(db, user, fixture, { markRead });
+    const after = (db.matchChatReads || []).find(
+      (stamp) => Number(stamp.fixtureId) === Number(fixture.id) && Number(stamp.userId) === Number(user.id)
+    )?.readAt;
+    if (before !== after) dirty = true;
+    chats.push(chat);
+  }
+  chats.sort((a, b) => String(a.leagueName || "").localeCompare(String(b.leagueName || "")) || Number(a.week) - Number(b.week) || Number(a.fixtureId) - Number(b.fixtureId));
+  return { chats, dirty };
+}
+function chatUnreadSummary(db, user) {
+  const unread = [];
+  for (const fixture of db.fixtures || []) {
+    if (!userInFixture(fixture, user)) continue;
+    if (chatPhase(fixture) !== "open") continue;
+    if (!isFixtureReleased(fixture)) continue;
+    const pending = unreadForUser(db, fixture.id, user.id);
+    if (!pending.length) continue;
+    const latest = pending[pending.length - 1];
+    const named = withNames(db, fixture);
+    unread.push({
+      fixtureId: fixture.id,
+      count: pending.length,
+      fromName: chatPlayerName(db, latest.userId),
+      week: fixture.week,
+      leagueName: named.leagueName,
+      latestAt: latest.createdAt,
+    });
+  }
+  return unread;
+}
+function chatFixtureResponse(db, user, fixtureId) {
+  const fixture = db.fixtures.find((item) => item.id === Number(fixtureId));
+  if (!fixture) return { status: 404, error: "Fixture not found" };
+  const phase = chatPhase(fixture);
+  if (phase === "gone") return { status: 404, error: "This match has no arrange chat" };
+  const scope = chatViewerScope(user, fixture);
+  if (!canViewFixtureChat(fixture, user, scope)) {
+    if (userInFixture(fixture, user) && phase === "locked") {
+      return { status: 403, error: "This chat is locked while the result waits for admin approval" };
+    }
+    if (userInFixture(fixture, user) && scope.released === false) return { status: 404, error: "Fixture not found" };
+    return { status: 403, error: "You can't view this chat" };
+  }
+  return { fixture, scope, phase };
+}
+
 function pickExtractedStats(body) {
   const out = {};
   for (const key of EXTRACT_STAT_FIELDS) {
@@ -3012,6 +3135,61 @@ async function handleApi(req, res, url) {
     clearResultSubmission(fixture);
     writeDb(db);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+  }
+
+  if (method === "GET" && p === "/api/fixtures/chats") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    if (url.searchParams.get("summary") === "1") {
+      return json(res, 200, { ok: true, unread: chatUnreadSummary(db, user) });
+    }
+    const listed = chatListFor(db, user, { markRead: true });
+    if (listed.dirty) writeDb(db);
+    return json(res, 200, { ok: true, chats: listed.chats });
+  }
+
+  const chatGet = p.match(/^\/api\/fixtures\/(\d+)\/chat$/);
+  if (chatGet && (method === "GET" || method === "POST")) {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const found = chatFixtureResponse(db, user, chatGet[1]);
+    if (found.error) return json(res, found.status, { ok: false, error: found.error });
+    const fixture = found.fixture;
+    if (method === "GET") {
+      const chat = publicFixtureChat(db, user, fixture, { markRead: true });
+      if (userInFixture(fixture, user) && found.phase === "open") writeDb(db);
+      return json(res, 200, { ok: true, chat });
+    }
+    if (!canPostFixtureChat(fixture, user, found.scope)) {
+      if (found.phase === "locked") {
+        return json(res, 403, { ok: false, error: "This chat is locked while the result waits for admin approval" });
+      }
+      return json(res, 403, { ok: false, error: "Only the two players in a pending match can send a message" });
+    }
+    const cleaned = cleanChatBody(body.body ?? body.text);
+    if (cleaned.error) return json(res, 400, { ok: false, error: cleaned.error });
+    if (messagesForFixture(db, fixture.id).length >= CHAT_MAX_MESSAGES) {
+      return json(res, 400, { ok: false, error: "This chat is full" });
+    }
+    const now = new Date();
+    db.matchChats.push({
+      id: nextId(db.matchChats),
+      fixtureId: fixture.id,
+      userId: user.id,
+      body: cleaned.text,
+      createdAt: now.toISOString(),
+    });
+    markChatRead(db, fixture.id, user.id, now);
+    const opponentId = Number(fixture.homeId) === Number(user.id) ? fixture.awayId : fixture.homeId;
+    const opponent = db.users.find((item) => Number(item.id) === Number(opponentId));
+    let email = null;
+    if (opponent && wantsMatchEmail(opponent) && chatEmailDue(db, fixture.id, opponent.id, now)) {
+      noteChatEmail(db, fixture.id, opponent.id, now);
+      const leagueName = leagueTitle(db, db.leagues.find((league) => league.id === fixture.leagueId) || { name: "your league", regionalId: 0 });
+      const preview = cleaned.text.length > 160 ? `${cleaned.text.slice(0, 157)}...` : cleaned.text;
+      email = matchChatEmail(opponent, user, fixture, leagueName, preview);
+    }
+    writeDb(db);
+    if (email) Promise.resolve(sendEmail(email)).catch((err) => console.error("Match chat email failed:", err));
+    return json(res, 200, { ok: true, chat: publicFixtureChat(db, user, fixture), notified: Boolean(email) });
   }
 
   if (p.startsWith("/api/admin")) {
