@@ -76,7 +76,8 @@ check("app.js parses so the site is not a black screen", parsed.status === 0);
 if (parsed.status !== 0 && parsed.stderr) console.error(parsed.stderr);
 check("Owner desk has structure manager", appJs.includes("Regions, leagues") && appJs.includes("ADDREGIONAL") && appJs.includes("ADDLEAGUE"));
 check("structure manager uses dropdowns", appJs.includes("structure-fold") && appJs.includes("<details") && appJs.includes("structureDeskHtml"));
-check("structure forms are owner-only", appJs.includes("Only owners can add or remove a region, league, or division"));
+check("structure forms are owner-only", appJs.includes("Only owners can add or remove a region, and add, rename, or remove a division"));
+check("each division has an edit control beside remove", appJs.includes('data-act="edit-division"') && appJs.includes('data-form="RENAMELEAGUE"') && appJs.includes("DELETELEAGUE"));
 check("head admins do not get structure controls", /isHeadAdmin && !d.isOwner/.test(appJs) && appJs.includes("data-form=\"ADDREGIONAL\""));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-owner-structure-"));
@@ -144,6 +145,60 @@ try {
   });
   check("owner can add International Division 7", addDiv.status === 200 && addDiv.data.league?.displayName === "Division 7");
   const div7Id = addDiv.data.league?.id;
+
+  const renameBlank = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "   " },
+  });
+  check("blank division name is rejected", renameBlank.status === 400 && /division name/i.test(renameBlank.data.error || ""));
+
+  const renameLong = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "D".repeat(41) },
+  });
+  check("overlong division name is rejected", renameLong.status === 400);
+
+  const renamePlayer = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: playerTok,
+    body: { id: div7Id, name: "Sneaky" },
+  });
+  check("head admin cannot rename a division", renamePlayer.status === 403 && /only owners/i.test(renamePlayer.data.error || ""));
+
+  const rename = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "Premier" },
+  });
+  check("owner can rename a division", rename.status === 200 && rename.data.league?.displayName === "Premier" && rename.data.league?.title?.includes("Premier"));
+
+  const renamedNav = await api(port, "/api/regionals");
+  const renamedIntl = (renamedNav.data.regionals || []).find((r) => r.slug === "international");
+  check("renamed division is on the public league list", (renamedIntl?.leagues || []).some((l) => l.displayName === "Premier"));
+  check("old name is gone while the division is Premier", !(renamedIntl?.leagues || []).some((l) => l.displayName === "Division 7"));
+
+  const renameDup = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "division 1" },
+  });
+  check("rename to an existing division is rejected", renameDup.status === 400 && /already exists/i.test(renameDup.data.error || ""));
+
+  const renameAlias = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "League 1" },
+  });
+  check("League 1 is the same name as Division 1", renameAlias.status === 400);
+
+  const renameBack = await api(port, "/api/admin/structure/leagues/update", {
+    method: "POST",
+    token: ownerTok,
+    body: { id: div7Id, name: "Division 7" },
+  });
+  check("owner can rename a division back", renameBack.status === 200 && renameBack.data.league?.displayName === "Division 7");
 
   const dupDiv = await api(port, "/api/admin/structure/leagues", {
     method: "POST",

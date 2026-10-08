@@ -1,12 +1,13 @@
 // Place a player lists each unplaced player once, with their 3DA.
 // Open seats for the same departed player are not repeated.
+// The desk shows how many open spots each division has, not who left.
 // Run: `node server/place-player-list.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "../public/placePlayers.js";
+import { openSpotLabel, openSpotsByDivision, placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "../public/placePlayers.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,7 +51,25 @@ const placeForm = appJs.slice(placeStart, appJs.indexOf('data-form="FIXTURES"', 
 check("place form lists the unplaced choices", placeForm.includes("placeChoices.map(placePlayerOption)"));
 check("place form does not list every account", !placeForm.includes("everyone.map(playerOption)"));
 check("place form explains the 3DA list", placeForm.includes("each once, with their 3DA"));
-check("open seat list is deduped", placeForm.includes("openSeatRows"));
+check("place form shows an open-spot count for each division", placeForm.includes("openSpotRows") && placeForm.includes("openSpotLabel"));
+check("place form does not name the player being replaced", !placeForm.includes("open seat for") && !placeForm.includes("seat.playerName"));
+const spotRows = openSpotsByDivision(
+  [
+    { id: 1, leagueId: 9, userId: 8, playerName: "Pat Player", leagueTitle: "TSH International Division 1" },
+    { id: 2, leagueId: 9, userId: 8, playerName: "Pat Player", leagueTitle: "TSH International Division 1" },
+    { id: 3, leagueId: 9, userId: 9, playerName: "Sam Player", leagueTitle: "TSH International Division 1" },
+    { id: 4, leagueId: 10, userId: 10, playerName: "Left Behind", leagueTitle: "TSH International Division 2" },
+  ],
+  [
+    { id: 9, title: "TSH International Division 1" },
+    { id: 10, title: "TSH International Division 2" },
+    { id: 11, title: "TSH International Division 3" },
+  ]
+);
+check("duplicate departed players count as one open spot", spotRows.find((row) => row.leagueId === 9)?.openSpots === 2);
+check("a division with nobody to replace shows zero", spotRows.find((row) => row.leagueId === 11)?.openSpots === 0 && openSpotLabel(0) === "0 open spots");
+check("one open spot uses the singular", openSpotLabel(1) === "1 open spot" && spotRows.find((row) => row.leagueId === 10)?.openSpots === 1);
+check("open-spot rows do not carry the replaced player's name", spotRows.every((row) => !("playerName" in row)));
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;
@@ -178,6 +197,12 @@ try {
   );
   const samSeats = (overview.data.openSeats || []).filter((seat) => Number(seat.userId) === Number(sam.data.user.id));
   check("duplicate open seat collapses to one row", samSeats.length === 1 && samSeats[0].matches === 1 && samSeats[0].playerName === "Sam Placed");
+  const spotList = openSpotsByDivision(overview.data.openSeats, overview.data.allLeagues || []);
+  const listed = spotList.find((row) => row.leagueId === leagueId);
+  check(
+    "that division shows one open spot and not Sam's name",
+    listed?.openSpots === 1 && listed?.leagueTitle?.includes("Place List") && !("playerName" in (listed || {}))
+  );
 
   const filler = await register("Ivy Next", 44);
   const seated = await api(port, "/api/admin/place-player", {
@@ -186,12 +211,14 @@ try {
     body: { userId: filler.data.user.id, leagueId },
   });
   const after = await api(port, "/api/admin/overview", { token: ownerTok });
+  const spotsAfter = openSpotsByDivision(after.data.openSeats, after.data.allLeagues || []);
   check(
     "one placement fills the collapsed seat",
     seated.status === 200 &&
       seated.data.filledSeat?.replacedName === "Sam Placed" &&
       seated.data.filledSeat?.matches === 1 &&
-      !(after.data.openSeats || []).some((seat) => Number(seat.userId) === Number(sam.data.user.id))
+      !(after.data.openSeats || []).some((seat) => Number(seat.userId) === Number(sam.data.user.id)) &&
+      spotsAfter.find((row) => row.leagueId === leagueId)?.openSpots === 0
   );
 } catch (err) {
   failures++;
