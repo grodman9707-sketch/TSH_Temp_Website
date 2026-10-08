@@ -8,6 +8,7 @@ import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fillMissingRosterByes } from "./rosterFixtures.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
 import { divisionReview } from "./divisionReview.js";
+import { standingsForLeague } from "./standings.js";
 import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
@@ -1290,7 +1291,7 @@ function rememberVacatedSeat(byLeague, leagueId, seat) {
   bucket.push(seat);
   byLeague.set(lid, bucket);
 }
-function vacatePlayerFixtures(db, user, leagueId) {
+function vacatePlayerFixtures(db, user, leagueId, { keepPlayed = false } = {}) {
   ensureVacantSlots(db);
   const uid = Number(user?.id);
   const onlyLeague = Number(leagueId) || 0;
@@ -1302,6 +1303,10 @@ function vacatePlayerFixtures(db, user, leagueId) {
     if (!side) continue;
     if (onlyLeague && Number(fixture.leagueId) !== onlyLeague) continue;
     if (fixture.status === "played") {
+      // A move keeps the published result with this player. Their record
+      // follows them onto the new division table. Leaving the league still
+      // opens that result for the next player.
+      if (keepPlayed) continue;
       if (side === "home") fixture.homeArchiveName = label;
       else fixture.awayArchiveName = label;
       rememberVacatedSeat(byLeague, fixture.leagueId, { fixtureId: fixture.id, side, played: true });
@@ -1780,70 +1785,6 @@ function migrate(db) {
   if (changed) writeDb(db);
 }
 
-function standingsForLeague(db, leagueId) {
-  const players = db.users.filter((u) => inLeague(u, leagueId));
-  const rows = players.map((p) => {
-    return {
-      playerId: p.id,
-      name: p.name,
-      nickname: p.nickname || "",
-      hasAvatar: Boolean(p.avatarFile),
-      avg: p.avg,
-      played: 0,
-      won: 0,
-      lost: 0,
-      legsFor: 0,
-      legsAgainst: 0,
-      points: 0,
-      oneEighties: 0,
-      matchAvgSum: 0,
-      matchAvgCount: 0,
-    };
-  });
-  const byId = Object.fromEntries(rows.map((r) => [r.playerId, r]));
-  for (const f of db.fixtures.filter((x) => x.leagueId === leagueId && x.status === "played")) {
-    const home = byId[f.homeId];
-    const away = byId[f.awayId];
-    if (!home || !away) continue;
-    home.played += 1;
-    away.played += 1;
-    home.legsFor += f.homeLegs;
-    home.legsAgainst += f.awayLegs;
-    away.legsFor += f.awayLegs;
-    away.legsAgainst += f.homeLegs;
-    home.oneEighties += f.home180 || f.homeOneEighties || 0;
-    away.oneEighties += f.away180 || f.awayOneEighties || 0;
-    if (Number(f.homeAvg)) {
-      home.matchAvgSum += Number(f.homeAvg);
-      home.matchAvgCount += 1;
-    }
-    if (Number(f.awayAvg)) {
-      away.matchAvgSum += Number(f.awayAvg);
-      away.matchAvgCount += 1;
-    }
-    home.points += f.homeLegs;
-    away.points += f.awayLegs;
-    if (f.homeLegs > f.awayLegs) {
-      home.won += 1;
-      home.points += 2;
-      away.lost += 1;
-    } else if (f.awayLegs > f.homeLegs) {
-      away.won += 1;
-      away.points += 2;
-      home.lost += 1;
-    }
-  }
-  return rows
-    .map((r) => {
-      const { matchAvgSum, matchAvgCount, ...rest } = r;
-      return {
-        ...rest,
-        diff: r.legsFor - r.legsAgainst,
-        avg: matchAvgCount ? Math.round((matchAvgSum / matchAvgCount) * 10) / 10 : r.avg,
-      };
-    })
-    .sort((a, b) => b.points - a.points || b.diff - a.diff || b.legsFor - a.legsFor);
-}
 function publicLeagueHighlights(db) {
   const divisions = [...(db.leagues || [])].sort(compareLeagueOrder).map((league) => {
     const regional = db.regionals.find((item) => item.id === league.regionalId);
@@ -3697,7 +3638,7 @@ async function handleApi(req, res, url) {
       if (placeError) return json(res, 400, { ok: false, error: placeError });
       const afterLeagues = userLeagueIds(u);
       for (const id of beforeLeagues) {
-        if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id);
+        if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id, { keepPlayed: true });
       }
       const filledSeat = alreadyThere ? null : claimVacantSeat(db, u, league.id);
       const apps = db.applications.filter((a) => a.userId === u.id || a.id === Number(body.applicationId));
