@@ -1,6 +1,7 @@
 // A player on the injured list still belongs to the division.
+// Placing them there opens a vacancy for their fixtures.
 // The ids are only kept for leagues they are actually in, so a later
-// unplace or move drops the flag with the spot.
+// unplace or move drops the flag.
 
 export function injuredLeagueIds(user) {
   const placed = new Set(

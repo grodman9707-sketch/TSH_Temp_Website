@@ -1847,7 +1847,7 @@ function leagueChangeInner(u) {
     ? `<div class="mt-4 space-y-2">${pendingInjuries
         .map(
           (r) =>
-            `<div class="text-sm"><span class="gold">Injured-list request sent</span> for ${esc(r.leagueTitle || "all leagues")}. You keep your spot until an owner or head admin confirms.
+            `<div class="text-sm"><span class="gold">Injured-list request sent</span> for ${esc(r.leagueTitle || "all leagues")}. You stay in the division. Your fixtures become a vacancy once an owner or head admin confirms.
              <form class="mt-2" data-form="CANCELLEAGUE"><input type="hidden" name="id" value="${r.id}"><button class="btn-ghost">CANCEL REQUEST</button></form></div>`
         )
         .join("")}</div>`
@@ -1859,7 +1859,7 @@ function leagueChangeInner(u) {
   const dropForm =
     dropChoices.length
       ? `<form class="mt-4 space-y-3" data-form="DROPLEAGUE">
-          <p class="text-sm text-muted">Withdraw leaves the division. Injured list keeps your spot for next season: remaining matches this season become byes, and that seat is not given to someone else. You stay listed until an owner or head admin confirms. This sends a notification to every admin and owner.</p>
+          <p class="text-sm text-muted">Withdraw leaves the division. Injured list keeps you in the division and opens a vacancy for your fixtures. You stay listed until an owner or head admin confirms. This sends a notification to every admin and owner.</p>
           <select name="leagueId" required>${dropOptions}</select>
           <input name="note" maxlength="300" placeholder="Optional reason">
           <div class="flex flex-wrap gap-2">
@@ -1871,7 +1871,7 @@ function leagueChangeInner(u) {
         ? `<p class="mt-4 text-sm text-muted">After you are placed, you can ask to withdraw or join the injured list from here.</p>`
         : "";
   return `<h3 class="text-sm font-bold tracking-widest uppercase gold">Leagues</h3>
-      <p class="mt-1 text-sm text-muted">You play in the International League. Regional leagues are coming soon. You can ask to leave a league, or sit out on the injured list and keep your spot.</p>
+      <p class="mt-1 text-sm text-muted">You play in the International League. Regional leagues are coming soon. You can ask to leave a league, or sit out on the injured list and keep your place for next season.</p>
       ${list}
       ${joinBlock}
       ${dropBlock}
@@ -2882,7 +2882,7 @@ async function pageAdmin() {
         })}`, "mt-6")}
       ${pendingSignupsPanel}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
-        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league or sit out on the injured list and keep their spot. Every admin and owner is emailed. Owners and Head Admins confirm here.</p>
+        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw, or to go on the injured list. Injured list keeps them in the division and opens a vacancy for their fixtures. Every admin and owner is emailed. Owners and Head Admins confirm here.</p>
         ${
           (d.leagueRequests || []).length
             ? `<div class="mt-3 space-y-3">${d.leagueRequests
@@ -2903,7 +2903,7 @@ async function pageAdmin() {
                       ? "DROP FROM ALL LEAGUES"
                       : "DROP FROM LEAGUE";
                   const waiting = injury
-                    ? `An owner or head admin can place them on the injured list${dropAll ? " for all leagues" : ""}. Their spot stays reserved.`
+                    ? `An owner or head admin can place them on the injured list${dropAll ? " for all leagues" : ""}. They stay in the division, and their fixtures become a vacancy.`
                     : `An owner or head admin can drop them from ${dropAll ? "all leagues" : "this league"}.`;
                   return `<div class="border-b border-white/10 py-3 text-sm">
                     <div class="font-semibold">${esc(r.playerName)} · ${phrase}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}</div>
@@ -3030,7 +3030,7 @@ async function pageAdmin() {
           <button class="btn-ghost">UNPLACE</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">INJURED LIST</h3>
-        <p class="mt-1 text-xs text-muted">Place someone here when they cannot continue this season but should keep their spot next season. They stay in the division. Remaining unplayed matches become byes and are not open spots. Return them when they can play again.</p>
+        <p class="mt-1 text-xs text-muted">They stay in the division. This opens a vacancy for their fixtures, the same as an open spot in Place a player. Return them before that vacancy is filled to put them back on those fixtures.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="INJURE">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
@@ -3699,8 +3699,8 @@ document.addEventListener("submit", async (e) => {
         !window.confirm(
           injury
             ? all
-              ? "Ask every admin and owner to place you on the injured list for all leagues? You keep your spot. Remaining matches become byes until they confirm."
-              : "Ask every admin and owner to place you on the injured list for this league? You keep your spot. Remaining matches become byes until they confirm."
+              ? "Ask every admin and owner to place you on the injured list for all leagues? You stay in the division. Your fixtures become a vacancy once they confirm."
+              : "Ask every admin and owner to place you on the injured list for this league? You stay in the division. Your fixtures become a vacancy once they confirm."
             : all
               ? "Ask every admin and owner to withdraw you from all leagues? You stay in them until they confirm."
               : "Ask every admin and owner to withdraw you from this league? You stay in it until they confirm."
@@ -3716,8 +3716,8 @@ document.addEventListener("submit", async (e) => {
       state.user = d.user;
       state.notice = injury
         ? all
-          ? "Injured-list request sent to every admin and owner for all of your leagues. Your spot stays reserved."
-          : "Injured-list request sent to every admin and owner. Your spot stays reserved until they confirm."
+          ? "Injured-list request sent to every admin and owner for all of your leagues. You stay in the division until they confirm."
+          : "Injured-list request sent to every admin and owner. You stay in the division until they confirm."
         : all
           ? "Withdraw request sent to every admin and owner for all of your leagues."
           : "Withdraw request sent to every admin and owner.";
@@ -3735,8 +3735,8 @@ document.addEventListener("submit", async (e) => {
         fd.action === "done"
           ? d.kind === "injury"
             ? byeCount
-              ? `Placed on the injured list. ${byeNote}. Their spot stays reserved.`
-              : "Placed on the injured list. Their spot stays reserved."
+              ? `Placed on the injured list. Their fixtures are now a vacancy (${byeCount} unplayed). They stay in the division.`
+              : "Placed on the injured list. They stay in the division."
             : byeCount
               ? `Player dropped. ${byeNote} until someone is placed in that division.`
               : "Player dropped from the requested league(s)."
@@ -3746,8 +3746,8 @@ document.addEventListener("submit", async (e) => {
       const d = await api("/api/admin/injury", { method: "POST", body: JSON.stringify(fd) });
       const byeCount = Number(d.byes) || 0;
       state.notice = byeCount
-        ? `Placed on the injured list. ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"}. Their spot stays reserved.`
-        : "Placed on the injured list. Their spot stays reserved.";
+        ? `Placed on the injured list. Their fixtures are now a vacancy (${byeCount} unplayed). They stay in the division.`
+        : "Placed on the injured list. They stay in the division.";
       render();
     } else if (kind === "CLEARINJURY") {
       const d = await api("/api/admin/injury/clear", { method: "POST", body: JSON.stringify(fd) });
