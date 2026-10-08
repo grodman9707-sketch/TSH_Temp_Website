@@ -1,5 +1,5 @@
-// Injured players keep their division spot. Remaining matches become byes
-// that are not open seats. A return restores an empty side.
+// Injured players stay in the division. Their fixtures become a vacancy
+// that the next placed player can fill. A return before that closes it.
 // Run: `node server/injured-list.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -264,13 +264,14 @@ try {
   const held = (overview.data.fixtures || []).find((item) => item.id === openId);
   const kept = (overview.data.fixtures || []).find((item) => item.id === playedId);
   check(
-    "the unplayed match is a bye held for them",
+    "the unplayed match is a bye that can be filled",
     held?.status === "bye" && held?.homeId == null && Number(held?.awayId) === bea.id && (held?.injuryHolds || []).some((hold) => Number(hold.userId) === ada.id)
   );
-  check("the played result stays with them", kept?.status === "played" && Number(kept?.homeId) === ada.id && Number(kept?.homeLegs) === 5);
+  check("the played fixture is part of the vacancy until someone is placed", kept?.status === "played" && Number(kept?.homeId) === ada.id && Number(kept?.homeLegs) === 5);
+  const adaSeat = (overview.data.openSeats || []).find((seat) => Number(seat.userId) === ada.id && Number(seat.leagueId) === leagueId);
   check(
-    "the bye is not an open spot",
-    !(overview.data.openSeats || []).some((seat) => Number(seat.userId) === ada.id || Number(seat.leagueId) === leagueId)
+    "their fixtures open one vacancy",
+    Boolean(adaSeat?.id) && (adaSeat.matches || 0) >= 1 && (adaSeat.playedMatches || 0) >= 1
   );
 
   const table = await api(port, `/api/leagues/${leagueId}`);
@@ -278,14 +279,6 @@ try {
   check(
     "standings keep the injured player and their record",
     adaRow?.injured === true && adaRow?.won === 1 && adaRow?.points === 7 && adaRow?.legsFor === 5 && adaRow?.oneEighties === 1 && adaRow?.avg === 61.2
-  );
-
-  const filled = await place(dee.id, leagueId);
-  const afterFill = await api(port, "/api/admin/overview", { token: ownerTok });
-  const stillHeld = (afterFill.data.fixtures || []).find((item) => item.id === openId);
-  check(
-    "a later placement does not take the held match",
-    filled.data.filledSeat == null && stillHeld?.homeId == null && Number(stillHeld?.awayId) === bea.id
   );
 
   const blockedFixture = await api(port, "/api/admin/fixtures", {
@@ -303,13 +296,14 @@ try {
   const restoredView = await api(port, "/api/admin/overview", { token: ownerTok });
   const restored = (restoredView.data.fixtures || []).find((item) => item.id === openId);
   check(
-    "returning them restores the empty side",
+    "returning them before the spot is filled puts them back and closes it",
     cleared.status === 200 &&
       (cleared.data.restored || 0) >= 1 &&
       !(cleared.data.user?.injuredLeagueIds || []).includes(leagueId) &&
       (cleared.data.user?.leagueIds || []).includes(leagueId) &&
       Number(restored?.homeId) === ada.id &&
-      restored?.status === "scheduled"
+      restored?.status === "scheduled" &&
+      !(restoredView.data.openSeats || []).some((seat) => Number(seat.userId) === ada.id && Number(seat.leagueId) === leagueId)
   );
 
   const direct = await api(port, "/api/admin/injury", {
@@ -317,13 +311,57 @@ try {
     token: ownerTok,
     body: { userId: ada.id, leagueId },
   });
-  check("an owner can place them directly", direct.status === 200 && (direct.data.user?.injuredLeagueIds || []).includes(leagueId) && (direct.data.byes || 0) >= 1);
+  const reopened = await api(port, "/api/admin/overview", { token: ownerTok });
+  check(
+    "an owner can place them directly and open the spot again",
+    direct.status === 200 &&
+      (direct.data.user?.injuredLeagueIds || []).includes(leagueId) &&
+      (direct.data.byes || 0) >= 1 &&
+      (reopened.data.openSeats || []).some((seat) => Number(seat.userId) === ada.id && Number(seat.leagueId) === leagueId)
+  );
   const repeat = await api(port, "/api/admin/injury", {
     method: "POST",
     token: ownerTok,
     body: { userId: ada.id, leagueId },
   });
   check("placing them twice is blocked", repeat.status === 400);
+
+  const filled = await place(dee.id, leagueId);
+  const afterFill = await api(port, "/api/admin/overview", { token: ownerTok });
+  const taken = (afterFill.data.fixtures || []).find((item) => item.id === openId);
+  const playedAfter = (afterFill.data.fixtures || []).find((item) => item.id === playedId);
+  const adaAfter = (afterFill.data.users || []).find((user) => user.id === ada.id);
+  check(
+    "a later placement fills that vacancy",
+    (filled.data.filledSeat?.matches || 0) >= 1 &&
+      (filled.data.filledSeat?.playedRenamed || 0) >= 1 &&
+      Number(taken?.homeId) === dee.id &&
+      Number(taken?.awayId) === bea.id &&
+      taken?.status === "scheduled" &&
+      playedAfter?.status === "played" &&
+      Number(playedAfter?.homeId) === dee.id &&
+      Number(playedAfter?.homeLegs) === 5 &&
+      !(afterFill.data.openSeats || []).some((seat) => Number(seat.userId) === ada.id && Number(seat.leagueId) === leagueId)
+  );
+  check(
+    "the injured player stays in the division",
+    (adaAfter?.leagueIds || []).includes(leagueId) && (adaAfter?.injuredLeagueIds || []).includes(leagueId)
+  );
+  const back = await api(port, "/api/admin/injury/clear", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: ada.id, leagueId },
+  });
+  const afterReturn = await api(port, "/api/admin/overview", { token: ownerTok });
+  const keptMatch = (afterReturn.data.fixtures || []).find((item) => item.id === openId);
+  check(
+    "returning after the spot is filled leaves that match with the new player",
+    back.status === 200 &&
+      (back.data.restored || 0) === 0 &&
+      !(back.data.user?.injuredLeagueIds || []).includes(leagueId) &&
+      (back.data.user?.leagueIds || []).includes(leagueId) &&
+      Number(keptMatch?.homeId) === dee.id
+  );
 
   const drawId = await addDivision("Injury Draw");
   const fay = await addPlayer("Fay Draw", 51);
@@ -342,7 +380,12 @@ try {
     body: { userId: fay.id, leagueId: drawId },
   });
   const fayMe = await api(port, "/api/auth/me", { token: fay.token });
+  const fayDesk = await api(port, "/api/admin/overview", { token: ownerTok });
   check("a direct place clears the pending request", fayAsk.status === 200 && fayDirect.status === 200 && !(fayMe.data.user?.pendingLeagueRequests || []).some((item) => item.kind === "injury"));
+  check(
+    "no remaining matches means no open spot",
+    !(fayDesk.data.openSeats || []).some((seat) => Number(seat.userId) === fay.id)
+  );
   const shortDraw = await api(port, "/api/admin/fixtures/generate", {
     method: "POST",
     token: ownerTok,
