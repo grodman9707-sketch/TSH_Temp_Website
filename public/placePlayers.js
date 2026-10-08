@@ -116,3 +116,43 @@ export function uniqueOpenSeats(seats) {
   }
   return rows;
 }
+
+export function openSpotLabel(count) {
+  const n = Number(count) || 0;
+  return n === 1 ? "1 open spot" : `${n} open spots`;
+}
+
+// One open spot is one player who can still be replaced in that division.
+// The count is what staff see. The departed player's name stays off the desk.
+export function openSpotsByDivision(seats, leagues) {
+  const unique = uniqueOpenSeats(seats);
+  const counts = new Map();
+  for (const seat of unique) {
+    const id = Number(seat?.leagueId);
+    if (!id) continue;
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const rows = [];
+  const seen = new Set();
+  for (const league of leagues || []) {
+    const id = Number(league?.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    rows.push({
+      leagueId: id,
+      leagueTitle: String(league.title || league.name || "Division"),
+      openSpots: counts.get(id) || 0,
+    });
+  }
+  for (const seat of unique) {
+    const id = Number(seat?.leagueId);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    rows.push({
+      leagueId: id,
+      leagueTitle: String(seat.leagueTitle || "Division"),
+      openSpots: counts.get(id) || 0,
+    });
+  }
+  return rows;
+}

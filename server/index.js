@@ -3432,6 +3432,33 @@ async function handleApi(req, res, url) {
       persistDb(db);
       return json(res, 200, { ok: true, league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) }, structure: publicStructure(db) });
     }
+    if (method === "POST" && p === "/api/admin/structure/leagues/update") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can rename a division" });
+      const league = (db.leagues || []).find((l) => Number(l.id) === Number(body.id));
+      if (!league) return json(res, 400, { ok: false, error: "Division not found" });
+      const name = String(body.name || "").trim();
+      if (!name) return json(res, 400, { ok: false, error: "Enter a division name" });
+      if (name.length > 40) return json(res, 400, { ok: false, error: "Division name must be 40 characters or fewer" });
+      const siblings = (db.leagues || []).filter(
+        (l) => Number(l.regionalId) === Number(league.regionalId) && Number(l.id) !== Number(league.id)
+      );
+      const taken = siblings.some((l) => divisionName(l).toLowerCase() === divisionName({ name }).toLowerCase());
+      if (taken) return json(res, 400, { ok: false, error: "That division already exists in this region" });
+      if (league.name !== name) {
+        const previous = leagueTitle(db, league);
+        league.name = name;
+        recordStaff(db, user, "rename_division", {
+          summary: `Renamed division ${previous} to ${leagueTitle(db, league)}`,
+          leagueId: league.id,
+        });
+        persistDb(db);
+      }
+      return json(res, 200, {
+        ok: true,
+        league: { ...league, title: leagueTitle(db, league), displayName: divisionName(league) },
+        structure: publicStructure(db),
+      });
+    }
     if (method === "POST" && p === "/api/admin/structure/leagues/delete") {
       if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove a division" });
       const league = (db.leagues || []).find((l) => Number(l.id) === Number(body.id));

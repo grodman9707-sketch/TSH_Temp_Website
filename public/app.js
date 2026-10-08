@@ -1,6 +1,6 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
-import { placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "./placePlayers.js";
+import { openSpotLabel, openSpotsByDivision, placePlayerOptionLabel, unplacedPlaceChoices } from "./placePlayers.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -49,6 +49,7 @@ const state = {
   inviteCopied: false,
   structureOpenIds: [],
   structureAddOpen: false,
+  editingDivisionId: null,
   deskFolds: {},
   manageLeagueOpenIds: [],
   overrideLeagueId: "",
@@ -2244,6 +2245,7 @@ function staffActionLabel(action) {
     update_region: "Updated region",
     delete_region: "Removed region",
     add_division: "Added division",
+    rename_division: "Renamed division",
     delete_division: "Removed division",
   };
   return labels[action] || String(action || "").replace(/_/g, " ");
@@ -2334,7 +2336,7 @@ function forgetStructureOpen(id) {
   const n = Number(id);
   state.structureOpenIds = (Array.isArray(state.structureOpenIds) ? state.structureOpenIds : []).filter((x) => Number(x) !== n);
 }
-function structureRegionFold(r, openIds) {
+function structureRegionFold(r, openIds, editingDivisionId) {
   const leagues = r.leagues || [];
   const open = openIds.has(Number(r.id));
   const countLabel = leagues.length === 1 ? "1 division" : `${leagues.length} divisions`;
@@ -2342,10 +2344,19 @@ function structureRegionFold(r, openIds) {
   const divisionRows = leagues.length
     ? leagues
         .map((l) => {
-          const action = l.canDelete
-            ? `<form data-form="DELETELEAGUE" data-id="${l.id}"><button class="btn-ghost">REMOVE</button></form>`
+          const editing = Number(editingDivisionId) === Number(l.id);
+          const remove = l.canDelete
+            ? `<form data-form="DELETELEAGUE" data-id="${l.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>`
             : `<span class="text-xs text-muted">Last division</span>`;
-          return `<div class="structure-div-row"><span>${esc(l.displayName || l.name)}</span>${action}</div>`;
+          const edit = editing
+            ? `<form class="structure-div-edit" data-form="RENAMELEAGUE" data-id="${l.id}">
+                <input name="name" required maxlength="40" value="${esc(l.displayName || l.name)}" aria-label="Division name">
+                <button class="btn-gold" type="submit">SAVE</button>
+                <button class="btn-ghost" type="button" data-act="edit-division" data-id="${l.id}">CANCEL</button>
+              </form>`
+            : `<button type="button" class="btn-ghost" data-act="edit-division" data-id="${l.id}">EDIT</button>`;
+          const label = editing ? "" : `<span class="structure-div-name">${esc(l.displayName || l.name)}</span>`;
+          return `<div class="structure-div-row${editing ? " is-editing" : ""}">${label}<span class="structure-div-actions">${edit}${remove}</span></div>`;
         })
         .join("")
     : `<p class="text-sm text-muted">No divisions yet.</p>`;
@@ -2374,12 +2385,12 @@ function structureRegionFold(r, openIds) {
     </div>
   </details>`;
 }
-function structureDeskHtml(regionals, openIds, addOpen) {
+function structureDeskHtml(regionals, openIds, addOpen, editingDivisionId) {
   const ids = new Set((openIds || []).map(Number).filter(Boolean));
   const folds = regionals.length
-    ? regionals.map((r) => structureRegionFold(r, ids)).join("")
+    ? regionals.map((r) => structureRegionFold(r, ids, editingDivisionId)).join("")
     : `<p class="text-sm text-muted">No regions yet.</p>`;
-  return `<p class="mt-1 text-sm text-muted">Only owners can add or remove a region, league, or division. Open a dropdown to manage one. The International League cannot be removed, and it must keep at least one division.</p>
+  return `<p class="mt-1 text-sm text-muted">Only owners can add or remove a region, and add, rename, or remove a division. Open a dropdown to manage one. The International League cannot be removed, and it must keep at least one division.</p>
     <div class="structure-folds">${folds}</div>
     <details class="structure-fold structure-add-region"${addOpen ? " open" : ""}>
       <summary><span class="structure-fold-title">Add a region or league</span></summary>
@@ -2621,7 +2632,6 @@ async function pageAdmin() {
     const crowded = (placeNameCounts.get(nameKey) || 0) > 1;
     return `<option value="${p.id}">${esc(placePlayerOptionLabel(p, { duplicateName: crowded, roles: tags }))}</option>`;
   };
-  const openSeatRows = uniqueOpenSeats(d.openSeats);
   const pending = d.applications;
   const review = d.fixtures.filter((f) => f.needsConfirm);
   const selectedReview = review.find((f) => f.id === Number(state.selectedResultId)) || review[0];
@@ -2629,6 +2639,7 @@ async function pageAdmin() {
     state._pendingScanId = selectedReview.id;
   }
   const deskLeagues = d.canOverride ? d.allLeagues || d.leagues : d.leagues;
+  const openSpotRows = openSpotsByDivision(d.openSeats, deskLeagues);
   const leagueOptions = deskLeagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
@@ -2638,7 +2649,7 @@ async function pageAdmin() {
         title: "Regions, leagues &amp; divisions",
         extra: "mt-6",
         meta: `${structureRegionals.length} region${structureRegionals.length === 1 ? "" : "s"}`,
-        body: structureDeskHtml(structureRegionals, state.structureOpenIds, state.structureAddOpen),
+        body: structureDeskHtml(structureRegionals, state.structureOpenIds, state.structureAddOpen, state.editingDivisionId),
       })
     : "";
   const ownersPanel = d.isOwner
@@ -2884,12 +2895,9 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. If that division has an open seat, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
         ${
-          openSeatRows.length
-            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${openSeatRows
-                .map(
-                  (seat) =>
-                    `<li>${esc(seat.leagueTitle)} — open seat for ${esc(seat.playerName)} (${seat.matches} unplayed match${seat.matches === 1 ? "" : "es"}${seat.playedMatches ? `, ${seat.playedMatches} played result${seat.playedMatches === 1 ? "" : "s"} keeping the score` : ""})</li>`
-                )
+          openSpotRows.length
+            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${openSpotRows
+                .map((row) => `<li>${esc(row.leagueTitle)} — ${esc(openSpotLabel(row.openSpots))}</li>`)
                 .join("")}</ul>`
             : ""
         }
@@ -3231,6 +3239,18 @@ document.addEventListener("click", async (e) => {
     state.editingFixtureId = Number(state.editingFixtureId) === id ? null : id;
     state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
     render();
+    return;
+  }
+  const editDivision = e.target.closest("[data-act=edit-division]");
+  if (editDivision) {
+    e.preventDefault();
+    const id = Number(editDivision.dataset.id);
+    state.editingDivisionId = Number(state.editingDivisionId) === id ? null : id;
+    const fold = editDivision.closest("[data-structure-id]");
+    if (fold) rememberStructureOpen(fold.getAttribute("data-structure-id"));
+    state.deskFolds = { ...(state.deskFolds || {}), regions: true };
+    await render();
+    document.querySelector(".structure-div-edit input")?.focus();
     return;
   }
   const pick = e.target.closest("[data-act=pick-result]");
@@ -3802,7 +3822,18 @@ document.addEventListener("submit", async (e) => {
       await loadNavTree(true);
       const fold = form.closest("[data-structure-id]");
       if (fold) rememberStructureOpen(fold.getAttribute("data-structure-id"));
+      if (Number(state.editingDivisionId) === Number(form.dataset.id)) state.editingDivisionId = null;
       state.notice = "Division removed.";
+      render();
+    } else if (kind === "RENAMELEAGUE") {
+      const name = String(fd.name || "").trim();
+      await api("/api/admin/structure/leagues/update", { method: "POST", body: JSON.stringify({ id: form.dataset.id, name }) });
+      await loadNavTree(true);
+      const fold = form.closest("[data-structure-id]");
+      if (fold) rememberStructureOpen(fold.getAttribute("data-structure-id"));
+      state.deskFolds = { ...(state.deskFolds || {}), regions: true };
+      state.editingDivisionId = null;
+      state.notice = "Division renamed.";
       render();
     } else if (kind === "DELETENEWS") {
       if (!window.confirm("Delete this announcement? This cannot be undone.")) return;
