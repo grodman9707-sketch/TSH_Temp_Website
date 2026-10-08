@@ -1110,6 +1110,19 @@ async function loadNewsMeta() {
   }
 }
 
+function formatHomeAverage(value) {
+  const n = Number(value) || 0;
+  if (!n) return "0";
+  return String(Math.round(n * 100) / 100);
+}
+function homeStatCard(value, label, name) {
+  const who = String(name || "").trim();
+  const chars = Math.max(who.length, 1);
+  const nameHtml = who
+    ? `<div class="home-stat-name" style="--name-chars:${chars}">${esc(who)}</div>`
+    : "";
+  return `<div class="home-stat glass rounded-xl px-3 py-6 sm:px-4 sm:py-8"><div class="home-stat-value text-3xl font-extrabold gold sm:text-4xl">${esc(value)}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${esc(label)}</div>${nameHtml}</div>`;
+}
 function homeHighlights(highlights) {
   if (!highlights?.paragraphs?.length) return "";
   const body = highlights.paragraphs
@@ -1179,14 +1192,10 @@ async function pageHome() {
         <p class="mt-3 text-muted">Live numbers from the current season.</p>
         <p class="mt-2 text-xs gold">● Live data</p>
         <div class="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
-          ${[
-            [stats.activePlayers, "Active Players"],
-            [stats.divisions, "Divisions"],
-            [stats.total180s, "Total 180s"],
-            [stats.topCheckout, "Top Checkout"],
-          ]
-            .map(([v, l]) => `<div class="glass rounded-xl px-3 py-6 sm:px-4 sm:py-8"><div class="text-3xl font-extrabold gold sm:text-4xl">${v}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${l}</div></div>`)
-            .join("")}
+          ${homeStatCard(stats.activePlayers, "Active Players")}
+          ${homeStatCard(stats.divisions, "Divisions")}
+          ${homeStatCard(formatHomeAverage(stats.highestAverage), "Highest Average", stats.highestAverageName)}
+          ${homeStatCard(stats.topCheckout || 0, "Highest Check Out", stats.highestCheckoutName)}
         </div>
       </div>
     </section>
