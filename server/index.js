@@ -1840,13 +1840,44 @@ function publicLeagueHighlights(db) {
   });
   return leagueHighlights(divisions);
 }
+function betterSeasonMark(current, value, name) {
+  const n = Number(value) || 0;
+  const label = String(name || "").trim();
+  if (n > current.value) return { value: n, name: label };
+  if (n === current.value && n > 0 && label && (!current.name || label.localeCompare(current.name) < 0)) {
+    return { value: n, name: label };
+  }
+  return current;
+}
+function seasonStatLeaders(db) {
+  let average = { value: 0, name: "" };
+  let checkout = { value: 0, name: "" };
+  for (const fixture of db.fixtures || []) {
+    if (fixture.status !== "played") continue;
+    for (const side of ["home", "away"]) {
+      const label = fixtureSideLabel(db, fixture, side);
+      const name = label && label !== "Bye" ? label : "";
+      const avg = side === "home" ? fixture.homeAvg : fixture.awayAvg;
+      const co = side === "home" ? fixture.homeCheckout : fixture.awayCheckout;
+      average = betterSeasonMark(average, avg, name);
+      checkout = betterSeasonMark(checkout, co, name);
+    }
+  }
+  return {
+    highestAverage: Math.round(average.value * 100) / 100,
+    highestAverageName: average.name,
+    topCheckout: checkout.value,
+    highestCheckoutName: checkout.name,
+  };
+}
 function stats(db) {
   const played = db.fixtures.filter((f) => f.status === "played");
+  const leaders = seasonStatLeaders(db);
   return {
     activePlayers: db.users.filter((u) => userLeagueIds(u).length).length,
     divisions: db.leagues.length,
     total180s: played.reduce((s, f) => s + (f.home180 || f.homeOneEighties || 0) + (f.away180 || f.awayOneEighties || 0), 0),
-    topCheckout: played.reduce((m, f) => Math.max(m, f.topCheckout || 0), 0),
+    ...leaders,
   };
 }
 function shotFile(f, slot) {

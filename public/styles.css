@@ -52,6 +52,25 @@ video, canvas, svg {
   border: 1px solid rgba(255,255,255,.08);
   backdrop-filter: blur(10px);
 }
+.home-stat {
+  min-width: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.home-stat-name {
+  margin: 0.55rem auto 0;
+  max-width: 100%;
+  color: #e8b425;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  hyphens: none;
+  font-size: clamp(0.4rem, calc(100cqi / (var(--name-chars, 12) * 0.72)), 1.05rem);
+}
 .staff-card {
   text-align: left;
 }
