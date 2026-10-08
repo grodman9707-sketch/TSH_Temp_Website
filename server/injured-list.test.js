@@ -383,8 +383,8 @@ try {
   const fayDesk = await api(port, "/api/admin/overview", { token: ownerTok });
   check("a direct place clears the pending request", fayAsk.status === 200 && fayDirect.status === 200 && !(fayMe.data.user?.pendingLeagueRequests || []).some((item) => item.kind === "injury"));
   check(
-    "no remaining matches means no open spot",
-    !(fayDesk.data.openSeats || []).some((seat) => Number(seat.userId) === fay.id)
+    "an injured player with no fixtures is still a spot to fill",
+    (fayDesk.data.openSeats || []).some((seat) => Number(seat.userId) === fay.id && Number(seat.leagueId) === drawId)
   );
   const shortDraw = await api(port, "/api/admin/fixtures/generate", {
     method: "POST",
@@ -443,7 +443,13 @@ try {
     appJs.includes('data-form="INJURE"') && appJs.includes('data-form="CLEARINJURY"') && appJs.includes("PLACE ON INJURED LIST") && appJs.includes("RETURN")
   );
   check("league requests can confirm an injured-list ask", appJs.includes("INJURED LIST — ALL LEAGUES") && appJs.includes("LEAGUERESOLVE"));
-  check("standings label an injured row", appJs.includes("row.injured"));
+  check(
+    "standings shade an injured row and mark it with *",
+    appJs.includes("function standingRows") &&
+      appJs.includes('class="is-injured"') &&
+      appJs.includes('injured ? "*"') &&
+      appJs.includes("spots still need to be filled")
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

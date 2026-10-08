@@ -1238,11 +1238,13 @@ function ensureVacantSlots(db) {
         createdAt: slot.createdAt || "",
         seats: [],
       };
+      target.rosterOnly = Boolean(slot.rosterOnly);
       groups.set(key, target);
       next.push(target);
     } else if (!target.name && slot.name) {
       target.name = slot.name;
     }
+    if (slot.rosterOnly) target.rosterOnly = true;
     for (const seat of slot.seats || []) {
       const side = seat?.side === "away" ? "away" : seat?.side === "home" ? "home" : "";
       if (!side) continue;
@@ -1252,7 +1254,7 @@ function ensureVacantSlots(db) {
       target.seats.push({ fixtureId: Number(seat.fixtureId), side, played: Boolean(seat.played) });
     }
   }
-  db.vacantSlots = next.filter((slot) => (slot.seats || []).length);
+  db.vacantSlots = next.filter((slot) => (slot.seats || []).length || slot.rosterOnly);
 }
 function freshFixtureNotify() {
   return { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null };
@@ -1402,7 +1404,25 @@ function sitOutInjuredFixtures(db, user, leagueId) {
     rememberInjuryHold(fixture, uid, side);
   }
   // Their fixtures become a vacancy. They stay in the division.
-  return vacatePlayerFixtures(db, user, only);
+  const byes = vacatePlayerFixtures(db, user, only);
+  ensureInjuryVacancy(db, user, only);
+  return byes;
+}
+function ensureInjuryVacancy(db, user, leagueId) {
+  const lid = Number(leagueId) || 0;
+  if (!lid) return;
+  ensureVacantSlots(db);
+  const uid = Number(user?.id);
+  if (db.vacantSlots.some((slot) => Number(slot.userId) === uid && Number(slot.leagueId) === lid)) return;
+  db.vacantSlots.push({
+    id: nextId(db.vacantSlots),
+    leagueId: lid,
+    userId: uid,
+    name: user?.nickname || user?.name || "Player",
+    createdAt: new Date().toISOString(),
+    seats: [],
+    rosterOnly: true,
+  });
 }
 function dropInjuryHold(fixture, userId, side) {
   if (!Array.isArray(fixture?.injuryHolds)) return;
