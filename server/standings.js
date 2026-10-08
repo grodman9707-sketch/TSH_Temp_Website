@@ -1,3 +1,5 @@
+import { isInjuredIn } from "./injury.js";
+
 // Division tables list whoever is in that division now.
 // Each row is that player's own published results from the same regional,
 // so a move between divisions carries the record onto the new table.
@@ -61,6 +63,7 @@ export function standingsForLeague(db, leagueId) {
     oneEighties: 0,
     matchAvgSum: 0,
     matchAvgCount: 0,
+    injured: isInjuredIn(player, leagueId),
   }));
   const byId = Object.fromEntries(rows.map((row) => [row.playerId, row]));
   for (const fixture of db.fixtures || []) {

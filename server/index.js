@@ -9,6 +9,7 @@ import { fillMissingRosterByes } from "./rosterFixtures.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
 import { divisionReview } from "./divisionReview.js";
 import { standingsForLeague } from "./standings.js";
+import { injuredLeagueIds, isInjuredIn } from "./injury.js";
 import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
@@ -272,6 +273,8 @@ function publicUser(u, db) {
     hasPendingApplication: db ? userHasPendingApplication(db, u.id) : false,
     fullyPlaced: db ? isFullyPlaced(db, u) : false,
     leagues: db ? userLeagueSummaries(db, u) : [],
+    injuredLeagueIds: injuredLeagueIds(u),
+    injuredLeagues: db ? userLeagueSummaries(db, u).filter((league) => isInjuredIn(u, league.id)) : [],
     openJoinRegional: db ? openJoinRegional(db, u) : null,
     openJoinRegionals: db ? openJoinRegionals(db, u) : [],
     pendingLeagueRequests: db ? pendingLeagueRequestsForUser(db, u.id) : [],
@@ -1034,6 +1037,7 @@ function userLeagueSummaries(db, u) {
       title: leagueTitle(db, league || { name: "League", regionalId: 0 }),
       regionalId: league?.regionalId || null,
       regionalName: regional?.fullTitle || regional?.name || "",
+      injured: isInjuredIn(u, id),
     };
   });
 }
@@ -1045,9 +1049,15 @@ function pendingLeagueRequests(db, userId, kind) {
 function isDropAllRequest(r) {
   return r?.kind === "drop" && (r.scope === "all" || r.leagueId == null || r.leagueId === "");
 }
+function isInjuryAllRequest(r) {
+  return r?.kind === "injury" && (r.scope === "all" || r.leagueId == null || r.leagueId === "");
+}
+function isAllLeaguesRequest(r) {
+  return isDropAllRequest(r) || isInjuryAllRequest(r);
+}
 function publicLeagueRequest(r, db) {
   const player = db.users.find((x) => x.id === r.userId);
-  const dropAll = isDropAllRequest(r);
+  const dropAll = isAllLeaguesRequest(r);
   const league = !dropAll && r.leagueId ? db.leagues.find((l) => l.id === Number(r.leagueId)) : null;
   const regional = r.regionalId ? db.regionals.find((x) => x.id === Number(r.regionalId)) : null;
   return {
@@ -1060,7 +1070,7 @@ function publicLeagueRequest(r, db) {
     regionalName: regional?.fullTitle || regional?.name || "",
     leagueId: dropAll ? null : r.leagueId || null,
     leagueTitle: dropAll ? "all leagues" : league ? leagueTitle(db, league) : "",
-    scope: dropAll ? "all" : r.kind === "drop" ? "one" : "",
+    scope: dropAll ? "all" : r.kind === "drop" || r.kind === "injury" ? "one" : "",
     status: r.status,
     createdAt: r.createdAt,
     note: r.note || "",
@@ -1101,6 +1111,15 @@ function resolveMatchingLeagueRequests(db, u) {
       r.resolvedAt = new Date().toISOString();
       changed = true;
     }
+    if (r.kind === "injury") {
+      const wanted = isInjuryAllRequest(r) ? [...leagues] : [Number(r.leagueId)];
+      const covered = wanted.length > 0 && wanted.every((id) => isInjuredIn(u, id) || !leagues.has(id));
+      if (covered) {
+        r.status = "done";
+        r.resolvedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
   }
   return changed;
 }
@@ -1113,29 +1132,31 @@ function visibleLeagueRequests(db, user) {
   return pending
     .filter((r) => {
       if (r.kind === "join") return regionals.has(Number(r.regionalId));
-      if (isDropAllRequest(r)) return true;
+      if (isAllLeaguesRequest(r)) return true;
       return leagueIds.has(Number(r.leagueId));
     })
     .map((r) => publicLeagueRequest(r, db));
 }
+function leagueRequestPhrase(request) {
+  if (request.kind === "join") return `join a second league (${htmlEsc(request.regionalName || "the other regional")})`;
+  const injury = request.kind === "injury";
+  if (request.scope === "all") return injury ? "sit out on the injured list for all leagues and keep their spot" : "withdraw from all leagues";
+  const league = htmlEsc(request.leagueTitle || "a league");
+  return injury ? `sit out on the injured list for ${league} and keep their spot` : `withdraw from ${league}`;
+}
 function leagueRequestEmail(staff, request, player) {
   const name = htmlEsc(player?.nickname || player?.name || "A player");
-  const detail =
-    request.kind === "join"
-      ? `join a second league (${htmlEsc(request.regionalName || "the other regional")})`
-      : request.scope === "all"
-        ? "withdraw from all leagues"
-        : `withdraw from ${htmlEsc(request.leagueTitle || "a league")}`;
+  const detail = leagueRequestPhrase(request);
+  const subjectAction =
+    request.kind === "join" ? "join a second league" : request.kind === "injury" ? "join the injured list" : request.scope === "all" ? "withdraw from all leagues" : "withdraw from a league";
   return {
     to: staff.email,
-    subject: `${player?.nickname || player?.name || "A player"} wants to ${
-      request.kind === "join" ? "join a second league" : request.scope === "all" ? "withdraw from all leagues" : "withdraw from a league"
-    }`,
+    subject: `${player?.nickname || player?.name || "A player"} wants to ${subjectAction}`,
     html:
       `<p>Hi ${htmlEsc(staff.nickname || staff.name || "there")},</p>` +
       `<p><b>${name}</b> asked to ${detail}.</p>` +
       (request.note ? `<p>Note: ${htmlEsc(request.note)}</p>` : "") +
-      `<p>Open <b>Admin</b> to place or unplace them.</p>` +
+      `<p>Open <b>Admin</b> to place them, unplace them, or put them on the injured list.</p>` +
       `<p>— TSH Darts League</p>`,
     userId: staff.id,
     type: "league_request",
@@ -1164,6 +1185,7 @@ function unplaceUserFromLeagues(u, leagueId) {
   const next = leagueId ? ids.filter((id) => id !== leagueId) : [];
   u.leagueIds = next;
   u.leagueId = next[0] || null;
+  u.injuredLeagueIds = injuredLeagueIds(u);
 }
 function placeUserInLeague(db, u, league) {
   const regional = (db.regionals || []).find((r) => Number(r.id) === Number(league.regionalId));
@@ -1184,6 +1206,7 @@ function placeUserInLeague(db, u, league) {
   next.push(league.id);
   u.leagueIds = next;
   u.leagueId = next[0] || null;
+  u.injuredLeagueIds = injuredLeagueIds(u);
   return null;
 }
 function vacantSeatKey(seat) {
@@ -1360,6 +1383,100 @@ function vacatePlayerFixtures(db, user, leagueId, { keepPlayed = false } = {}) {
     byes += added.filter((seat) => !seat.played).length;
   }
   return byes;
+}
+function rememberInjuryHold(fixture, userId, side) {
+  if (!Array.isArray(fixture.injuryHolds)) fixture.injuryHolds = [];
+  const uid = Number(userId);
+  const which = side === "away" ? "away" : "home";
+  if (fixture.injuryHolds.some((hold) => Number(hold.userId) === uid && hold.side === which)) return;
+  fixture.injuryHolds.push({ userId: uid, side: which });
+}
+function sitOutInjuredFixtures(db, user, leagueId) {
+  const uid = Number(user?.id);
+  const only = Number(leagueId) || 0;
+  let byes = 0;
+  for (const fixture of db.fixtures || []) {
+    const side = fixtureSideForUser(fixture, uid);
+    if (!side) continue;
+    if (only && Number(fixture.leagueId) !== only) continue;
+    if (fixture.status === "played") continue;
+    const otherId = fixtureSidePlayerId(fixture, otherFixtureSide(side));
+    if (side === "home") fixture.homeId = null;
+    else fixture.awayId = null;
+    rememberInjuryHold(fixture, uid, side);
+    if (otherId) {
+      releaseOpenMatch(fixture);
+      byes += 1;
+    } else {
+      fixture.bye = true;
+      fixture.status = "bye";
+    }
+  }
+  return byes;
+}
+function restoreInjuryHolds(db, user, leagueId) {
+  const uid = Number(user?.id);
+  const only = Number(leagueId) || 0;
+  let restored = 0;
+  for (const fixture of db.fixtures || []) {
+    if (only && Number(fixture.leagueId) !== only) continue;
+    const holds = Array.isArray(fixture.injuryHolds) ? fixture.injuryHolds : [];
+    const mine = holds.filter((hold) => Number(hold.userId) === uid);
+    if (!mine.length) continue;
+    if (fixture.status !== "played") {
+      for (const hold of mine) {
+        const side = hold.side === "away" ? "away" : "home";
+        const current = side === "home" ? fixture.homeId : fixture.awayId;
+        if (current && Number(current) !== uid) continue;
+        if (side === "home") fixture.homeId = uid;
+        else fixture.awayId = uid;
+        restored += 1;
+      }
+      const homeId = Number(fixture.homeId) || 0;
+      const awayId = Number(fixture.awayId) || 0;
+      if (homeId && awayId) {
+        fixture.bye = false;
+        if (fixture.status === "bye") fixture.status = "scheduled";
+        fixture.notify = freshFixtureNotify();
+      } else {
+        fixture.bye = true;
+        fixture.status = "bye";
+      }
+    }
+    fixture.injuryHolds = holds.filter((hold) => Number(hold.userId) !== uid);
+    if (!fixture.injuryHolds.length) delete fixture.injuryHolds;
+  }
+  return restored;
+}
+function injuryLeagueIds(user, leagueId) {
+  const placed = userLeagueIds(user);
+  if (!placed.length) return { error: "That player is not in a division" };
+  const requested = Number(leagueId) || 0;
+  if (!requested) return { ids: placed };
+  if (!placed.includes(requested)) return { error: "Player is not in that league" };
+  return { ids: [requested] };
+}
+function markPlayerInjured(db, user, leagueId) {
+  const picked = injuryLeagueIds(user, leagueId);
+  if (picked.error) return picked;
+  const already = new Set(injuredLeagueIds(user));
+  const next = picked.ids.filter((id) => !already.has(id));
+  if (!next.length) return { already: true, byes: 0, leagueIds: [] };
+  user.injuredLeagueIds = [...already, ...next];
+  let byes = 0;
+  for (const id of next) byes += sitOutInjuredFixtures(db, user, id);
+  return { byes, leagueIds: next };
+}
+function clearPlayerInjury(db, user, leagueId) {
+  const current = injuredLeagueIds(user);
+  const requested = Number(leagueId) || 0;
+  const ids = requested ? current.filter((id) => id === requested) : current.slice();
+  if (!ids.length) return { error: "That player is not on the injured list" };
+  const drop = new Set(ids);
+  user.injuredLeagueIds = current.filter((id) => !drop.has(id));
+  let restored = 0;
+  for (const id of ids) restored += restoreInjuryHolds(db, user, id);
+  return { restored, leagueIds: ids };
 }
 function claimVacantSeat(db, user, leagueId) {
   ensureVacantSlots(db);
@@ -2734,7 +2851,7 @@ async function handleApi(req, res, url) {
     if (!u) return json(res, 404, { ok: false, error: "Account not found" });
     const kind = String(body.kind || "").trim();
     const note = String(body.note || "").trim().slice(0, 300);
-    if (kind !== "join" && kind !== "drop") return json(res, 400, { ok: false, error: "Choose join or drop" });
+    if (kind !== "join" && kind !== "drop" && kind !== "injury") return json(res, 400, { ok: false, error: "Choose join, withdraw, or injured list" });
     let request;
     if (kind === "join") {
       const open = openJoinRegionals(db, u);
@@ -2781,15 +2898,25 @@ async function handleApi(req, res, url) {
     } else {
       const placedIds = userLeagueIds(u);
       if (!placedIds.length) return json(res, 400, { ok: false, error: "You are not in a league yet" });
-      const dropAll = body.scope === "all" || body.leagueId === "all" || body.leagueId === "" || body.leagueId == null;
-      if (dropAll) {
-        if (pendingLeagueRequests(db, u.id, "drop").some((r) => isDropAllRequest(r))) {
-          return json(res, 400, { ok: false, error: "You already asked to withdraw from all leagues. An admin will review it." });
+      const leaveAll = body.scope === "all" || body.leagueId === "all" || body.leagueId === "" || body.leagueId == null;
+      const injury = kind === "injury";
+      if (leaveAll) {
+        const pendingAll = pendingLeagueRequests(db, u.id, kind).some((r) => (injury ? isInjuryAllRequest(r) : isDropAllRequest(r)));
+        if (pendingAll) {
+          return json(res, 400, {
+            ok: false,
+            error: injury
+              ? "You already asked to join the injured list for all leagues. An admin will review it."
+              : "You already asked to withdraw from all leagues. An admin will review it.",
+          });
+        }
+        if (injury && placedIds.every((id) => isInjuredIn(u, id))) {
+          return json(res, 400, { ok: false, error: "You are already on the injured list" });
         }
         request = {
           id: nextId(db.leagueRequests),
           userId: u.id,
-          kind: "drop",
+          kind,
           regionalId: null,
           leagueId: null,
           scope: "all",
@@ -2800,13 +2927,21 @@ async function handleApi(req, res, url) {
       } else {
         const leagueId = Number(body.leagueId);
         if (!placedIds.includes(leagueId)) return json(res, 400, { ok: false, error: "You are not in that league" });
-        if (pendingLeagueRequests(db, u.id, "drop").some((r) => Number(r.leagueId) === leagueId)) {
-          return json(res, 400, { ok: false, error: "You already asked to drop from that league. An admin will review it." });
+        if (pendingLeagueRequests(db, u.id, kind).some((r) => Number(r.leagueId) === leagueId)) {
+          return json(res, 400, {
+            ok: false,
+            error: injury
+              ? "You already asked to join the injured list for that league. An admin will review it."
+              : "You already asked to drop from that league. An admin will review it.",
+          });
+        }
+        if (injury && isInjuredIn(u, leagueId)) {
+          return json(res, 400, { ok: false, error: "You are already on the injured list for that division" });
         }
         request = {
           id: nextId(db.leagueRequests),
           userId: u.id,
-          kind: "drop",
+          kind,
           regionalId: leagueRegionalId(db, leagueId),
           leagueId,
           scope: "one",
@@ -3610,6 +3745,11 @@ async function handleApi(req, res, url) {
         for (const appn of db.applications.filter((a) => a.userId === u.id)) {
           appn.status = isFullyPlaced(db, u) ? "placed" : "pending";
         }
+      } else if (request.kind === "injury") {
+        if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can place a player on the injured list" });
+        const marked = markPlayerInjured(db, u, isInjuryAllRequest(request) ? 0 : Number(request.leagueId));
+        if (marked.error) return json(res, 400, { ok: false, error: marked.error });
+        droppedByes = marked.byes || 0;
       } else if (request.kind === "join") {
         if (!placedRegionalIds(db, u).includes(Number(request.regionalId))) {
           return json(res, 400, { ok: false, error: "Place them in that regional first, then mark this done." });
@@ -3619,13 +3759,47 @@ async function handleApi(req, res, url) {
       request.resolvedAt = new Date().toISOString();
       request.resolvedById = user.id;
       resolveMatchingLeagueRequests(db, u);
-      recordStaff(db, user, "resolve_request", {
-        summary: `Marked ${request.kind} request from ${u.name} done`,
+      recordStaff(db, user, request.kind === "injury" ? "injury_list" : "resolve_request", {
+        summary: request.kind === "injury" ? `Placed ${u.name} on the injured list` : `Marked ${request.kind} request from ${u.name} done`,
         targetUserId: u.id,
         leagueId: request.leagueId || null,
       });
       writeDb(db);
-      return json(res, 200, { ok: true, user: publicUser(u, db), byes: droppedByes });
+      return json(res, 200, { ok: true, user: publicUser(u, db), byes: droppedByes, kind: request.kind });
+    }
+    if (method === "POST" && p === "/api/admin/injury") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can update the injured list" });
+      const u = db.users.find((x) => x.id === Number(body.userId));
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      const rawLeague = body.leagueId;
+      const leagueId = rawLeague === "" || rawLeague == null || rawLeague === "all" ? 0 : Number(rawLeague);
+      const marked = markPlayerInjured(db, u, leagueId);
+      if (marked.error) return json(res, 400, { ok: false, error: marked.error });
+      if (marked.already) return json(res, 400, { ok: false, error: "Already on the injured list for that division" });
+      resolveMatchingLeagueRequests(db, u);
+      recordStaff(db, user, "injury_list", {
+        summary: `Placed ${u.name} on the injured list`,
+        targetUserId: u.id,
+        leagueId: leagueId || null,
+      });
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(u, db), byes: marked.byes || 0 });
+    }
+    if (method === "POST" && p === "/api/admin/injury/clear") {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can update the injured list" });
+      const u = db.users.find((x) => x.id === Number(body.userId));
+      if (!u) return json(res, 400, { ok: false, error: "Player not found" });
+      const rawLeague = body.leagueId;
+      const leagueId = rawLeague === "" || rawLeague == null || rawLeague === "all" ? 0 : Number(rawLeague);
+      const cleared = clearPlayerInjury(db, u, leagueId);
+      if (cleared.error) return json(res, 400, { ok: false, error: cleared.error });
+      recordStaff(db, user, "clear_injury", {
+        summary: `Returned ${u.name} from the injured list`,
+        targetUserId: u.id,
+        leagueId: leagueId || null,
+      });
+      writeDb(db);
+      return json(res, 200, { ok: true, user: publicUser(u, db), restored: cleared.restored || 0 });
     }
     if (method === "POST" && p === "/api/admin/place-player") {
       const u = db.users.find((x) => x.id === Number(body.userId));
@@ -3668,6 +3842,7 @@ async function handleApi(req, res, url) {
         const player = db.users.find((x) => x.id === Number(homeBye ? body.awayId : body.homeId));
         if (!player) return json(res, 400, { ok: false, error: "Choose the player who has the bye" });
         if (!inLeague(player, leagueId)) return json(res, 400, { ok: false, error: "That player must already be placed in that league" });
+        if (isInjuredIn(player, leagueId)) return json(res, 400, { ok: false, error: "That player is on the injured list" });
         if (homeBye) away = player;
         else home = player;
       } else {
@@ -3676,6 +3851,9 @@ async function handleApi(req, res, url) {
         if (!home || !away || home.id === away.id) return json(res, 400, { ok: false, error: "Choose two different players" });
         if (!inLeague(home, leagueId) || !inLeague(away, leagueId)) {
           return json(res, 400, { ok: false, error: "Both players must already be placed in that league" });
+        }
+        if (isInjuredIn(home, leagueId) || isInjuredIn(away, leagueId)) {
+          return json(res, 400, { ok: false, error: "That player is on the injured list" });
         }
       }
       const bye = homeBye || awayBye;
@@ -3711,8 +3889,17 @@ async function handleApi(req, res, url) {
       if (!managesLeague(user, leagueId)) return json(res, 403, { ok: false, error: "You can only generate fixtures in your league" });
       const league = db.leagues.find((l) => l.id === leagueId);
       if (!league) return json(res, 400, { ok: false, error: "League not found" });
-      const players = db.users.filter((u) => inLeague(u, leagueId));
-      if (players.length < 2) return json(res, 400, { ok: false, error: "Place at least two players in this league first" });
+      const roster = db.users.filter((u) => inLeague(u, leagueId));
+      const players = roster.filter((u) => !isInjuredIn(u, leagueId));
+      if (players.length < 2) {
+        return json(res, 400, {
+          ok: false,
+          error:
+            roster.length >= 2
+              ? "Not enough players are available. Players on the injured list keep their spot and are left out of this draw."
+              : "Place at least two players in this league first",
+        });
+      }
       const season = Number(body.season) || 1;
       // One season of fixtures per league. Block generating a different season
       // while another season's fixtures still exist (clear them first).
@@ -4014,6 +4201,8 @@ async function handleApi(req, res, url) {
         const player = db.users.find((x) => x.id === Number(raw));
         if (!player) return { error: "Choose both players" };
         if (!inLeague(player, fixture.leagueId)) return { error: "Both players must already be placed in that league" };
+        const alreadyOnFixture = Number(fixture.homeId) === Number(player.id) || Number(fixture.awayId) === Number(player.id);
+        if (isInjuredIn(player, fixture.leagueId) && !alreadyOnFixture) return { error: "That player is on the injured list" };
         return { user: player };
       };
       const homeSide = resolveSide(body.homeId, homeBye);
