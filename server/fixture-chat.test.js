@@ -102,10 +102,17 @@ child.stdout.on("data", (buf) => {
 try {
   await waitHealth(port, child);
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
-  check("fixtures render an arrange chat", appJs.includes("ARRANGE THIS MATCH") && appJs.includes('data-form="MATCHCHAT"'));
-  check("locked chat is explained on the fixture", appJs.includes("CHAT LOCKED"));
+  check(
+    "fixtures open arrange chat from an icon popup",
+    appJs.includes('data-act="open-chat"') && appJs.includes("chat-modal") && appJs.includes("ARRANGE THIS MATCH") && appJs.includes('data-form="MATCHCHAT"')
+  );
+  check("locked chat is explained in the popup", appJs.includes("CHAT LOCKED"));
   check("sending a message tells the player their opponent is notified", appJs.includes("Your opponent has been notified") && appJs.includes("NEW MESSAGE"));
-  check("owner chat copy is not limited to one division", appJs.includes("even when you are also a division admin"));
+  check(
+    "icon access covers the two players, division admins, and every chat for owners",
+    appJs.includes("Only the two players can post") && appJs.includes("Division admins can read their division") && appJs.includes("Owners can read every chat")
+  );
+  check("admin desk does not list a match chat history", !appJs.includes("matchChatsPanel") && !appJs.includes(">Match chats<"));
 
   const owner = await api(port, "/api/auth/login", {
     method: "POST",

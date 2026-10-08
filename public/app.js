@@ -663,6 +663,32 @@ function consumeShownChats(chats) {
   const shown = new Set((chats || []).map((chat) => Number(chat.fixtureId)));
   state.chatUnread = (state.chatUnread || []).filter((item) => !shown.has(Number(item.fixtureId)));
 }
+function myAdminLeagueIds() {
+  const ids = Array.isArray(state.user?.adminLeagueIds) ? state.user.adminLeagueIds.map(Number) : [];
+  if (state.user?.adminLeagueId) ids.push(Number(state.user.adminLeagueId));
+  return [...new Set(ids.filter(Boolean))];
+}
+function canOpenFixtureChat(f) {
+  if (!state.user || !f || isByeFixture(f) || f.status === "played") return false;
+  const staffOpen = f.status === "scheduled" || f.status === "pending_verify" || f.status === "submitted";
+  if (isOwner(state.user) || isHeadAdmin(state.user)) return staffOpen;
+  if (hasRole(state.user, "admin") && myAdminLeagueIds().includes(Number(f.leagueId))) return staffOpen;
+  if (!inThisMatch(f) || f.released === false) return false;
+  return f.status === "scheduled" || f.status === "pending_verify";
+}
+function chatUnreadFor(f) {
+  return (state.chatUnread || []).find((item) => Number(item.fixtureId) === Number(f?.id));
+}
+function fixtureChatIcon(f) {
+  if (!canOpenFixtureChat(f)) return "";
+  const unread = chatUnreadFor(f);
+  const count = Number(unread?.count || 0);
+  const label = count ? `Open arrange chat, ${count} new message${count === 1 ? "" : "s"}` : "Open arrange chat";
+  return `<button type="button" class="chat-icon-btn" data-act="open-chat" data-id="${f.id}" aria-label="${esc(label)}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 16.5H9l-4.2 3v-3H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>
+      ${count ? `<span class="chat-icon-badge">${count > 9 ? "9+" : count}</span>` : ""}
+    </button>`;
+}
 function chatNoticeBanner() {
   const items = state.chatUnread || [];
   if (!items.length) return "";
@@ -670,7 +696,7 @@ function chatNoticeBanner() {
     `<div class="chat-notice">${items
       .map(
         (item) =>
-          `<a href="/my-matches?fixture=${item.fixtureId}"><span class="text-xs font-bold tracking-widest gold">NEW MESSAGE</span><span class="mt-1 block text-sm">${esc(item.fromName)} messaged you about Week ${esc(item.week)}${item.leagueName ? ` · ${esc(item.leagueName)}` : ""}. Open the chat to arrange the match.</span></a>`
+          `<button type="button" class="chat-notice-btn" data-act="open-chat" data-id="${item.fixtureId}"><span class="text-xs font-bold tracking-widest gold">NEW MESSAGE</span><span class="mt-1 block text-sm">${esc(item.fromName)} messaged you about Week ${esc(item.week)}${item.leagueName ? ` · ${esc(item.leagueName)}` : ""}. Open the chat to arrange the match.</span></button>`
       )
       .join("")}</div>`,
     "mt-6"
@@ -702,56 +728,54 @@ function matchChatBox(chat) {
       <p class="mt-1 text-xs text-muted">Sending notifies ${esc(opponent || "your opponent")} on My Matches, and by email if they have match emails on.</p>`
     : "";
   return `<div class="match-chat" data-match-chat="${chat.fixtureId}">
-      <div class="text-xs font-bold tracking-widest gold">${chat.locked ? "ARRANGE CHAT · LOCKED" : "ARRANGE THIS MATCH"}</div>
+      <div class="text-xs font-bold tracking-widest gold">${chat.locked ? "CHAT LOCKED" : "ARRANGE THIS MATCH"}</div>
       ${locked}
       ${log}
       ${form}
     </div>`;
 }
-function fixtureChatSlot(f, chat) {
-  if (isByeFixture(f) || f.status === "played") return "";
-  if (chat) return matchChatBox(chat);
-  if (inThisMatch(f) && f.status === "submitted") {
-    return `<div class="match-chat match-chat-locked" data-match-chat="${f.id}">
-      <div class="text-xs font-bold tracking-widest gold">CHAT LOCKED</div>
-      <p class="mt-1 text-xs text-muted">This result is with the admin. The arrange chat is locked, and it is removed once the result is published.</p>
+function chatPopup() {
+  if (!state.chatOpen) return "";
+  const chat = state.chatPopup;
+  const title = chat ? `${chat.homeName} vs ${chat.awayName}` : "Arrange chat";
+  const body = state.chatPopupError
+    ? `<p class="mt-3 text-sm text-red-400">${esc(state.chatPopupError)}</p>`
+    : chat
+      ? matchChatBox(chat)
+      : `<p class="mt-3 text-sm text-muted">Opening chat…</p>`;
+  return `<div class="chat-modal">
+      <button type="button" class="chat-modal-backdrop" data-act="close-chat" aria-label="Close chat"></button>
+      <div class="chat-modal-card" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="chat-modal-head">
+          <div class="min-w-0">
+            <div class="text-xs font-bold tracking-widest gold">FIXTURE CHAT</div>
+            <div class="mt-1 font-semibold">${esc(title)}</div>
+          </div>
+          <button type="button" class="btn-ghost" data-act="close-chat" aria-label="Close chat">✕</button>
+        </div>
+        ${state.chatNotice ? `<p class="mt-3 text-sm gold">${esc(state.chatNotice)}</p>` : ""}
+        ${body}
+      </div>
     </div>`;
-  }
-  return "";
 }
-function matchChatsPanel(chats, d) {
-  const intro = d.isOwner
-    ? "You can read every division’s arrange chats, even when you are also a division admin."
-    : d.isHeadAdmin
-      ? "You can read arrange chats in every division."
-      : "You can read the arrange chats in your division only.";
-  const groups = new Map();
-  for (const chat of chats || []) {
-    const key = chat.leagueName || "Division";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(chat);
+async function openFixtureChat(id) {
+  const fixtureId = Number(id);
+  if (!fixtureId) return;
+  state.chatOpen = fixtureId;
+  state.chatPopup = null;
+  state.chatPopupError = "";
+  state.chatNotice = "";
+  render();
+  try {
+    const data = await api(`/api/fixtures/${fixtureId}/chat`);
+    if (Number(state.chatOpen) !== fixtureId) return;
+    state.chatPopup = data.chat;
+    consumeShownChats([data.chat]);
+  } catch (err) {
+    if (Number(state.chatOpen) !== fixtureId) return;
+    state.chatPopupError = err.message || "Could not open that chat";
   }
-  const body = chats?.length
-    ? [...groups.entries()]
-        .map(
-          ([name, rows]) => `<h3 class="mt-4 text-sm font-bold tracking-widest gold">${esc(name)}</h3>
-        <div class="mt-2 space-y-3">${rows
-          .map(
-            (chat) => `<div class="border-b border-white/10 pb-3">
-            <div class="text-sm font-semibold">Week ${esc(chat.week)} · ${esc(chat.homeName)} vs ${esc(chat.awayName)}${chat.locked ? " · locked" : ""}</div>
-            ${matchChatBox(chat)}
-          </div>`
-          )
-          .join("")}</div>`
-        )
-        .join("")
-    : `<p class="mt-3 text-sm text-muted">No arrange chats yet. Players message each other from a pending fixture.</p>`;
-  return panel(
-    `<h2 class="text-lg font-bold">Match chats</h2>
-      <p class="mt-1 text-sm text-muted">${intro} A chat locks when the result is sent for admin approval, and it is deleted when the result is published. Sending a message notifies the opponent.</p>
-      ${body}`,
-    "mt-6"
-  );
+  render();
 }
 function weeklyReleaseNote(payload, { empty = false, emptyFallback = "No fixtures yet." } = {}) {
   if (!payload?.nextFixtureReleaseAt) {
@@ -1088,6 +1112,7 @@ function layout(inner, { arena = false, home = false } = {}) {
         </div>
       </nav>
       <div class="${arena ? "arena-bg min-h-[calc(100vh-3.5rem)]" : ""}">${inner}</div>
+      ${chatPopup()}
     </div>`;
 }
 function esc(s) {
@@ -1456,17 +1481,6 @@ async function pageRegional(slug) {
 async function pageLeague(slug, id) {
   const d = await api(`/api/leagues/${id}`);
   const tab = new URLSearchParams(location.search).get("tab") || "table";
-  let chatsById = {};
-  if (state.user && tab === "fixtures") {
-    try {
-      const listed = await api("/api/fixtures/chats");
-      const visible = (listed.chats || []).filter((chat) => Number(chat.leagueId) === Number(id));
-      consumeShownChats(visible);
-      chatsById = Object.fromEntries(visible.map((chat) => [chat.fixtureId, chat]));
-    } catch {
-      chatsById = {};
-    }
-  }
   return layout(
     `<div class="mx-auto max-w-5xl px-4 py-10">
       <div class="flex flex-wrap items-center gap-2 text-sm font-bold">
@@ -1557,9 +1571,8 @@ async function pageLeague(slug, id) {
                               ${proposalLine}
                               ${actions}
                             </div>
-                            <div class="shrink-0">${fixtureStatus(f)}</div>
+                            <div class="shrink-0 fixture-side">${fixtureChatIcon(f)}${fixtureStatus(f)}</div>
                           </div>
-                          ${fixtureChatSlot(f, chatsById[f.id])}
                         </div>`
                       );
                     })
@@ -1909,7 +1922,7 @@ async function pageDashboard() {
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : d.nextFixtureReleaseAt ? "Drops Sunday 12:00am GMT" : "None scheduled"}</div>${
           next
-            ? `<div class="mt-2 text-xs text-muted">${esc(fixtureWhen(next))}</div>
+            ? `<div class="mt-2 flex items-center justify-between gap-2"><div class="text-xs text-muted">${esc(fixtureWhen(next))}</div>${fixtureChatIcon(next)}</div>
                ${scheduleActions(next)}
                <div class="mt-3 flex flex-wrap gap-2">
                  ${
@@ -1979,19 +1992,10 @@ async function pageDashboard() {
 }
 async function pageMyMatches() {
   const d = await api("/api/my-fixtures");
-  let chatsById = {};
-  try {
-    const listed = await api("/api/fixtures/chats");
-    const mine = (listed.chats || []).filter((chat) => inThisMatch(chat));
-    consumeShownChats(mine);
-    chatsById = Object.fromEntries(mine.map((chat) => [chat.fixtureId, chat]));
-  } catch {
-    chatsById = {};
-  }
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">My Matches</h1>
-      <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, either player uploads both DartCounter screenshots and types the match stats. The other player verifies those numbers. A division admin then approves them onto the league table. Use the arrange chat on a pending match to agree when to play. Your opponent is notified when you send a message.</p>
+      <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, either player uploads both DartCounter screenshots and types the match stats. The other player verifies those numbers. A division admin then approves them onto the league table. Open the chat icon on a pending match to agree when to play. Your opponent is notified when you send a message.</p>
       ${chatNoticeBanner()}
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
@@ -2004,7 +2008,7 @@ async function pageMyMatches() {
             const action = screenshotUploader(f);
             return panel(`<div id="fixture-${f.id}" class="grid gap-3 md:grid-cols-[1fr_260px] md:items-start ${new URLSearchParams(location.search).get("fixture") === String(f.id) ? "fixture-highlight" : ""}">
                 <div><div class="text-xs uppercase tracking-widest text-muted">${esc(f.leagueName)} · ${esc(fixtureWhen(f))}</div>
-                <div class="mt-1 text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+                <div class="mt-1 flex items-start justify-between gap-2"><div class="text-lg font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>${fixtureChatIcon(f)}</div>
                 ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ". Submit the screenshots and stats again."}</div>` : ""}
                 <div class="mt-1 text-xs text-muted">${
                   isByeFixture(f)
@@ -2033,8 +2037,7 @@ async function pageMyMatches() {
                 ${scheduleActions(f)}
                 </div>
                 ${action}
-              </div>
-              ${fixtureChatSlot(f, chatsById[f.id])}`);
+              </div>`);
           })
           .join("")
             : d.nextFixtureReleaseAt
@@ -2063,7 +2066,7 @@ async function pagePlayer(id) {
         <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
       ${Number(state.user?.id) === Number(d.player?.id) ? panel(`<h2 class="text-lg font-bold">Player profile</h2>${leagueChangeInner(state.user)}`, "mt-6") : ""}
       <div class="mt-4 space-y-3">${d.fixtures
-        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div>`))
+        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 fixture-side">${fixtureChatIcon(f)}<div class="font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div></div>`))
         .join("")}</div>
     </div>`,
     { arena: true }
@@ -2574,14 +2577,6 @@ function overwriteStatsDesk(d) {
 }
 async function pageAdmin() {
   const d = await api("/api/admin/overview");
-  let matchChats = [];
-  try {
-    const listed = await api("/api/fixtures/chats");
-    matchChats = listed.chats || [];
-    consumeShownChats(matchChats);
-  } catch {
-    matchChats = [];
-  }
   let activity = null;
   if (d.isOwner) {
     try {
@@ -2855,7 +2850,6 @@ async function pageAdmin() {
             <button class="btn-ghost w-full">DECLINE & REQUEST RESUBMIT</button>
           </form>`,
         })}`, "mt-6")}
-      ${matchChatsPanel(matchChats, d)}
       ${pendingSignupsPanel}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
         <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league. Every admin and owner is emailed. Owners and Head Admins can drop a player here.</p>
@@ -3060,8 +3054,33 @@ async function refreshChatNotices(gen) {
     const data = await api("/api/fixtures/chats?summary=1");
     if (gen !== chatPollGen) return;
     const next = data.unread || [];
-    if (chatNoticeKey(next) === chatNoticeKey(state.chatUnread)) return;
-    state.chatUnread = next;
+    let popupChanged = false;
+    if (state.chatOpen) {
+      try {
+        const chatData = await api(`/api/fixtures/${state.chatOpen}/chat`);
+        if (gen !== chatPollGen) return;
+        const prev = JSON.stringify({
+          messages: state.chatPopup?.messages || [],
+          locked: Boolean(state.chatPopup?.locked),
+          canPost: Boolean(state.chatPopup?.canPost),
+        });
+        const incoming = JSON.stringify({
+          messages: chatData.chat?.messages || [],
+          locked: Boolean(chatData.chat?.locked),
+          canPost: Boolean(chatData.chat?.canPost),
+        });
+        if (prev !== incoming) {
+          state.chatPopup = chatData.chat;
+          state.chatPopupError = "";
+          popupChanged = true;
+        }
+      } catch {
+        /* keep the open chat as it is */
+      }
+    }
+    const visible = state.chatOpen ? next.filter((item) => Number(item.fixtureId) !== Number(state.chatOpen)) : next;
+    if (!popupChanged && chatNoticeKey(visible) === chatNoticeKey(state.chatUnread)) return;
+    state.chatUnread = visible;
     render();
   } catch {
     /* leave the current notices in place */
@@ -3136,6 +3155,15 @@ async function render() {
   }
 }
 
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !state.chatOpen) return;
+  state.chatOpen = null;
+  state.chatPopup = null;
+  state.chatPopupError = "";
+  state.chatNotice = "";
+  render();
+});
+
 document.addEventListener("click", async (e) => {
   const fmtBtn = e.target.closest("[data-act=news-fmt]");
   if (fmtBtn) {
@@ -3168,6 +3196,21 @@ document.addEventListener("click", async (e) => {
   if (!e.target.closest(".news-emoji-wrap")) {
     document.querySelectorAll("[data-news-emoji-picker]").forEach((el) => el.classList.add("hidden"));
     document.querySelectorAll("[data-act=news-emoji-toggle]").forEach((el) => el.setAttribute("aria-expanded", "false"));
+  }
+  const openChat = e.target.closest("[data-act=open-chat]");
+  if (openChat) {
+    e.preventDefault();
+    openFixtureChat(openChat.dataset.id);
+    return;
+  }
+  if (e.target.closest("[data-act=close-chat]")) {
+    e.preventDefault();
+    state.chatOpen = null;
+    state.chatPopup = null;
+    state.chatPopupError = "";
+    state.chatNotice = "";
+    render();
+    return;
   }
   const toggle = e.target.closest("[data-act=toggle-password]");
   if (toggle) {
@@ -3484,9 +3527,13 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "MATCHCHAT") {
       const text = String(fd.body || "").trim();
       if (!text) throw new Error("Write a message first");
-      await api(`/api/fixtures/${form.dataset.id}/chat`, { method: "POST", body: JSON.stringify({ body: text }) });
+      const data = await api(`/api/fixtures/${form.dataset.id}/chat`, { method: "POST", body: JSON.stringify({ body: text }) });
       if (state.chatDrafts) delete state.chatDrafts[form.dataset.id];
-      state.notice = "Message sent. Your opponent has been notified.";
+      state.chatOpen = Number(form.dataset.id);
+      state.chatPopup = data.chat;
+      state.chatPopupError = "";
+      consumeShownChats([data.chat]);
+      state.chatNotice = "Message sent. Your opponent has been notified.";
       render();
     } else if (kind === "PROPOSE") {
       await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
