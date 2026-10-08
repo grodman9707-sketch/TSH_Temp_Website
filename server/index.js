@@ -1140,9 +1140,9 @@ function visibleLeagueRequests(db, user) {
 function leagueRequestPhrase(request) {
   if (request.kind === "join") return `join a second league (${htmlEsc(request.regionalName || "the other regional")})`;
   const injury = request.kind === "injury";
-  if (request.scope === "all") return injury ? "sit out on the injured list for all leagues and keep their spot" : "withdraw from all leagues";
+  if (request.scope === "all") return injury ? "join the injured list for all leagues and open a vacancy for their fixtures" : "withdraw from all leagues";
   const league = htmlEsc(request.leagueTitle || "a league");
-  return injury ? `sit out on the injured list for ${league} and keep their spot` : `withdraw from ${league}`;
+  return injury ? `join the injured list for ${league} and open a vacancy for their fixtures` : `withdraw from ${league}`;
 }
 function leagueRequestEmail(staff, request, player) {
   const name = htmlEsc(player?.nickname || player?.name || "A player");
@@ -1394,25 +1394,32 @@ function rememberInjuryHold(fixture, userId, side) {
 function sitOutInjuredFixtures(db, user, leagueId) {
   const uid = Number(user?.id);
   const only = Number(leagueId) || 0;
-  let byes = 0;
   for (const fixture of db.fixtures || []) {
     const side = fixtureSideForUser(fixture, uid);
     if (!side) continue;
     if (only && Number(fixture.leagueId) !== only) continue;
     if (fixture.status === "played") continue;
-    const otherId = fixtureSidePlayerId(fixture, otherFixtureSide(side));
-    if (side === "home") fixture.homeId = null;
-    else fixture.awayId = null;
     rememberInjuryHold(fixture, uid, side);
-    if (otherId) {
-      releaseOpenMatch(fixture);
-      byes += 1;
-    } else {
-      fixture.bye = true;
-      fixture.status = "bye";
-    }
   }
-  return byes;
+  // Their fixtures become a vacancy. They stay in the division.
+  return vacatePlayerFixtures(db, user, only);
+}
+function dropInjuryHold(fixture, userId, side) {
+  if (!Array.isArray(fixture?.injuryHolds)) return;
+  const uid = Number(userId);
+  const which = side === "away" ? "away" : "home";
+  fixture.injuryHolds = fixture.injuryHolds.filter((hold) => !(Number(hold.userId) === uid && hold.side === which));
+  if (!fixture.injuryHolds.length) delete fixture.injuryHolds;
+}
+function releaseInjuryVacancies(db, user, leagueId) {
+  ensureVacantSlots(db);
+  const uid = Number(user?.id);
+  const only = Number(leagueId) || 0;
+  db.vacantSlots = db.vacantSlots.filter((slot) => {
+    if (Number(slot.userId) !== uid) return true;
+    if (only && Number(slot.leagueId) !== only) return true;
+    return false;
+  });
 }
 function restoreInjuryHolds(db, user, leagueId) {
   const uid = Number(user?.id);
@@ -1475,7 +1482,10 @@ function clearPlayerInjury(db, user, leagueId) {
   const drop = new Set(ids);
   user.injuredLeagueIds = current.filter((id) => !drop.has(id));
   let restored = 0;
-  for (const id of ids) restored += restoreInjuryHolds(db, user, id);
+  for (const id of ids) {
+    releaseInjuryVacancies(db, user, id);
+    restored += restoreInjuryHolds(db, user, id);
+  }
   return { restored, leagueIds: ids };
 }
 function claimVacantSeat(db, user, leagueId) {
@@ -1505,6 +1515,7 @@ function claimVacantSeat(db, user, leagueId) {
       // side. Average, 180s, checkout, and visit bands from the player who
       // left do not move. The opponent's side is left untouched.
       clearSidePerformance(fixture, seat.side);
+      dropInjuryHold(fixture, slot.userId, seat.side);
       playedRenamed += 1;
       continue;
     }
@@ -1524,6 +1535,7 @@ function claimVacantSeat(db, user, leagueId) {
       fixture.bye = true;
       fixture.status = "bye";
     }
+    dropInjuryHold(fixture, slot.userId, seat.side);
     matches += 1;
   }
   db.vacantSlots = db.vacantSlots.filter((item) => item.id !== slot.id);
