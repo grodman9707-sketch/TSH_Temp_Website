@@ -1,5 +1,6 @@
 // Optional Airtable staff spreadsheet. Never includes passwords or reset codes.
 
+import { injuredLeagueIds } from "./injury.js";
 import { standingsForLeague } from "./standings.js";
 
 const API = "https://api.airtable.com/v0";
@@ -98,7 +99,7 @@ export function airtablePlayerRecords(db) {
             ? "TSH Americas"
             : "TSH International"),
         Divisions: leagues.map((l) => leagueTitle(db, l)).join(" · ") || "Unplaced",
-        Status: leagues.length ? "Placed" : "Unplaced",
+        Status: injuredLeagueIds(u).length ? "Injured" : leagues.length ? "Placed" : "Unplaced",
       },
     };
   });

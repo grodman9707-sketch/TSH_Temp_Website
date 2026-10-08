@@ -210,6 +210,9 @@ function userLeagueIds(u) {
   if (u?.leagueId) return [Number(u.leagueId)];
   return [];
 }
+function isInjuredIn(u, leagueId) {
+  return Array.isArray(u?.injuredLeagueIds) && u.injuredLeagueIds.map(Number).includes(Number(leagueId));
+}
 function takenSeatNote(seat) {
   if (!seat) return "";
   const open = Number(seat.matches) || 0;
@@ -1586,7 +1589,7 @@ async function pageLeague(slug, id) {
           : `<div class="glass table-wrap mt-4 rounded-xl"><table><thead><tr>${["#", "Player", "P", "W", "L", "LF", "LA", "+/-", "Pts", "Avg", "180s"].map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${d.standings
               .map(
                 (row, i) =>
-                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a></td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg || 0).toFixed(1)}</td><td>${row.oneEighties || 0}</td></tr>`
+                  `<tr><td class="gold">${i + 1}</td><td><a href="/player/${row.playerId}" class="inline-flex items-center gap-2">${avatarImg({ id: row.playerId, name: row.name, nickname: row.nickname, hasAvatar: row.hasAvatar, avatarUrl: row.hasAvatar ? `/api/users/${row.playerId}/avatar` : "" }, 28)}${esc(row.name)}</a>${row.injured ? ` <span class="text-xs uppercase tracking-widest text-muted">Injured</span>` : ""}</td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.legsFor}</td><td>${row.legsAgainst}</td><td>${row.diff}</td><td class="gold font-bold">${row.points}</td><td>${Number(row.avg || 0).toFixed(1)}</td><td>${row.oneEighties || 0}</td></tr>`
               )
               .join("")}</tbody></table></div>`
       }
@@ -1801,6 +1804,7 @@ function leagueChangeInner(u) {
   const pending = Array.isArray(u.pendingLeagueRequests) ? u.pendingLeagueRequests : [];
   const pendingJoin = pending.find((r) => r.kind === "join");
   const pendingDrops = pending.filter((r) => r.kind === "drop");
+  const pendingInjuries = pending.filter((r) => r.kind === "injury");
   const pendingDropAll = pendingDrops.find((r) => r.scope === "all" || r.leagueId == null);
   const dropPendingIds = new Set(pendingDrops.filter((r) => r.leagueId != null).map((r) => Number(r.leagueId)));
   const opens = Array.isArray(u.openJoinRegionals) && u.openJoinRegionals.length ? u.openJoinRegionals : u.openJoinRegional ? [u.openJoinRegional] : [];
@@ -1808,7 +1812,7 @@ function leagueChangeInner(u) {
   const list =
     leagues.length
       ? `<ul class="mt-3 space-y-1 text-sm">${leagues
-          .map((l) => `<li><b>${esc(l.title)}</b> <span class="text-muted">· ${esc(l.regionalName)}</span></li>`)
+          .map((l) => `<li><b>${esc(l.title)}</b> <span class="text-muted">· ${esc(l.regionalName)}</span>${l.injured ? ` <span class="gold">· Injured</span>` : ""}</li>`)
           .join("")}</ul>`
       : `<p class="mt-3 text-sm text-muted">You are not in a division yet. An admin will place you after you sign up.</p>`;
   const joinPicker =
@@ -1839,6 +1843,15 @@ function leagueChangeInner(u) {
         )
         .join("")}</div>`
     : "";
+  const injuryBlock = pendingInjuries.length
+    ? `<div class="mt-4 space-y-2">${pendingInjuries
+        .map(
+          (r) =>
+            `<div class="text-sm"><span class="gold">Injured-list request sent</span> for ${esc(r.leagueTitle || "all leagues")}. You keep your spot until an owner or head admin confirms.
+             <form class="mt-2" data-form="CANCELLEAGUE"><input type="hidden" name="id" value="${r.id}"><button class="btn-ghost">CANCEL REQUEST</button></form></div>`
+        )
+        .join("")}</div>`
+    : "";
   const dropOptions = [
     ...dropChoices.map((l) => `<option value="${l.id}">${esc(l.title)} · ${esc(l.regionalName)}</option>`),
     dropChoices.length > 1 ? `<option value="all">All leagues</option>` : "",
@@ -1846,19 +1859,23 @@ function leagueChangeInner(u) {
   const dropForm =
     dropChoices.length
       ? `<form class="mt-4 space-y-3" data-form="DROPLEAGUE">
-          <p class="text-sm text-muted">Ask to leave one league or every league. You stay in the table until an owner or admin confirms. This sends a notification to every admin and owner.</p>
+          <p class="text-sm text-muted">Withdraw leaves the division. Injured list keeps your spot for next season: remaining matches this season become byes, and that seat is not given to someone else. You stay listed until an owner or head admin confirms. This sends a notification to every admin and owner.</p>
           <select name="leagueId" required>${dropOptions}</select>
           <input name="note" maxlength="300" placeholder="Optional reason">
-          <button class="btn-ghost">ASK TO WITHDRAW</button>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn-ghost" type="submit" name="intent" value="drop">ASK TO WITHDRAW</button>
+            <button class="btn-gold" type="submit" name="intent" value="injury">INJURED LIST</button>
+          </div>
         </form>`
       : !leagues.length
-        ? `<p class="mt-4 text-sm text-muted">After you are placed, you can ask to withdraw from one or all of your leagues here.</p>`
+        ? `<p class="mt-4 text-sm text-muted">After you are placed, you can ask to withdraw or join the injured list from here.</p>`
         : "";
   return `<h3 class="text-sm font-bold tracking-widest uppercase gold">Leagues</h3>
-      <p class="mt-1 text-sm text-muted">You play in the International League. Regional leagues are coming soon. You can ask to leave a league from here.</p>
+      <p class="mt-1 text-sm text-muted">You play in the International League. Regional leagues are coming soon. You can ask to leave a league, or sit out on the injured list and keep your spot.</p>
       ${list}
       ${joinBlock}
       ${dropBlock}
+      ${injuryBlock}
       ${dropForm}`;
 }
 async function pageDashboard() {
@@ -2064,7 +2081,7 @@ async function pagePlayer(id) {
     `<div class="mx-auto max-w-3xl px-4 py-10">
       ${panel(`<div class="flex flex-wrap items-center gap-4"><div>${avatarImg(d.player, 72)}</div><div class="min-w-0"><p class="page-kicker text-xs gold">${esc((d.regionals || []).map((r) => r.fullTitle).join(" · ") || d.regional?.fullTitle || "Unplaced")}</p>
         <h1 class="page-title mt-2 font-extrabold">${esc(d.player.nickname || d.player.name)}</h1>
-        <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}</p></div></div>`)}
+        <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}${(d.player.injuredLeagueIds || []).length ? " · Injured" : ""}</p></div></div>`)}
       ${Number(state.user?.id) === Number(d.player?.id) ? panel(`<h2 class="text-lg font-bold">Player profile</h2>${leagueChangeInner(state.user)}`, "mt-6") : ""}
       <div class="mt-4 space-y-3">${d.fixtures
         .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 fixture-side">${fixtureChatIcon(f)}<div class="font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div></div>`))
@@ -2239,6 +2256,8 @@ function staffActionLabel(action) {
     reject_removal: "Dismissed removal",
     resolve_request: "Resolved request",
     dismiss_request: "Dismissed request",
+    injury_list: "Placed on injured list",
+    clear_injury: "Returned from injured list",
     post_news: "Posted news",
     delete_news: "Deleted news",
     add_region: "Added region",
@@ -2863,23 +2882,39 @@ async function pageAdmin() {
         })}`, "mt-6")}
       ${pendingSignupsPanel}
       ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
-        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league. Every admin and owner is emailed. Owners and Head Admins can drop a player here.</p>
+        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw from a league or sit out on the injured list and keep their spot. Every admin and owner is emailed. Owners and Head Admins confirm here.</p>
         ${
           (d.leagueRequests || []).length
             ? `<div class="mt-3 space-y-3">${d.leagueRequests
                 .map((r) => {
                   const join = r.kind === "join";
+                  const injury = r.kind === "injury";
                   const dropAll = !join && (r.scope === "all" || r.leagueId == null);
+                  const phrase = join
+                    ? `join ${esc(r.regionalName)}`
+                    : injury
+                      ? `injured list · ${esc(r.leagueTitle || "all leagues")}`
+                      : `withdraw from ${esc(r.leagueTitle || "all leagues")}`;
+                  const doneLabel = injury
+                    ? dropAll
+                      ? "INJURED LIST — ALL LEAGUES"
+                      : "PLACE ON INJURED LIST"
+                    : dropAll
+                      ? "DROP FROM ALL LEAGUES"
+                      : "DROP FROM LEAGUE";
+                  const waiting = injury
+                    ? `An owner or head admin can place them on the injured list${dropAll ? " for all leagues" : ""}. Their spot stays reserved.`
+                    : `An owner or head admin can drop them from ${dropAll ? "all leagues" : "this league"}.`;
                   return `<div class="border-b border-white/10 py-3 text-sm">
-                    <div class="font-semibold">${esc(r.playerName)} · ${join ? `join ${esc(r.regionalName)}` : `withdraw from ${esc(r.leagueTitle || "all leagues")}`}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}</div>
+                    <div class="font-semibold">${esc(r.playerName)} · ${phrase}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}</div>
                     ${r.note ? `<p class="mt-1 text-muted">${esc(r.note)}</p>` : ""}
                     <div class="mt-2 flex flex-wrap gap-2">
                       ${
                         join
                           ? `<p class="text-xs text-muted">Place them in ${esc(r.regionalName)} with Place a player. This row clears when they are placed.</p>`
                           : d.canOverride
-                            ? `<form data-form="LEAGUERESOLVE"><input type="hidden" name="id" value="${r.id}"><input type="hidden" name="action" value="done"><button class="btn-gold">${dropAll ? "DROP FROM ALL LEAGUES" : "DROP FROM LEAGUE"}</button></form>`
-                            : `<p class="text-xs text-muted">An owner or head admin can drop them from ${dropAll ? "all leagues" : "this league"}.</p>`
+                            ? `<form data-form="LEAGUERESOLVE"><input type="hidden" name="id" value="${r.id}"><input type="hidden" name="action" value="done"><button class="btn-gold">${doneLabel}</button></form>`
+                            : `<p class="text-xs text-muted">${waiting}</p>`
                       }
                       ${
                         d.canOverride
@@ -2921,7 +2956,13 @@ async function pageAdmin() {
           const mode = fb.mode === "individual" ? "individual" : "season";
           const leagueId = String(fb.leagueId || "");
           const today = new Date().toISOString().slice(0, 10);
-          const divisionPlayers = leagueId ? everyone.filter((p) => userLeagueIds(p).includes(Number(leagueId))) : [];
+          const divisionPlayers = leagueId
+            ? everyone.filter((p) => userLeagueIds(p).includes(Number(leagueId)) && !isInjuredIn(p, leagueId))
+            : [];
+          const sittingOut = leagueId ? everyone.filter((p) => isInjuredIn(p, leagueId)) : [];
+          const sittingNote = sittingOut.length
+            ? `<p class="text-sm text-muted md:col-span-2">Injured list, kept in the division and left out of new fixtures: ${sittingOut.map((p) => esc(p.nickname || p.name)).join(", ")}.</p>`
+            : "";
           const pick = (p, selectedId) => playerOption(p).replace("<option ", `<option ${String(p.id) === String(selectedId) ? "selected " : ""}`);
           const leagueSelect = `<select name="leagueId" data-act="fixture-league" required><option value="">Division</option>${deskLeagues
             .map((l) => `<option value="${l.id}"${String(l.id) === leagueId ? " selected" : ""}>${esc(l.title || l.name)}</option>`)
@@ -2957,6 +2998,7 @@ async function pageAdmin() {
             ${modeSelect}
             ${leagueSelect}
             ${extra}
+            ${sittingNote}
             <button class="btn-gold md:col-span-2"${mode === "individual" && (!leagueId || divisionPlayers.length < 1) ? " disabled" : ""}>${mode === "individual" ? "ADD FIXTURE" : "GENERATE FIXTURES"}</button>
           </form>`;
         })()}`, "mt-4")}
@@ -2987,6 +3029,26 @@ async function pageAdmin() {
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
           <button class="btn-ghost">UNPLACE</button>
         </form>
+        <h3 class="mt-6 text-sm font-bold tracking-widest gold">INJURED LIST</h3>
+        <p class="mt-1 text-xs text-muted">Place someone here when they cannot continue this season but should keep their spot next season. They stay in the division. Remaining unplayed matches become byes and are not open spots. Return them when they can play again.</p>
+        <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="INJURE">
+          <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
+          <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
+          <button class="btn-gold">PLACE ON INJURED LIST</button>
+        </form>
+        ${
+          everyone.some((p) => (p.injuredLeagueIds || []).length)
+            ? `<div class="mt-3 space-y-2">${everyone
+                .filter((p) => (p.injuredLeagueIds || []).length)
+                .map(
+                  (p) => `<div class="split-row border-b border-white/10 py-2 text-sm">
+                    <span class="min-w-0">${esc(p.nickname || p.name)} · ${esc((p.injuredLeagues || []).map((l) => l.title).join(" · ") || "Injured")}</span>
+                    <form data-form="CLEARINJURY"><input type="hidden" name="userId" value="${p.id}"><button class="btn-ghost">RETURN</button></form>
+                  </div>`
+                )
+                .join("")}</div>`
+            : `<p class="mt-3 text-sm text-muted">No one is on the injured list.</p>`
+        }
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
         <p class="mt-1 text-xs text-muted">Deletes the account. Unplayed matches become byes for the opponent until another player is placed in that division. Played results stay on the record. Owners cannot be deleted here.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="DELETEPLAYER">
@@ -3441,6 +3503,7 @@ document.addEventListener("submit", async (e) => {
   if (!form) return;
   e.preventDefault();
   const fd = Object.fromEntries(new FormData(form).entries());
+  if (e.submitter?.name && fd[e.submitter.name] == null) fd[e.submitter.name] = e.submitter.value;
   const kind = form.dataset.form;
   try {
     if (kind === "SIGN IN") {
@@ -3631,23 +3694,33 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "DROPLEAGUE") {
       const all = fd.leagueId === "all";
+      const injury = fd.intent === "injury";
       if (
         !window.confirm(
-          all
-            ? "Ask every admin and owner to withdraw you from all leagues? You stay in them until they confirm."
-            : "Ask every admin and owner to withdraw you from this league? You stay in it until they confirm."
+          injury
+            ? all
+              ? "Ask every admin and owner to place you on the injured list for all leagues? You keep your spot. Remaining matches become byes until they confirm."
+              : "Ask every admin and owner to place you on the injured list for this league? You keep your spot. Remaining matches become byes until they confirm."
+            : all
+              ? "Ask every admin and owner to withdraw you from all leagues? You stay in them until they confirm."
+              : "Ask every admin and owner to withdraw you from this league? You stay in it until they confirm."
         )
       ) {
         return;
       }
+      const requestKind = injury ? "injury" : "drop";
       const d = await api("/api/account/league-request", {
         method: "POST",
-        body: JSON.stringify(all ? { kind: "drop", scope: "all", note: fd.note } : { kind: "drop", leagueId: fd.leagueId, note: fd.note }),
+        body: JSON.stringify(all ? { kind: requestKind, scope: "all", note: fd.note } : { kind: requestKind, leagueId: fd.leagueId, note: fd.note }),
       });
       state.user = d.user;
-      state.notice = all
-        ? "Withdraw request sent to every admin and owner for all of your leagues."
-        : "Withdraw request sent to every admin and owner.";
+      state.notice = injury
+        ? all
+          ? "Injured-list request sent to every admin and owner for all of your leagues. Your spot stays reserved."
+          : "Injured-list request sent to every admin and owner. Your spot stays reserved until they confirm."
+        : all
+          ? "Withdraw request sent to every admin and owner for all of your leagues."
+          : "Withdraw request sent to every admin and owner.";
       render();
     } else if (kind === "CANCELLEAGUE") {
       const d = await api("/api/account/league-request/cancel", { method: "POST", body: JSON.stringify({ id: fd.id }) });
@@ -3657,12 +3730,31 @@ document.addEventListener("submit", async (e) => {
     } else if (kind === "LEAGUERESOLVE") {
       const d = await api("/api/admin/league-requests/resolve", { method: "POST", body: JSON.stringify({ id: fd.id, action: fd.action }) });
       const byeCount = Number(d.byes) || 0;
+      const byeNote = `${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"}`;
       state.notice =
         fd.action === "done"
-          ? byeCount
-            ? `Player dropped. ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"} until someone is placed in that division.`
-            : "Player dropped from the requested league(s)."
+          ? d.kind === "injury"
+            ? byeCount
+              ? `Placed on the injured list. ${byeNote}. Their spot stays reserved.`
+              : "Placed on the injured list. Their spot stays reserved."
+            : byeCount
+              ? `Player dropped. ${byeNote} until someone is placed in that division.`
+              : "Player dropped from the requested league(s)."
           : "Request dismissed.";
+      render();
+    } else if (kind === "INJURE") {
+      const d = await api("/api/admin/injury", { method: "POST", body: JSON.stringify(fd) });
+      const byeCount = Number(d.byes) || 0;
+      state.notice = byeCount
+        ? `Placed on the injured list. ${byeCount} unplayed match${byeCount === 1 ? " is a bye" : "es are byes"}. Their spot stays reserved.`
+        : "Placed on the injured list. Their spot stays reserved.";
+      render();
+    } else if (kind === "CLEARINJURY") {
+      const d = await api("/api/admin/injury/clear", { method: "POST", body: JSON.stringify(fd) });
+      const restored = Number(d.restored) || 0;
+      state.notice = restored
+        ? `Returned from the injured list. ${restored} match${restored === 1 ? "" : "es"} restored.`
+        : "Returned from the injured list.";
       render();
     } else if (kind === "STAFFPROFILE") {
       const d = await api("/api/account/staff-profile", {
