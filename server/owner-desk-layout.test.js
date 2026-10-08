@@ -201,6 +201,12 @@ try {
         recentOpen: recent ? recent.open : null,
         headWrapped: Boolean(head?.closest("details.desk-box")),
         contactWrapped: Boolean([...root.querySelectorAll("h2")].find((h) => h.textContent.trim() === "Contact cards")?.closest("details.desk-box")),
+        manageBeforeOverwrite: (() => {
+          const manage = root.querySelector('[data-desk-fold="manage-fixtures"]');
+          const overwrite = root.querySelector('[data-desk-fold="overwrite-stats"]');
+          if (!manage || !overwrite) return false;
+          return Boolean(manage.compareDocumentPosition(overwrite) & Node.DOCUMENT_POSITION_FOLLOWING);
+        })(),
       };
     })()`
   );
@@ -223,6 +229,7 @@ try {
   check("recent log is inside staff activity and starts collapsed", layout.recentInside && layout.recentOpen === false);
   check("contact cards stay open", layout.contactWrapped === false);
   check("head admins stay open", layout.headWrapped === false);
+  check("manage fixtures sits above overwrite match stats", layout.manageBeforeOverwrite === true);
 
   const toggled = await evalValue(
     cdp,

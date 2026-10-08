@@ -30,6 +30,10 @@ check("Overwrite stats uses league and match selects", appJs.includes('data-act=
 check("Overwrite stats does not dump every match as chips", !appJs.includes("statsDesk(d.fixtures, state.selectedResultId") && appJs.includes("hidePicker: true"));
 check("Approve match stats still uses the waiting-list picker", appJs.includes("statsDesk(review, state.selectedResultId"));
 check("Head Admin override title is still used", appJs.includes("Override another admin"));
+const manageAt = appJs.indexOf("panel(manageFixturesDesk(d, allLeagueOptions)");
+const overwriteAt = appJs.lastIndexOf("panel(overwriteStatsDesk(d)");
+const overrideAt = appJs.indexOf('class="text-lg font-bold">Owner override');
+check("Manage fixtures sits directly above Overwrite match stats", overrideAt !== -1 && manageAt > overrideAt && manageAt < overwriteAt);
 
 if (failures) {
   console.error(`\n${failures} check(s) FAILED`);
