@@ -2824,11 +2824,6 @@ async function pageAdmin() {
         <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
         <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
       ${
-        d.isOwner
-          ? panel(manageFixturesDesk(d, allLeagueOptions), "mt-4")
-          : ""
-      }
-      ${
         d.canOverride
           ? `${
               d.isOwner
@@ -2860,6 +2855,7 @@ async function pageAdmin() {
         </form>`, "mt-4")
                 : ""
             }
+      ${d.isOwner ? panel(manageFixturesDesk(d, allLeagueOptions), "mt-4") : ""}
         ${panel(overwriteStatsDesk(d), "mt-4")}`
           : ""
       }
