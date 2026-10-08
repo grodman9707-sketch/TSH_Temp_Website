@@ -2638,7 +2638,7 @@ async function pageAdmin() {
   });
   const pendingSignupsPanel = collapsiblePanel({
     id: "pending-signups",
-    title: "Pending sign-ups",
+    title: "Reserve Players",
     extra: "mt-6",
     meta: pending.length ? `${pending.length} waiting` : "none",
     body: pending.length
@@ -2670,7 +2670,7 @@ async function pageAdmin() {
       <div class="mt-6 grid gap-4 md:grid-cols-4">
         ${[
           [d.stats.activePlayers, "PLAYERS"],
-          [pending.length, "PENDING SIGN-UPS"],
+          [pending.length, "RESERVE PLAYERS"],
           [review.length, "TO CONFIRM"],
           [d.fixtures.filter((f) => f.status === "scheduled").length, "OPEN FIXTURES"],
         ]
