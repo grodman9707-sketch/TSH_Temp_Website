@@ -113,6 +113,10 @@ try {
     appJs.includes("Only the two players can post") && appJs.includes("Division admins can read their division") && appJs.includes("Owners can read every chat")
   );
   check("admin desk does not list a match chat history", !appJs.includes("matchChatsPanel") && !appJs.includes(">Match chats<"));
+  check(
+    "the header chat icon shows an unread count as soon as someone is logged in",
+    appJs.includes("function headerChatLink") && appJs.includes("header-chat") && appJs.includes("chat-icon-badge")
+  );
 
   const owner = await api(port, "/api/auth/login", {
     method: "POST",
