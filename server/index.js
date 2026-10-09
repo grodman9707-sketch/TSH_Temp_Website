@@ -244,6 +244,18 @@ function writeDb(db) {
   writeJson(dbPath, db);
   scheduleOffsiteSync(() => readDb());
 }
+// One save at a time. A request used to read the file, wait on the body or
+// an email, then write an older copy and wipe a league-change request that
+// had already been emailed.
+let dbQueue = Promise.resolve();
+function enqueueDb(task) {
+  const run = dbQueue.then(() => task());
+  dbQueue = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
 function recordStaff(db, actor, action, extra = {}) {
   appendStaffLog(db, actor, { action, ...extra });
 }
@@ -1065,6 +1077,7 @@ function publicLeagueRequest(r, db) {
     kind: r.kind,
     userId: r.userId,
     playerName: player?.nickname || player?.name || "Player",
+    playerEmail: player?.email || "",
     playerAvg: player?.avg ?? "",
     regionalId: r.regionalId || null,
     regionalName: regional?.fullTitle || regional?.name || "",
@@ -1124,7 +1137,10 @@ function resolveMatchingLeagueRequests(db, u) {
   return changed;
 }
 function visibleLeagueRequests(db, user) {
-  const pending = (db.leagueRequests || []).filter((r) => r.status === "pending");
+  const pending = (db.leagueRequests || [])
+    .filter((r) => r.status === "pending")
+    .slice()
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || Number(b.id) - Number(a.id));
   if (canOverride(user)) return pending.map((r) => publicLeagueRequest(r, db));
   const leagues = scopedLeagues(db, user);
   const regionals = new Set(leagues.map((l) => l.regionalId));
@@ -4452,7 +4468,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (url.pathname === "/health") return json(res, 200, { ok: true });
-    if (url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
+    if (url.pathname.startsWith("/api/")) return await enqueueDb(() => handleApi(req, res, url));
     if (serveStatic(req, res, url.pathname)) return;
     const index = path.join(publicDir, "index.html");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -4492,22 +4508,23 @@ server.listen(port, host, () => {
 
 function startNotificationLoop(intervalMs = 60000) {
   const tick = () => {
-    let outbox = [];
-    try {
-      const db = readDb();
-      const result = runDueNotifications(db, new Date());
-      outbox = result.outbox;
-      // Persist the dedupe markers before sending so a crash/restart never
-      // re-sends. This claim is synchronous, so it can't clobber concurrent
-      // request writes.
-      if (result.changed) writeDb(db);
-    } catch (err) {
-      console.error("Notification poll failed:", err);
-      return;
-    }
-    for (const msg of outbox) {
-      Promise.resolve(sendEmail(msg)).catch((err) => console.error("Notification email failed:", err));
-    }
+    enqueueDb(() => {
+      let outbox = [];
+      try {
+        const db = readDb();
+        const result = runDueNotifications(db, new Date());
+        outbox = result.outbox;
+        // Persist the dedupe markers before sending so a crash/restart never
+        // re-sends. The write waits behind any request that is already saving.
+        if (result.changed) writeDb(db);
+      } catch (err) {
+        console.error("Notification poll failed:", err);
+        return;
+      }
+      for (const msg of outbox) {
+        Promise.resolve(sendEmail(msg)).catch((err) => console.error("Notification email failed:", err));
+      }
+    }).catch((err) => console.error("Notification poll failed:", err));
   };
   tick();
   const timer = setInterval(tick, intervalMs);

@@ -130,6 +130,10 @@ try {
   const afterDrop = await api(port, "/api/admin/overview", { token: ownerTok });
   const dropReq = (afterDrop.data.leagueRequests || []).find((r) => r.userId === playerId && r.kind === "drop" && r.leagueId === leagueId);
   check("admin sees the drop request", Boolean(dropReq?.id) && dropReq.leagueId === leagueId);
+  check(
+    "the request names the player and their email",
+    dropReq?.playerName === "One Regional" && dropReq?.playerEmail === "one-regional@test.com"
+  );
 
   const resolve = await api(port, "/api/admin/league-requests/resolve", {
     method: "POST",
@@ -202,6 +206,49 @@ try {
     body: { id: reqId },
   });
   check("player can cancel a pending request", cancelled.status === 200 && !(cancelled.data.user?.pendingLeagueRequests || []).length);
+
+  const sideBySide = await Promise.all(
+    ["A", "B"].map(async (label, index) => {
+      const person = await api(port, "/api/auth/register", {
+        method: "POST",
+        body: {
+          name: `Together ${label}`,
+          email: `together-${label.toLowerCase()}@test.com`,
+          password: "pass1234",
+          regional: "international",
+          dartcounterName: `Together${label}`,
+          avg: 40 + index,
+        },
+      });
+      await api(port, "/api/admin/place-player", {
+        method: "POST",
+        token: ownerTok,
+        body: { userId: person.data.user.id, leagueId },
+      });
+      return person;
+    })
+  );
+  const [askedA, askedB] = await Promise.all([
+    api(port, "/api/account/league-request", {
+      method: "POST",
+      token: sideBySide[0].data.token,
+      body: { kind: "drop", leagueId, note: "Leaving" },
+    }),
+    api(port, "/api/account/league-request", {
+      method: "POST",
+      token: sideBySide[1].data.token,
+      body: { kind: "injury", leagueId, note: "Knee" },
+    }),
+  ]);
+  const together = await api(port, "/api/admin/overview", { token: ownerTok });
+  const togetherRows = together.data.leagueRequests || [];
+  check(
+    "two requests sent at the same time both stay on the desk",
+    askedA.status === 200 &&
+      askedB.status === 200 &&
+      togetherRows.some((row) => row.playerEmail === "together-a@test.com" && row.kind === "drop") &&
+      togetherRows.some((row) => row.playerEmail === "together-b@test.com" && row.kind === "injury" && row.note === "Knee")
+  );
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   const indexJs = fs.readFileSync(path.join(root, "server/index.js"), "utf8");

@@ -2900,8 +2900,8 @@ async function pageAdmin() {
           </form>`,
         })}`, "mt-6")}
       ${pendingSignupsPanel}
-      ${panel(`<h2 class="text-lg font-bold">League change requests</h2>
-        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw, or to go on the injured list. Injured list keeps them in the division and opens a vacancy for their fixtures. Every admin and owner is emailed. Owners and Head Admins confirm here.</p>
+      ${panel(`<h2 class="text-lg font-bold">League change requests${(d.leagueRequests || []).length ? ` (${d.leagueRequests.length})` : ""}</h2>
+        <p class="mt-1 text-sm text-muted">Players can ask from Player profile to withdraw, or to go on the injured list. Injured list keeps them in the division and opens a vacancy for their fixtures. Every admin and owner is emailed. The player's name and email stay here until an owner or Head Admin confirms or dismisses the request.</p>
         ${
           (d.leagueRequests || []).length
             ? `<div class="mt-3 space-y-3">${d.leagueRequests
@@ -2924,8 +2924,10 @@ async function pageAdmin() {
                   const waiting = injury
                     ? `An owner or head admin can place them on the injured list${dropAll ? " for all leagues" : ""}. They stay in the division, and their fixtures become a vacancy.`
                     : `An owner or head admin can drop them from ${dropAll ? "all leagues" : "this league"}.`;
+                  const when = r.createdAt ? fmtInstant(r.createdAt) : "";
                   return `<div class="border-b border-white/10 py-3 text-sm">
-                    <div class="font-semibold">${esc(r.playerName)} · ${phrase}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}</div>
+                    <div class="font-semibold">${esc(r.playerName)}${r.playerEmail ? ` · ${esc(r.playerEmail)}` : ""}</div>
+                    <div class="mt-1">${phrase}${r.playerAvg ? ` · 3DA ${esc(r.playerAvg)}` : ""}${when ? ` · ${esc(when)}` : ""}</div>
                     ${r.note ? `<p class="mt-1 text-muted">${esc(r.note)}</p>` : ""}
                     <div class="mt-2 flex flex-wrap gap-2">
                       ${
@@ -2944,7 +2946,7 @@ async function pageAdmin() {
                   </div>`;
                 })
                 .join("")}</div>`
-            : `<p class="mt-3 text-muted">None yet.</p>`
+            : `<p class="mt-3 text-muted">None waiting. When a player asks to withdraw or join the injured list, their name and email show up here.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. Injured players are the shaded * rows on the division table. The number below is how many spots still need to be filled. If that division has a spot to fill, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
@@ -3261,6 +3263,18 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", async (e) => {
+  const intentBtn = e.target.closest('form[data-form="DROPLEAGUE"] button[name="intent"]');
+  if (intentBtn) {
+    const form = intentBtn.closest("form");
+    let hidden = form?.querySelector('input[type="hidden"][name="intent"]');
+    if (form && !hidden) {
+      hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = "intent";
+      form.appendChild(hidden);
+    }
+    if (hidden) hidden.value = intentBtn.value;
+  }
   const fmtBtn = e.target.closest("[data-act=news-fmt]");
   if (fmtBtn) {
     e.preventDefault();
