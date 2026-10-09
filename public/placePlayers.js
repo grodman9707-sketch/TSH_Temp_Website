@@ -122,6 +122,39 @@ export function openSpotLabel(count) {
   return n === 1 ? "1 spot to fill" : `${n} spots to fill`;
 }
 
+export function divisionShortLabel(league) {
+  const name = String(league?.leagueTitle || league?.title || league?.name || "");
+  const match = name.match(/Division\s+(\d+)/i);
+  if (match) return `Div-${match[1]}`;
+  return name.replace(/^TSH\s+/i, "").trim() || "Division";
+}
+
+function leagueIdsOfUser(user) {
+  if (Array.isArray(user?.leagueIds)) return user.leagueIds.map(Number).filter(Boolean);
+  if (user?.leagueId) return [Number(user.leagueId)];
+  return [];
+}
+
+function isInjuredInLeague(user, leagueId) {
+  const placed = new Set(leagueIdsOfUser(user));
+  const raw = Array.isArray(user?.injuredLeagueIds) ? user.injuredLeagueIds : [];
+  return raw.map(Number).filter((id) => placed.has(id)).includes(Number(leagueId));
+}
+
+// One card per division: short name, spots still open, who is playing, who is injured.
+export function divisionSpotCards(seats, leagues, users) {
+  return openSpotsByDivision(seats, leagues).map((row) => {
+    const inDivision = (users || []).filter((user) => leagueIdsOfUser(user).includes(Number(row.leagueId)));
+    const injured = inDivision.filter((user) => isInjuredInLeague(user, row.leagueId)).length;
+    return {
+      ...row,
+      shortLabel: divisionShortLabel(row),
+      filled: inDivision.length - injured,
+      injured,
+    };
+  });
+}
+
 // One open spot is one player who can still be replaced in that division.
 // The count is what staff see. The departed player's name stays off the desk.
 export function openSpotsByDivision(seats, leagues) {

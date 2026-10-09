@@ -1282,8 +1282,11 @@ function forgetFixtureSeats(db, fixtureIds) {
   const drop = new Set(fixtureIds.map(Number));
   for (const slot of db.vacantSlots) {
     slot.seats = (slot.seats || []).filter((seat) => !drop.has(Number(seat.fixtureId)));
+    if ((slot.seats || []).length) continue;
+    const player = (db.users || []).find((u) => Number(u.id) === Number(slot.userId));
+    if (slot.rosterOnly || (player && isInjuredIn(player, slot.leagueId))) slot.rosterOnly = true;
   }
-  db.vacantSlots = db.vacantSlots.filter((slot) => (slot.seats || []).length);
+  db.vacantSlots = db.vacantSlots.filter((slot) => (slot.seats || []).length || slot.rosterOnly);
 }
 function dropLeagueVacancies(db, leagueId) {
   if (!Array.isArray(db.vacantSlots)) return;
@@ -1424,6 +1427,101 @@ function ensureInjuryVacancy(db, user, leagueId) {
     rosterOnly: true,
   });
 }
+function injuryCovered(db, userId, leagueId) {
+  return (db.injuryCovers || []).some(
+    (cover) => Number(cover.userId) === Number(userId) && Number(cover.leagueId) === Number(leagueId)
+  );
+}
+function noteInjuryCover(db, slot, coveredById) {
+  if (!slot) return;
+  const player = (db.users || []).find((u) => Number(u.id) === Number(slot.userId));
+  if (!player || !isInjuredIn(player, slot.leagueId)) return;
+  if (!Array.isArray(db.injuryCovers)) db.injuryCovers = [];
+  if (injuryCovered(db, slot.userId, slot.leagueId)) return;
+  db.injuryCovers.push({
+    userId: Number(slot.userId),
+    leagueId: Number(slot.leagueId),
+    coveredById: Number(coveredById) || null,
+    at: new Date().toISOString(),
+  });
+}
+function clearInjuryCovers(db, userId, leagueId) {
+  if (!Array.isArray(db.injuryCovers)) return;
+  const uid = Number(userId);
+  const only = Number(leagueId) || 0;
+  db.injuryCovers = db.injuryCovers.filter((cover) => {
+    if (Number(cover.userId) !== uid) return true;
+    if (only && Number(cover.leagueId) !== only) return true;
+    return false;
+  });
+}
+function seatsFromInjuryHolds(db, userId, leagueId) {
+  const seats = [];
+  for (const fixture of db.fixtures || []) {
+    if (Number(fixture.leagueId) !== Number(leagueId)) continue;
+    const holds = Array.isArray(fixture.injuryHolds) ? fixture.injuryHolds : [];
+    for (const hold of holds) {
+      if (Number(hold.userId) !== Number(userId)) continue;
+      const side = hold.side === "away" ? "away" : "home";
+      seats.push({ fixtureId: fixture.id, side, played: fixture.status === "played" });
+    }
+  }
+  return seats;
+}
+// Injured players keep their division place and open one spot. A later
+// fixture rebuild used to drop that spot. Recreate it unless someone already
+// took it over.
+function syncInjuryVacancies(db) {
+  ensureVacantSlots(db);
+  if (!Array.isArray(db.injuryCovers)) db.injuryCovers = [];
+  let changed = false;
+  const injuredKeys = new Set();
+  for (const user of db.users || []) {
+    for (const leagueId of injuredLeagueIds(user)) {
+      injuredKeys.add(`${Number(user.id)}:${Number(leagueId)}`);
+      if (injuryCovered(db, user.id, leagueId)) continue;
+      const seats = seatsFromInjuryHolds(db, user.id, leagueId);
+      let slot = db.vacantSlots.find((item) => Number(item.userId) === Number(user.id) && Number(item.leagueId) === Number(leagueId));
+      if (!slot) {
+        slot = {
+          id: nextId(db.vacantSlots),
+          leagueId: Number(leagueId),
+          userId: Number(user.id),
+          name: user.nickname || user.name || "Player",
+          createdAt: new Date().toISOString(),
+          seats: [],
+          rosterOnly: seats.length === 0,
+        };
+        db.vacantSlots.push(slot);
+        changed = true;
+      }
+      if (seats.length) {
+        const seen = new Set((slot.seats || []).map((seat) => vacantSeatKey(seat)));
+        for (const seat of seats) {
+          const key = vacantSeatKey(seat);
+          if (seen.has(key)) continue;
+          if (!Array.isArray(slot.seats)) slot.seats = [];
+          slot.seats.push(seat);
+          seen.add(key);
+          changed = true;
+        }
+        if (slot.rosterOnly) {
+          slot.rosterOnly = false;
+          changed = true;
+        }
+      } else if (!(slot.seats || []).length && !slot.rosterOnly) {
+        slot.rosterOnly = true;
+        changed = true;
+      }
+    }
+  }
+  const nextCovers = db.injuryCovers.filter((cover) => injuredKeys.has(`${Number(cover.userId)}:${Number(cover.leagueId)}`));
+  if (nextCovers.length !== db.injuryCovers.length) {
+    db.injuryCovers = nextCovers;
+    changed = true;
+  }
+  return changed;
+}
 function dropInjuryHold(fixture, userId, side) {
   if (!Array.isArray(fixture?.injuryHolds)) return;
   const uid = Number(userId);
@@ -1491,7 +1589,10 @@ function markPlayerInjured(db, user, leagueId) {
   if (!next.length) return { already: true, byes: 0, leagueIds: [] };
   user.injuredLeagueIds = [...already, ...next];
   let byes = 0;
-  for (const id of next) byes += sitOutInjuredFixtures(db, user, id);
+  for (const id of next) {
+    clearInjuryCovers(db, user.id, id);
+    byes += sitOutInjuredFixtures(db, user, id);
+  }
   return { byes, leagueIds: next };
 }
 function clearPlayerInjury(db, user, leagueId) {
@@ -1503,6 +1604,7 @@ function clearPlayerInjury(db, user, leagueId) {
   user.injuredLeagueIds = current.filter((id) => !drop.has(id));
   let restored = 0;
   for (const id of ids) {
+    clearInjuryCovers(db, user.id, id);
     releaseInjuryVacancies(db, user, id);
     restored += restoreInjuryHolds(db, user, id);
   }
@@ -1558,6 +1660,8 @@ function claimVacantSeat(db, user, leagueId) {
     dropInjuryHold(fixture, slot.userId, seat.side);
     matches += 1;
   }
+  const filledChair = matches > 0 || playedRenamed > 0 || (Boolean(slot.rosterOnly) && !(slot.seats || []).length);
+  if (filledChair) noteInjuryCover(db, slot, user.id);
   db.vacantSlots = db.vacantSlots.filter((item) => item.id !== slot.id);
   if (!matches && !playedRenamed) return null;
   return { replacedName: slot.name || "Player", matches, playedRenamed, leagueId: lid };
@@ -1931,6 +2035,7 @@ function migrate(db) {
     if (alignLaggingDivisionWeeks(db.fixtures)) changed = true;
     if (setStructureFlag(db, "weekGridAligned")) changed = true;
   }
+  if (syncInjuryVacancies(db)) changed = true;
   if (changed) writeDb(db);
 }
 
@@ -3415,6 +3520,7 @@ async function handleApi(req, res, url) {
           canApprove: a.kind === "remove_owner" ? isOwner(user) && user.id === a.targetUserId : isOwner(user),
           mine: a.requestedById === user.id,
         }));
+      if (syncInjuryVacancies(db)) writeDb(db);
       return json(res, 200, {
         ok: true,
         stats: stats(db),
@@ -3846,6 +3952,7 @@ async function handleApi(req, res, url) {
       for (const id of beforeLeagues) {
         if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id, { keepPlayed: true });
       }
+      syncInjuryVacancies(db);
       const filledSeat = alreadyThere ? null : claimVacantSeat(db, u, league.id);
       const apps = db.applications.filter((a) => a.userId === u.id || a.id === Number(body.applicationId));
       for (const appn of apps) {

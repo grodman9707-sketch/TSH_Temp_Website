@@ -70,6 +70,8 @@ export function snapshotPayload(db) {
       fixtures: db.fixtures || [],
       adminProfiles: db.adminProfiles || [],
       approvals: db.approvals || [],
+      injuryCovers: db.injuryCovers || [],
+      vacantSlots: db.vacantSlots || [],
       sheetsExport: db.sheetsExport || { key: "", createdAt: "", createdById: null },
     })
   );
