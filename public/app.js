@@ -1,6 +1,6 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
-import { openSpotLabel, openSpotsByDivision, placePlayerOptionLabel, unplacedPlaceChoices } from "./placePlayers.js";
+import { divisionSpotCards, openSpotLabel, placePlayerOptionLabel, unplacedPlaceChoices } from "./placePlayers.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -2665,7 +2665,7 @@ async function pageAdmin() {
     state._pendingScanId = selectedReview.id;
   }
   const deskLeagues = d.canOverride ? d.allLeagues || d.leagues : d.leagues;
-  const openSpotRows = openSpotsByDivision(d.openSeats, deskLeagues);
+  const spotCards = divisionSpotCards(d.openSeats, deskLeagues, everyone);
   const leagueOptions = deskLeagues.map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const allLeagueOptions = (d.allLeagues || d.leagues).map((l) => `<option value="${l.id}">${esc(l.title || l.name)}</option>`).join("");
   const structureRegionals = d.isOwner ? d.structure?.regionals || [] : [];
@@ -2937,10 +2937,17 @@ async function pageAdmin() {
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
         <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. Injured players are the shaded * rows on the division table. The number below is how many spots still need to be filled. If that division has a spot to fill, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
         ${
-          openSpotRows.length
-            ? `<ul class="mt-3 space-y-1 text-sm text-muted">${openSpotRows
-                .map((row) => `<li>${esc(row.leagueTitle)} — ${esc(openSpotLabel(row.openSpots))}</li>`)
-                .join("")}</ul>`
+          spotCards.length
+            ? `<div class="spot-board">${spotCards
+                .map(
+                  (row) => `<div class="spot-box${row.openSpots ? " has-open" : ""}">
+                    <div class="spot-box-name">${esc(row.shortLabel)}</div>
+                    <div class="spot-box-count">${row.openSpots}</div>
+                    <div class="spot-box-label">${esc(openSpotLabel(row.openSpots))}</div>
+                    <div class="spot-box-meta">${row.filled} filled${row.injured ? ` · ${row.injured} injured` : ""}</div>
+                  </div>`
+                )
+                .join("")}</div>`
             : ""
         }
         ${

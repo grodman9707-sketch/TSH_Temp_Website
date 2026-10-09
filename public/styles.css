@@ -1513,6 +1513,47 @@ input, select, textarea {
   background: rgba(232, 180, 37, 0.18);
   outline: none;
 }
+.spot-board {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+}
+.spot-box {
+  flex: 1 0 7.4rem;
+  min-width: 7.4rem;
+  padding: 0.8rem 0.65rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.85rem;
+  background: rgba(9, 11, 17, 0.45);
+  text-align: center;
+}
+.spot-box.has-open {
+  border-color: rgba(232, 180, 37, 0.55);
+  background: rgba(232, 180, 37, 0.08);
+}
+.spot-box-name {
+  color: #e8b425;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.spot-box-count {
+  margin-top: 0.35rem;
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.spot-box-label,
+.spot-box-meta {
+  margin-top: 0.28rem;
+  color: #999;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
 .chat-icon-badge {
   position: absolute;
   top: -0.28rem;
