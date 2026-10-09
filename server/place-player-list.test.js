@@ -7,7 +7,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { openSpotLabel, openSpotsByDivision, placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "../public/placePlayers.js";
+import { divisionShortLabel, divisionSpotCards, openSpotLabel, openSpotsByDivision, placePlayerOptionLabel, uniqueOpenSeats, unplacedPlaceChoices } from "../public/placePlayers.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -51,7 +51,7 @@ const placeForm = appJs.slice(placeStart, appJs.indexOf('data-form="FIXTURES"', 
 check("place form lists the unplaced choices", placeForm.includes("placeChoices.map(placePlayerOption)"));
 check("place form does not list every account", !placeForm.includes("everyone.map(playerOption)"));
 check("place form explains the 3DA list", placeForm.includes("each once, with their 3DA"));
-check("place form shows an open-spot count for each division", placeForm.includes("openSpotRows") && placeForm.includes("openSpotLabel"));
+check("place form shows an open-spot count for each division", placeForm.includes("spotCards") && placeForm.includes("spot-board") && placeForm.includes("openSpotLabel"));
 check("place form does not name the player being replaced", !placeForm.includes("open seat for") && !placeForm.includes("seat.playerName"));
 const spotRows = openSpotsByDivision(
   [
@@ -70,6 +70,26 @@ check("duplicate departed players count as one open spot", spotRows.find((row) =
 check("a division with nobody to replace shows zero", spotRows.find((row) => row.leagueId === 11)?.openSpots === 0 && openSpotLabel(0) === "0 spots to fill");
 check("one open spot uses the singular", openSpotLabel(1) === "1 spot to fill" && spotRows.find((row) => row.leagueId === 10)?.openSpots === 1);
 check("open-spot rows do not carry the replaced player's name", spotRows.every((row) => !("playerName" in row)));
+check("division boxes use Div-1 style names", divisionShortLabel({ title: "TSH International Division 4" }) === "Div-4");
+const cards = divisionSpotCards(
+  [{ id: 1, leagueId: 12, userId: 8, playerName: "Out", leagueTitle: "TSH International Division 4" }],
+  [
+    { id: 12, title: "TSH International Division 4" },
+    { id: 9, title: "TSH International Division 1" },
+  ],
+  [
+    { id: 1, name: "Active", leagueIds: [12], injuredLeagueIds: [] },
+    { id: 2, name: "Also Active", leagueIds: [12], injuredLeagueIds: [] },
+    { id: 3, name: "Sat Out", leagueIds: [12], injuredLeagueIds: [12] },
+    { id: 4, name: "Elsewhere", leagueIds: [9], injuredLeagueIds: [9] },
+  ]
+);
+const div4 = cards.find((row) => row.leagueId === 12);
+check(
+  "a division card shows spots left, filled players, and the injured list",
+  div4?.shortLabel === "Div-4" && div4?.openSpots === 1 && div4?.filled === 2 && div4?.injured === 1 && !("playerName" in div4)
+);
+check("a full division card shows zero spots", cards.find((row) => row.leagueId === 9)?.openSpots === 0 && cards.find((row) => row.leagueId === 9)?.shortLabel === "Div-1");
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;

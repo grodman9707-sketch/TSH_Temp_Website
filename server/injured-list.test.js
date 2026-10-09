@@ -386,6 +386,15 @@ try {
     "an injured player with no fixtures is still a spot to fill",
     (fayDesk.data.openSeats || []).some((seat) => Number(seat.userId) === fay.id && Number(seat.leagueId) === drawId)
   );
+  const wipedPath = path.join(dir, "db.json");
+  const wiped = JSON.parse(fs.readFileSync(wipedPath, "utf8"));
+  wiped.vacantSlots = (wiped.vacantSlots || []).filter((slot) => Number(slot.userId) !== fay.id);
+  fs.writeFileSync(wipedPath, JSON.stringify(wiped));
+  const repaired = await api(port, "/api/admin/overview", { token: ownerTok });
+  check(
+    "a missing injured-list spot is put back",
+    (repaired.data.openSeats || []).some((seat) => Number(seat.userId) === fay.id && Number(seat.leagueId) === drawId)
+  );
   const shortDraw = await api(port, "/api/admin/fixtures/generate", {
     method: "POST",
     token: ownerTok,
@@ -431,6 +440,44 @@ try {
   check(
     "withdraw still removes them from the division",
     drop.status === 200 && dropped.status === 200 && dropped.data.kind === "drop" && !(dropped.data.user?.leagueIds || []).includes(drawId)
+  );
+
+  const keepId = await addDivision("Injury Keep");
+  const ivy = await addPlayer("Ivy Keep", 53);
+  const jed = await addPlayer("Jed Keep", 46);
+  const kim = await addPlayer("Kim Keep", 44);
+  await place(ivy.id, keepId);
+  await place(jed.id, keepId);
+  await place(kim.id, keepId);
+  const kimOut = await api(port, "/api/admin/injury", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: kim.id, leagueId: keepId },
+  });
+  const keepOpen = await api(port, "/api/admin/overview", { token: ownerTok });
+  const firstDraw = await api(port, "/api/admin/fixtures/generate", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: keepId, season: 1, startDate: "2026-11-01" },
+  });
+  const rebuilt = await api(port, "/api/admin/fixtures/generate", {
+    method: "POST",
+    token: ownerTok,
+    body: { leagueId: keepId, season: 1, startDate: "2026-11-08", replaceScheduled: true },
+  });
+  const keptDesk = await api(port, "/api/admin/overview", { token: ownerTok });
+  const keepUsers = keptDesk.data.users || [];
+  const active = keepUsers.filter((user) => (user.leagueIds || []).includes(keepId) && !(user.injuredLeagueIds || []).includes(keepId));
+  const injured = keepUsers.filter((user) => (user.injuredLeagueIds || []).includes(keepId));
+  check(
+    "rebuilding fixtures keeps the injured player's open spot",
+    kimOut.status === 200 &&
+      (keepOpen.data.openSeats || []).some((seat) => Number(seat.userId) === kim.id && Number(seat.leagueId) === keepId) &&
+      firstDraw.status === 200 &&
+      rebuilt.status === 200 &&
+      (keptDesk.data.openSeats || []).some((seat) => Number(seat.userId) === kim.id && Number(seat.leagueId) === keepId) &&
+      active.length === 2 &&
+      injured.length === 1
   );
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
