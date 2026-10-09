@@ -1062,6 +1062,17 @@ function navRegionalsBlock() {
     ${regions}
   </details>`;
 }
+function headerChatLink() {
+  if (!state.user) return "";
+  const count = chatUnreadTotal();
+  const label = count
+    ? `Arrange chat, ${count} new message${count === 1 ? "" : "s"}`
+    : "Arrange chat";
+  return `<a href="/my-matches" class="chat-icon-btn header-chat" aria-label="${esc(label)}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 16.5H9l-4.2 3v-3H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>
+      ${count ? `<span class="chat-icon-badge">${count > 9 ? "9+" : count}</span>` : ""}
+    </a>`;
+}
 function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
@@ -1114,6 +1125,7 @@ function layout(inner, { arena = false, home = false } = {}) {
           <button class="h-10 w-10 shrink-0 rounded border border-white/15 hover:border-primary" data-act="open-menu" aria-label="Open menu">☰</button>
           <a href="/" class="flex min-w-0 items-center justify-center">${crest(56, "main", "header-crest")}</a>
           <div class="header-auth">
+            ${headerChatLink()}
             ${
               state.user
                 ? `<a href="/dashboard" class="inline-flex items-center gap-2 btn-gold py-1 pl-1 pr-3">${avatarImg(state.user, 28)}<span class="header-user-name">${esc((state.user.nickname || state.user.name).split(" ")[0].toUpperCase())}</span></a>`
