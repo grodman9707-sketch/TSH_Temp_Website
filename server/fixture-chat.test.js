@@ -54,6 +54,12 @@ check("bye has no chat", chatPhase({ status: "bye", bye: true }) === "gone");
   db.matchChats.push({ id: 1, fixtureId: 7, userId: 2, body: "Tuesday?", createdAt: "2026-10-08T12:00:00.000Z" });
   check("opponent has an unread message", unreadForUser(db, 7, 1).length === 1);
   check("author does not count their own message", unreadForUser(db, 7, 2).length === 0);
+  db.matchChats.push({ id: 2, fixtureId: 7, userId: 9, body: "I can step in", createdAt: "2026-10-08T12:02:00.000Z" });
+  const adminOwn = unreadForUser(db, 7, 9);
+  check(
+    "a division admin does not count their own message",
+    adminOwn.length === 1 && adminOwn.every((message) => Number(message.userId) !== 9)
+  );
   check("first notice is emailed", chatEmailDue(db, 7, 1));
   noteChatEmail(db, 7, 1, new Date("2026-10-08T12:00:01.000Z"));
   check("a second message in the same burst does not email again", !chatEmailDue(db, 7, 1, new Date("2026-10-08T12:00:30.000Z")));
@@ -131,6 +137,10 @@ try {
   check(
     "the header chat icon shows an unread count as soon as someone is logged in",
     appJs.includes("function headerChatLink") && appJs.includes("header-chat") && appJs.includes("chat-icon-badge")
+  );
+  check(
+    "staff use that same header badge instead of a second chat icon",
+    /function headerChatLink\(\) \{\s*if \(!state\.user\) return "";\s*const count = chatUnreadTotal\(\);/.test(appJs)
   );
 
   const owner = await api(port, "/api/auth/login", {
@@ -251,6 +261,48 @@ try {
   const homeStillNotified = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
   check("opted-out opponent still gets the in-app notice", homeStillNotified.data.unread?.[0]?.count === 2 && homeStillNotified.data.unread?.[0]?.fromName === "Away Chat");
   await api(port, "/api/account/notifications", { method: "POST", token: homeTok, body: { email: true } });
+
+  const adminUnread = await api(port, "/api/fixtures/chats?summary=1", { token: divAdmin.data.token });
+  check(
+    "division admin sees an unread count for a chat they can read",
+    adminUnread.status === 200 &&
+      adminUnread.data.unread?.length === 1 &&
+      adminUnread.data.unread[0].fixtureId === fixtureA &&
+      adminUnread.data.unread[0].count === 4 &&
+      adminUnread.data.unread[0].fromName === "Away Chat"
+  );
+  const otherUnread = await api(port, "/api/fixtures/chats?summary=1", { token: otherAdmin.data.token });
+  check(
+    "other division admin has no unread count for this chat",
+    otherUnread.status === 200 && !(otherUnread.data.unread || []).some((item) => item.fixtureId === fixtureA)
+  );
+  const ownerUnread = await api(port, "/api/fixtures/chats?summary=1", { token: ownerTok });
+  check(
+    "owner sees an unread count for every chat they can read",
+    (ownerUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4)
+  );
+  const headUnread = await api(port, "/api/fixtures/chats?summary=1", { token: head.data.token });
+  check(
+    "head admin sees an unread count for every chat they can read",
+    (headUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4)
+  );
+  const adminOpen = await api(port, `/api/fixtures/${fixtureA}/chat`, { token: divAdmin.data.token });
+  check(
+    "opening the chat shows the division admin which messages are new",
+    adminOpen.status === 200 && adminOpen.data.chat.messages.filter((message) => message.unread).length === 4
+  );
+  const adminCleared = await api(port, "/api/fixtures/chats?summary=1", { token: divAdmin.data.token });
+  check(
+    "opening the chat clears the division admin notice",
+    !(adminCleared.data.unread || []).some((item) => item.fixtureId === fixtureA)
+  );
+  const homeAfterAdminRead = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
+  check("an admin reading the chat leaves the player's notice in place", homeAfterAdminRead.data.unread?.[0]?.count === 2);
+  const ownerStillUnread = await api(port, "/api/fixtures/chats?summary=1", { token: ownerTok });
+  check(
+    "an admin reading the chat leaves another staff notice in place",
+    (ownerStillUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4)
+  );
 
   const publicDivision = await api(port, `/api/leagues/${leagueA}`);
   check("public division payload does not include the chat", !JSON.stringify(publicDivision.data).includes("Tuesday at 8"));

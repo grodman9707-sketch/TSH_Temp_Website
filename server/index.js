@@ -2278,8 +2278,7 @@ function userInFixture(fixture, user) {
 function publicFixtureChat(db, user, fixture, { markRead = false } = {}) {
   const phase = chatPhase(fixture);
   const scope = chatViewerScope(user, fixture);
-  const participant = userInFixture(fixture, user);
-  const unread = participant ? unreadForUser(db, fixture.id, user.id) : [];
+  const unread = unreadForUser(db, fixture.id, user.id);
   const unreadIds = new Set(unread.map((message) => Number(message.id)));
   const named = withNames(db, fixture);
   const messages = messagesForFixture(db, fixture.id).map((message) => ({
@@ -2291,7 +2290,7 @@ function publicFixtureChat(db, user, fixture, { markRead = false } = {}) {
     mine: Number(message.userId) === Number(user.id),
     unread: unreadIds.has(Number(message.id)),
   }));
-  if (markRead && participant && phase === "open") markChatRead(db, fixture.id, user.id);
+  if (markRead) markChatRead(db, fixture.id, user.id);
   return {
     fixtureId: fixture.id,
     leagueId: fixture.leagueId,
@@ -2333,9 +2332,8 @@ function chatListFor(db, user, { markRead = false } = {}) {
 function chatUnreadSummary(db, user) {
   const unread = [];
   for (const fixture of db.fixtures || []) {
-    if (!userInFixture(fixture, user)) continue;
-    if (chatPhase(fixture) !== "open") continue;
-    if (!isFixtureReleased(fixture)) continue;
+    const scope = chatViewerScope(user, fixture);
+    if (!canViewFixtureChat(fixture, user, scope)) continue;
     const pending = unreadForUser(db, fixture.id, user.id);
     if (!pending.length) continue;
     const latest = pending[pending.length - 1];
@@ -3383,8 +3381,14 @@ async function handleApi(req, res, url) {
     if (found.error) return json(res, found.status, { ok: false, error: found.error });
     const fixture = found.fixture;
     if (method === "GET") {
+      const beforeRead = (db.matchChatReads || []).find(
+        (stamp) => Number(stamp.fixtureId) === Number(fixture.id) && Number(stamp.userId) === Number(user.id)
+      )?.readAt;
       const chat = publicFixtureChat(db, user, fixture, { markRead: true });
-      if (userInFixture(fixture, user) && found.phase === "open") writeDb(db);
+      const afterRead = (db.matchChatReads || []).find(
+        (stamp) => Number(stamp.fixtureId) === Number(fixture.id) && Number(stamp.userId) === Number(user.id)
+      )?.readAt;
+      if (beforeRead !== afterRead) writeDb(db);
       return json(res, 200, { ok: true, chat });
     }
     if (!canPostFixtureChat(fixture, user, found.scope)) {
