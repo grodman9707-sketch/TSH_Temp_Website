@@ -1,6 +1,7 @@
-// Arrange-chat for a fixture. Players can read and post only while the match
-// is still pending. The chat locks once the result is submitted for admin
-// approval, and the messages are removed once that result is published.
+// Arrange-chat for a fixture. The two players, and that division's admin, can
+// post while the match is still pending. The chat locks once the result is
+// submitted for admin approval, and the messages are removed once that result
+// is published.
 
 export const CHAT_MAX_BODY = 500;
 export const CHAT_MAX_MESSAGES = 200;
@@ -62,9 +63,10 @@ export function canViewFixtureChat(fixture, user, scope = {}) {
 
 export function canPostFixtureChat(fixture, user, scope = {}) {
   if (!user || chatPhase(fixture) !== "open") return false;
-  if (!inMatch(fixture, user)) return false;
   if (scope.released === false) return false;
-  return true;
+  if (inMatch(fixture, user)) return true;
+  const leagues = (scope.adminLeagueIds || []).map(Number);
+  return leagues.includes(Number(fixture.leagueId));
 }
 
 export function messagesForFixture(db, fixtureId) {

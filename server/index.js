@@ -3391,7 +3391,7 @@ async function handleApi(req, res, url) {
       if (found.phase === "locked") {
         return json(res, 403, { ok: false, error: "This chat is locked while the result waits for admin approval" });
       }
-      return json(res, 403, { ok: false, error: "Only the two players in a pending match can send a message" });
+      return json(res, 403, { ok: false, error: "Only the two players, or that division's admin, can send a message" });
     }
     const cleaned = cleanChatBody(body.body ?? body.text);
     if (cleaned.error) return json(res, 400, { ok: false, error: cleaned.error });
@@ -3407,18 +3407,21 @@ async function handleApi(req, res, url) {
       createdAt: now.toISOString(),
     });
     markChatRead(db, fixture.id, user.id, now);
-    const opponentId = Number(fixture.homeId) === Number(user.id) ? fixture.awayId : fixture.homeId;
-    const opponent = db.users.find((item) => Number(item.id) === Number(opponentId));
-    let email = null;
-    if (opponent && wantsMatchEmail(opponent) && chatEmailDue(db, fixture.id, opponent.id, now)) {
-      noteChatEmail(db, fixture.id, opponent.id, now);
-      const leagueName = leagueTitle(db, db.leagues.find((league) => league.id === fixture.leagueId) || { name: "your league", regionalId: 0 });
-      const preview = cleaned.text.length > 160 ? `${cleaned.text.slice(0, 157)}...` : cleaned.text;
-      email = matchChatEmail(opponent, user, fixture, leagueName, preview);
+    const recipientIds = [...new Set([Number(fixture.homeId), Number(fixture.awayId)].filter((id) => id && id !== Number(user.id)))];
+    const leagueName = leagueTitle(db, db.leagues.find((league) => league.id === fixture.leagueId) || { name: "your league", regionalId: 0 });
+    const preview = cleaned.text.length > 160 ? `${cleaned.text.slice(0, 157)}...` : cleaned.text;
+    const emails = [];
+    for (const recipientId of recipientIds) {
+      const recipient = db.users.find((item) => Number(item.id) === Number(recipientId));
+      if (!recipient || !wantsMatchEmail(recipient) || !chatEmailDue(db, fixture.id, recipient.id, now)) continue;
+      noteChatEmail(db, fixture.id, recipient.id, now);
+      emails.push(matchChatEmail(recipient, user, fixture, leagueName, preview));
     }
     writeDb(db);
-    if (email) Promise.resolve(sendEmail(email)).catch((err) => console.error("Match chat email failed:", err));
-    return json(res, 200, { ok: true, chat: publicFixtureChat(db, user, fixture), notified: Boolean(email) });
+    for (const email of emails) {
+      Promise.resolve(sendEmail(email)).catch((err) => console.error("Match chat email failed:", err));
+    }
+    return json(res, 200, { ok: true, chat: publicFixtureChat(db, user, fixture), notified: emails.length > 0 });
   }
 
   if (p.startsWith("/api/admin")) {
