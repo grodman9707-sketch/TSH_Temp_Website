@@ -730,13 +730,13 @@ function matchChatBox(chat) {
     : `<p class="match-chat-empty">${chat.canPost ? "No messages yet. Suggest a day and time." : "No messages yet."}</p>`;
   const locked = chat.locked
     ? `<p class="mt-1 text-xs text-muted">This chat is locked while the result waits for admin approval. It is removed when the result is published.</p>`
-    : `<p class="mt-1 text-xs text-muted">Only the two players can post while the match is still pending. ${mine ? "Your opponent is notified when you send a message." : "Players are notified when the other person sends a message."} Division admins can read their division. Owners can read every chat.</p>`;
+    : `<p class="mt-1 text-xs text-muted">The two players and that division's admin can post while the match is still pending. ${mine ? "Your opponent is notified when you send a message." : "Both players are notified when a division admin sends a message."} Owners and head admins can read every chat.</p>`;
   const form = chat.canPost
     ? `<form class="mt-2 space-y-2" data-form="MATCHCHAT" data-id="${chat.fixtureId}">
         <textarea name="body" maxlength="500" rows="2" required placeholder="Suggest a day and time">${esc(draft)}</textarea>
         <button class="btn-gold">SEND</button>
       </form>
-      <p class="mt-1 text-xs text-muted">Sending notifies ${esc(opponent || "your opponent")} on My Matches, and by email if they have match emails on.</p>`
+      <p class="mt-1 text-xs text-muted">Sending notifies ${mine ? esc(opponent || "your opponent") : "both players"} on My Matches, and by email if they have match emails on.</p>`
     : "";
   return `<div class="match-chat" data-match-chat="${chat.fixtureId}">
       <div class="text-xs font-bold tracking-widest gold">${chat.locked ? "CHAT LOCKED" : "ARRANGE THIS MATCH"}</div>

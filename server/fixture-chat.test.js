@@ -5,7 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { chatEmailDue, chatPhase, noteChatEmail, unreadForUser } from "./fixtureChat.js";
+import { canPostFixtureChat, chatEmailDue, chatPhase, noteChatEmail, unreadForUser } from "./fixtureChat.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PNG =
@@ -36,6 +36,19 @@ check("opponent verify still counts as pending", chatPhase({ status: "pending_ve
 check("admin review locks the chat", chatPhase({ status: "submitted" }) === "locked");
 check("published result removes the chat", chatPhase({ status: "played" }) === "gone");
 check("bye has no chat", chatPhase({ status: "bye", bye: true }) === "gone");
+{
+  const openFx = { id: 7, leagueId: 3, homeId: 1, awayId: 2, status: "scheduled" };
+  const adminScope = { adminLeagueIds: [3], released: true };
+  check("division admin can post in an open chat", canPostFixtureChat(openFx, { id: 9 }, adminScope));
+  check("another division's admin cannot post", !canPostFixtureChat(openFx, { id: 8 }, { adminLeagueIds: [4], released: true }));
+  check("owner cannot post without that division", !canPostFixtureChat(openFx, { id: 5 }, { owner: true, adminLeagueIds: [], released: true }));
+  check("head admin cannot post without that division", !canPostFixtureChat(openFx, { id: 6 }, { headAdmin: true, adminLeagueIds: [], released: true }));
+  check("a player in the match can still post", canPostFixtureChat(openFx, { id: 1 }, { released: true }));
+  check("another player cannot post", !canPostFixtureChat(openFx, { id: 4 }, { released: true }));
+  check("unreleased chat cannot be posted", !canPostFixtureChat(openFx, { id: 9 }, { adminLeagueIds: [3], released: false }));
+  check("locked chat cannot be posted", !canPostFixtureChat({ ...openFx, status: "submitted" }, { id: 9 }, adminScope));
+  check("deleted chat cannot be posted", !canPostFixtureChat({ ...openFx, status: "played" }, { id: 9 }, adminScope));
+}
 {
   const db = { matchChats: [], matchChatReads: [] };
   db.matchChats.push({ id: 1, fixtureId: 7, userId: 2, body: "Tuesday?", createdAt: "2026-10-08T12:00:00.000Z" });
@@ -110,7 +123,9 @@ try {
   check("sending a message tells the player their opponent is notified", appJs.includes("Your opponent has been notified") && appJs.includes("NEW MESSAGE"));
   check(
     "icon access covers the two players, division admins, and every chat for owners",
-    appJs.includes("Only the two players can post") && appJs.includes("Division admins can read their division") && appJs.includes("Owners can read every chat")
+    appJs.includes("that division's admin can post") &&
+      appJs.includes("Both players are notified when a division admin sends a message") &&
+      appJs.includes("Owners and head admins can read every chat")
   );
   check("admin desk does not list a match chat history", !appJs.includes("matchChatsPanel") && !appJs.includes(">Match chats<"));
   check(
@@ -242,14 +257,47 @@ try {
 
   const adminA = await api(port, "/api/fixtures/chats", { token: divAdmin.data.token });
   const adminAIds = new Set((adminA.data.chats || []).map((chat) => chat.fixtureId));
-  check("division admin sees their division chat and cannot post", adminA.status === 200 && adminAIds.has(fixtureA) && !adminAIds.has(fixtureB));
+  check("division admin sees their division chat", adminA.status === 200 && adminAIds.has(fixtureA) && !adminAIds.has(fixtureB));
   const adminAChat = (adminA.data.chats || []).find((chat) => chat.fixtureId === fixtureA);
-  check("division admin chat is read only", adminAChat && adminAChat.canPost === false && adminAChat.messages.some((message) => message.body === "Tuesday at 8?"));
+  check("division admin can post in their division chat", adminAChat && adminAChat.canPost === true && adminAChat.messages.some((message) => message.body === "Tuesday at 8?"));
   const adminB = await api(port, "/api/fixtures/chats", { token: otherAdmin.data.token });
   const adminBIds = new Set((adminB.data.chats || []).map((chat) => chat.fixtureId));
   check("other division admin cannot see this chat", !adminBIds.has(fixtureA));
+  const otherPost = await api(port, `/api/fixtures/${fixtureA}/chat`, { method: "POST", token: otherAdmin.data.token, body: { body: "Not my division" } });
+  check("other division admin cannot post", otherPost.status === 403);
+  const otherRead = await api(port, `/api/fixtures/${fixtureA}/chat`, { token: otherAdmin.data.token });
+  check("other division admin cannot read this chat", otherRead.status === 403);
+  const headPost = await api(port, `/api/fixtures/${fixtureA}/chat`, { method: "POST", token: head.data.token, body: { body: "Head admins still only read" } });
+  check("head admin cannot post", headPost.status === 403);
+  const ownerOtherDivision = await api(port, `/api/fixtures/${fixtureB}/chat`, { method: "POST", token: ownerTok, body: { body: "Owner is not this division's admin" } });
+  check("owner cannot post outside a division they admin", ownerOtherDivision.status === 403);
+  const earlyAdmin = await api(port, `/api/fixtures/${fixtureFuture}/chat`, { method: "POST", token: divAdmin.data.token, body: { body: "Too early" } });
+  check("division admin cannot post in an unreleased chat", earlyAdmin.status === 403);
   const adminPost = await api(port, `/api/fixtures/${fixtureA}/chat`, { method: "POST", token: divAdmin.data.token, body: { body: "I will pick the time" } });
-  check("division admin cannot post", adminPost.status === 403);
+  const adminOwn = (adminPost.data.chat?.messages || []).find((message) => message.body === "I will pick the time");
+  check(
+    "division admin can post in their division",
+    adminPost.status === 200 && adminPost.data.chat?.canPost === true && adminOwn?.mine === true && adminOwn?.unread !== true
+  );
+  const adminAfterPost = await api(port, "/api/fixtures/chats?summary=1", { token: divAdmin.data.token });
+  check(
+    "division admin is not notified about their own message",
+    !(adminAfterPost.data.unread || []).some((item) => item.fixtureId === fixtureA && item.fromName === "Div Admin Chat")
+  );
+  const homeSeesAdmin = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
+  check(
+    "home sees the division admin message as unread",
+    homeSeesAdmin.data.unread?.[0]?.fixtureId === fixtureA && homeSeesAdmin.data.unread[0].count === 3 && homeSeesAdmin.data.unread[0].fromName === "Div Admin Chat"
+  );
+  const awaySeesAdmin = await api(port, "/api/fixtures/chats?summary=1", { token: awayTok });
+  check(
+    "away sees the division admin message as unread",
+    awaySeesAdmin.data.unread?.[0]?.fixtureId === fixtureA && awaySeesAdmin.data.unread[0].count === 1 && awaySeesAdmin.data.unread[0].fromName === "Div Admin Chat"
+  );
+  await new Promise((r) => setTimeout(r, 200));
+  const adminMail = `${stdout}\n${stderr}`.split("\n").filter((line) => line.includes("(match_chat)") && line.includes("Div Admin Chat"));
+  check("the opponent is emailed about the division admin message", adminMail.some((line) => line.includes("away-chat@test.com")));
+  check("the division admin is not emailed about their own message", !adminMail.some((line) => line.includes("div-admin-chat@test.com")));
 
   const sentB = await api(port, `/api/fixtures/${fixtureB}/chat`, { method: "POST", token: homeB.data.token, body: { body: "Division B only" } });
   check("division B player can post", sentB.status === 200);
@@ -281,6 +329,8 @@ try {
     "division admin can still read the locked chat",
     lockedAdmin.status === 200 && lockedAdmin.data.chat.locked === true && lockedAdmin.data.chat.canPost === false && lockedAdmin.data.chat.messages.length === 2
   );
+  const lockedAdminPost = await api(port, `/api/fixtures/${fixtureDecline}/chat`, { method: "POST", token: divAdmin.data.token, body: { body: "Too late for an admin too" } });
+  check("division admin cannot post into a locked chat", lockedAdminPost.status === 403);
   const declined = await api(port, `/api/admin/fixtures/${fixtureDecline}/decline-stats`, { method: "POST", token: divAdmin.data.token, body: { note: "Check the 180s" } });
   check("declining the result unlocks the chat", declined.status === 200 && declined.data.fixture?.status === "scheduled");
   const reopened = await api(port, `/api/fixtures/${fixtureDecline}/chat`, { token: homeTok });
@@ -300,7 +350,8 @@ try {
   const gonePlayer = await api(port, `/api/fixtures/${fixtureA}/chat`, { token: homeTok });
   const goneOwner = await api(port, `/api/fixtures/${fixtureA}/chat`, { token: ownerTok });
   const goneList = await api(port, "/api/fixtures/chats", { token: ownerTok });
-  check("published match deletes the chat", gonePlayer.status === 404 && goneOwner.status === 404);
+  const goneAdmin = await api(port, `/api/fixtures/${fixtureA}/chat`, { method: "POST", token: divAdmin.data.token, body: { body: "Too late" } });
+  check("published match deletes the chat", gonePlayer.status === 404 && goneOwner.status === 404 && goneAdmin.status === 404);
   check("published match is gone from the chat list", !(goneList.data.chats || []).some((chat) => chat.fixtureId === fixtureA));
   check("division B chat is still there", (goneList.data.chats || []).some((chat) => chat.fixtureId === fixtureB && chat.messages.some((message) => message.body === "Division B only")));
 
