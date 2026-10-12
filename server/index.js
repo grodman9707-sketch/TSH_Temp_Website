@@ -13,7 +13,10 @@ import { injuredLeagueIds, isInjuredIn } from "./injury.js";
 import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
-import { runDueNotifications, sendEmail, emailConfigStatus, wantsMatchEmail, matchChatEmail } from "./notifications.js";
+import { runDueNotifications, sendEmail, deliverNotification, alertsConfigStatus, matchChatDeliveries } from "./notifications.js";
+import { sendSms } from "./sms.js";
+import { normalizeE164, issuePhoneVerification, verifyPhoneCode, clearPhone, blankAlertPrefs } from "./phone.js";
+import { parsePushSubscription, upsertPushSubscription, removePushSubscription, pushClientConfig, sendWebPush } from "./webpush.js";
 import {
   CHAT_MAX_MESSAGES,
   chatPhase,
@@ -260,7 +263,17 @@ function recordStaff(db, actor, action, extra = {}) {
   appendStaffLog(db, actor, { action, ...extra });
 }
 function publicUser(u, db) {
-  const { password, avatarFile, passwordReset, ...rest } = u;
+  const {
+    password,
+    avatarFile,
+    passwordReset,
+    phoneVerifyCode,
+    phoneVerifyExpiresAt,
+    phoneVerifyAttempts,
+    phoneVerifySentAt,
+    pushSubscriptions,
+    ...rest
+  } = u;
   const leagueIds = userLeagueIds(u);
   const adminIds = adminLeagueIds(u);
   const roles = userRoles(u);
@@ -280,7 +293,14 @@ function publicUser(u, db) {
       : [],
     hasAvatar: Boolean(avatarFile),
     avatarUrl: avatarFile ? `/api/users/${u.id}/avatar?v=${encodeURIComponent(u.avatarUpdatedAt || "1")}` : "",
-    notifyPrefs: { email: u.notifyPrefs?.email !== false },
+    phone: u.phone || "",
+    phoneVerifiedAt: u.phoneVerifiedAt || null,
+    pushDeviceCount: Array.isArray(pushSubscriptions) ? pushSubscriptions.length : 0,
+    notifyPrefs: {
+      email: u.notifyPrefs?.email !== false,
+      sms: u.notifyPrefs?.sms === true,
+      push: u.notifyPrefs?.push === true,
+    },
     timezone: u.timezone || "",
     hasPendingApplication: db ? userHasPendingApplication(db, u.id) : false,
     fullyPlaced: db ? isFullyPlaced(db, u) : false,
@@ -1757,7 +1777,10 @@ function ensureJasonJacksonOwner(db) {
       country: "",
       avatarFile: null,
       avatarUpdatedAt: null,
-      notifyPrefs: { email: true },
+      notifyPrefs: blankAlertPrefs(true),
+      phone: "",
+      phoneVerifiedAt: null,
+      pushSubscriptions: [],
       timezone: defaultTimezoneForRegional("both"),
     };
     db.users.push(jason);
@@ -1818,7 +1841,28 @@ function migrate(db) {
       changed = true;
     }
     if (!u.notifyPrefs || typeof u.notifyPrefs !== "object") {
-      u.notifyPrefs = { email: true };
+      u.notifyPrefs = blankAlertPrefs(true);
+      changed = true;
+    } else {
+      if (u.notifyPrefs.sms !== true && u.notifyPrefs.sms !== false) {
+        u.notifyPrefs.sms = false;
+        changed = true;
+      }
+      if (u.notifyPrefs.push !== true && u.notifyPrefs.push !== false) {
+        u.notifyPrefs.push = false;
+        changed = true;
+      }
+    }
+    if (typeof u.phone !== "string") {
+      u.phone = "";
+      changed = true;
+    }
+    if (!("phoneVerifiedAt" in u)) {
+      u.phoneVerifiedAt = null;
+      changed = true;
+    }
+    if (!Array.isArray(u.pushSubscriptions)) {
+      u.pushSubscriptions = [];
       changed = true;
     }
     if (!u.timezone) {
@@ -2722,9 +2766,14 @@ async function handleApi(req, res, url) {
     const found = db.users.find((u) => u.id === Number(playerMatch[1]));
     if (!found) return json(res, 404, { ok: false, error: "Not found" });
     const playerFixtures = db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id);
+    const player = publicUser(found, db);
+    if (!user || Number(user.id) !== Number(found.id)) {
+      player.phone = "";
+      player.phoneVerifiedAt = null;
+    }
     return json(res, 200, {
       ok: true,
-      player: publicUser(found, db),
+      player,
       league: db.leagues.find((l) => l.id === userLeagueIds(found)[0]) || null,
       leagues: userLeagueIds(found).map((id) => db.leagues.find((l) => l.id === id)).filter(Boolean).map((l) => ({ ...l, title: leagueTitle(db, l) })),
       regional: db.regionals.find((r) => r.id === found.regionalId) || null,
@@ -2778,7 +2827,10 @@ async function handleApi(req, res, url) {
       country: "",
       avatarFile: null,
       avatarUpdatedAt: null,
-      notifyPrefs: { email: true },
+      notifyPrefs: blankAlertPrefs(true),
+      phone: "",
+      phoneVerifiedAt: null,
+      pushSubscriptions: [],
       timezone: isValidTimeZone(body.timezone) ? body.timezone : defaultTimezoneForRegional(selection.choice),
       communityJoinPending: true,
     };
@@ -2969,8 +3021,72 @@ async function handleApi(req, res, url) {
   if (method === "POST" && p === "/api/account/notifications") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
     const u = db.users.find((x) => x.id === user.id);
-    const emailOn = !(body.email === false || body.email === "false" || body.email === 0 || body.email === "0" || body.email === "off");
-    u.notifyPrefs = { ...(u.notifyPrefs || {}), email: emailOn };
+    const prefs = { ...(u.notifyPrefs || blankAlertPrefs(true)) };
+    if ("email" in body) {
+      prefs.email = !(body.email === false || body.email === "false" || body.email === 0 || body.email === "0" || body.email === "off");
+    }
+    if ("sms" in body) prefs.sms = body.sms === true || body.sms === "true" || body.sms === 1 || body.sms === "1" || body.sms === "on";
+    if ("push" in body) prefs.push = body.push === true || body.push === "true" || body.push === 1 || body.push === "1" || body.push === "on";
+    u.notifyPrefs = prefs;
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/phone") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const parsed = normalizeE164(body.phone);
+    if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error });
+    const issued = issuePhoneVerification(u, parsed.phone);
+    if (!issued.ok) return json(res, issued.status || 400, { ok: false, error: issued.error });
+    writeDb(db);
+    try {
+      const sent = await sendSms({ to: parsed.phone, body: `TSH Darts League code: ${issued.code}` });
+      return json(res, 200, { ok: true, dev: Boolean(sent.dev), user: publicUser(u, db) });
+    } catch (err) {
+      console.error("Phone verification text failed:", err);
+      return json(res, 502, { ok: false, error: "The code was saved but the text could not be sent. Try again in a minute." });
+    }
+  }
+
+  if (method === "POST" && p === "/api/account/phone/verify") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const checked = verifyPhoneCode(u, body.code);
+    writeDb(db);
+    if (!checked.ok) return json(res, 400, { ok: false, error: checked.error, user: publicUser(u, db) });
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/phone/remove") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    clearPhone(u);
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "GET" && p === "/api/account/push/config") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    return json(res, 200, { ok: true, ...pushClientConfig() });
+  }
+
+  if (method === "POST" && p === "/api/account/push") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const parsed = parsePushSubscription(body.subscription || body);
+    if (parsed.error) return json(res, 400, { ok: false, error: parsed.error });
+    upsertPushSubscription(u, parsed);
+    writeDb(db);
+    return json(res, 200, { ok: true, user: publicUser(u, db) });
+  }
+
+  if (method === "POST" && p === "/api/account/push/remove") {
+    if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    const u = db.users.find((x) => x.id === user.id);
+    const endpoint = String(body.endpoint || "").trim();
+    if (!endpoint) return json(res, 400, { ok: false, error: "This browser has no alert subscription to remove" });
+    removePushSubscription(u, endpoint);
     writeDb(db);
     return json(res, 200, { ok: true, user: publicUser(u, db) });
   }
@@ -3418,18 +3534,18 @@ async function handleApi(req, res, url) {
     const recipientIds = [...new Set([Number(fixture.homeId), Number(fixture.awayId)].filter((id) => id && id !== Number(user.id)))];
     const leagueName = leagueTitle(db, db.leagues.find((league) => league.id === fixture.leagueId) || { name: "your league", regionalId: 0 });
     const preview = cleaned.text.length > 160 ? `${cleaned.text.slice(0, 157)}...` : cleaned.text;
-    const emails = [];
+    const deliveries = [];
     for (const recipientId of recipientIds) {
       const recipient = db.users.find((item) => Number(item.id) === Number(recipientId));
-      if (!recipient || !wantsMatchEmail(recipient) || !chatEmailDue(db, fixture.id, recipient.id, now)) continue;
+      if (!recipient || !chatEmailDue(db, fixture.id, recipient.id, now)) continue;
+      const queued = matchChatDeliveries(recipient, user, fixture, leagueName, preview);
+      if (!queued.length) continue;
       noteChatEmail(db, fixture.id, recipient.id, now);
-      emails.push(matchChatEmail(recipient, user, fixture, leagueName, preview));
+      deliveries.push(...queued);
     }
     writeDb(db);
-    for (const email of emails) {
-      Promise.resolve(sendEmail(email)).catch((err) => console.error("Match chat email failed:", err));
-    }
-    return json(res, 200, { ok: true, chat: publicFixtureChat(db, user, fixture), notified: emails.length > 0 });
+    dispatchNotifications(deliveries);
+    return json(res, 200, { ok: true, chat: publicFixtureChat(db, user, fixture), notified: deliveries.length > 0 });
   }
 
   if (p.startsWith("/api/admin")) {
@@ -3441,7 +3557,7 @@ async function handleApi(req, res, url) {
       return json(res, 200, { ok: true, ...staffLogPayload(db) });
     }
     if (method === "GET" && p === "/api/admin/notifications/config") {
-      return json(res, 200, { ok: true, ...emailConfigStatus() });
+      return json(res, 200, { ok: true, ...alertsConfigStatus() });
     }
     if (method === "GET" && p === "/api/admin/backup") {
       if (!canOverride(user)) return json(res, 403, { ok: false, error: "Only owners and head admins can view backups" });
@@ -3486,7 +3602,7 @@ async function handleApi(req, res, url) {
     if (method === "POST" && p === "/api/admin/notifications/test") {
       const to = String(body.email || user.email || "").trim();
       if (!to) return json(res, 400, { ok: false, error: "No email address to send to" });
-      const cfg = emailConfigStatus();
+      const cfg = alertsConfigStatus();
       try {
         const r = await sendEmail({
           to,
@@ -3497,6 +3613,52 @@ async function handleApi(req, res, url) {
         return json(res, 200, { ok: true, sent: !r.dev, dev: Boolean(r.dev), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
       } catch (err) {
         return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.configured, from: cfg.from, warning: cfg.warning, to });
+      }
+    }
+    if (method === "POST" && p === "/api/admin/notifications/test-sms") {
+      const staff = db.users.find((x) => x.id === user.id) || user;
+      if (!staff.phoneVerifiedAt || !staff.phone) {
+        return json(res, 400, { ok: false, error: "Verify your own phone number first, then send the test text." });
+      }
+      const cfg = alertsConfigStatus();
+      try {
+        const r = await sendSms({
+          to: staff.phone,
+          body: "TSH Darts League test: if you received this text, match alerts are reaching your phone.",
+        });
+        return json(res, 200, { ok: true, sent: !r.dev, dev: Boolean(r.dev), configured: cfg.sms.configured, from: cfg.sms.from });
+      } catch (err) {
+        return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.sms.configured, from: cfg.sms.from });
+      }
+    }
+    if (method === "POST" && p === "/api/admin/notifications/test-push") {
+      const staff = db.users.find((x) => x.id === user.id) || user;
+      const wanted = String(body.endpoint || "").trim();
+      let subs = Array.isArray(staff.pushSubscriptions) ? staff.pushSubscriptions : [];
+      if (wanted) subs = subs.filter((sub) => sub.endpoint === wanted);
+      if (!subs.length) {
+        return json(res, 400, { ok: false, error: "Enable alerts on this phone first, then send the test alert." });
+      }
+      const cfg = alertsConfigStatus();
+      const payload = {
+        title: "TSH Darts League",
+        body: "Test alert. If you see this, lock-screen alerts are on for this phone.",
+        url: "/my-matches",
+      };
+      try {
+        const gone = [];
+        let dev = false;
+        let sent = false;
+        for (const sub of subs) {
+          const r = await sendWebPush(sub, payload);
+          if (r.dev) dev = true;
+          if (r.ok && !r.dev) sent = true;
+          if (r.gone) gone.push(sub.endpoint);
+        }
+        if (gone.length) dropPushSubscriptions(staff.id, gone);
+        return json(res, 200, { ok: true, sent, dev, configured: cfg.push.configured, devices: subs.length });
+      } catch (err) {
+        return json(res, 200, { ok: false, error: String(err.message || err), configured: cfg.push.configured });
       }
     }
     if (method === "GET" && p === "/api/admin/overview") {
@@ -4236,6 +4398,10 @@ async function handleApi(req, res, url) {
         country: "",
         avatarFile: null,
         avatarUpdatedAt: null,
+        notifyPrefs: blankAlertPrefs(true),
+        phone: "",
+        phoneVerifiedAt: null,
+        pushSubscriptions: [],
       };
       const filledSeat = league ? claimVacantSeat(db, created, league.id) : null;
       db.users.push(created);
@@ -4503,19 +4669,48 @@ server.listen(port, host, () => {
     console.log("Railway data stays on the /data volume. Attach a volume at /data so signups survive deploys.");
   }
   warmPdcTicker();
-  const emailCfg = emailConfigStatus();
-  if (emailCfg.configured) {
-    console.log(`Email notifications: ON — sending via Resend as ${emailCfg.from} (tz ${emailCfg.timezone}, reminder ${emailCfg.reminderMinutes} min).`);
+  const alertCfg = alertsConfigStatus();
+  if (alertCfg.configured) {
+    console.log(`Email notifications: ON — sending via Resend as ${alertCfg.from} (tz ${alertCfg.timezone}, reminder ${alertCfg.reminderMinutes} min).`);
   } else {
     console.log("Email notifications: OFF — EMAIL_API_KEY not set; notifications are logged only, not emailed.");
   }
-  if (emailCfg.warning) console.warn(`Email notifications WARNING: ${emailCfg.warning}`);
+  if (alertCfg.warning) console.warn(`Email notifications WARNING: ${alertCfg.warning}`);
+  if (alertCfg.sms.configured) console.log(`SMS notifications: ON — Twilio from ${alertCfg.sms.from}.`);
+  else console.log("SMS notifications: OFF — TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_FROM not set; texts are logged only.");
+  if (alertCfg.push.configured) console.log(`Phone alerts: ON — Web Push VAPID subject ${alertCfg.push.subject}.`);
+  else console.log("Phone alerts: OFF — VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY not set; push is logged only.");
   if (postgresConfigured()) console.log("Postgres backups: ON — snapshots go to DATABASE_URL after each save.");
   else console.log("Postgres backups: OFF — add a Railway PostgreSQL plugin and set DATABASE_URL on this service.");
   if (airtableConfigured()) console.log("Airtable sync: ON — Players, Standings, and Fixtures will update after each save.");
   else console.log("Airtable sync: OFF — set AIRTABLE_TOKEN and AIRTABLE_BASE_ID to push the staff spreadsheet.");
   startNotificationLoop();
 });
+
+function dropPushSubscriptions(userId, endpoints) {
+  const gone = (endpoints || []).filter(Boolean);
+  if (!userId || !gone.length) return;
+  enqueueDb(() => {
+    const fresh = readDb();
+    const u = fresh.users.find((x) => Number(x.id) === Number(userId));
+    if (!u || !Array.isArray(u.pushSubscriptions)) return;
+    const drop = new Set(gone);
+    const next = u.pushSubscriptions.filter((sub) => !drop.has(sub.endpoint));
+    if (next.length === u.pushSubscriptions.length) return;
+    u.pushSubscriptions = next;
+    writeDb(fresh);
+  }).catch((err) => console.error("Push subscription cleanup failed:", err));
+}
+
+function dispatchNotifications(messages) {
+  for (const msg of messages || []) {
+    Promise.resolve(deliverNotification(msg))
+      .then((result) => {
+        if (result?.gone?.length) dropPushSubscriptions(msg.userId, result.gone);
+      })
+      .catch((err) => console.error("Notification delivery failed:", err));
+  }
+}
 
 function startNotificationLoop(intervalMs = 60000) {
   const tick = () => {
@@ -4532,9 +4727,7 @@ function startNotificationLoop(intervalMs = 60000) {
         console.error("Notification poll failed:", err);
         return;
       }
-      for (const msg of outbox) {
-        Promise.resolve(sendEmail(msg)).catch((err) => console.error("Notification email failed:", err));
-      }
+      dispatchNotifications(outbox);
     }).catch((err) => console.error("Notification poll failed:", err));
   };
   tick();

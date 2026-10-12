@@ -1,4 +1,6 @@
-// Match notification engine (Phase 1: email via Resend HTTP API, zero-dependency).
+// Match notification engine. Email (Resend), SMS (Twilio), and Web Push share
+// one set of per-fixture dedupe markers. A stamp means the event was claimed,
+// whichever channels were selected.
 //
 // `runDueNotifications(db, now)` is a pure function: it scans fixtures, decides
 // which notifications are due, stamps per-fixture dedupe markers, and returns the
@@ -7,6 +9,8 @@
 
 import { zonedWallTimeToUtc, zonedYmd, wallStringToUtc } from "./timezones.js";
 import { isFixtureReleased } from "./fixtureRelease.js";
+import { sendSms, smsConfigStatus } from "./sms.js";
+import { deliverPushMessage, pushPublicStatus } from "./webpush.js";
 
 const LEAGUE_TZ = process.env.LEAGUE_TIMEZONE || "Europe/London";
 const REMINDER_MINUTES = Number(process.env.MATCH_REMINDER_MINUTES) || 30;
@@ -46,6 +50,39 @@ function wantsEmail(u) {
 export function wantsMatchEmail(u) {
   return wantsEmail(u);
 }
+export function wantsMatchSms(u) {
+  return !!u && u.notifyPrefs?.sms === true && !!u.phoneVerifiedAt && !!String(u.phone || "").trim();
+}
+export function wantsMatchPush(u) {
+  return !!u && u.notifyPrefs?.push === true && Array.isArray(u.pushSubscriptions) && u.pushSubscriptions.some((sub) => sub?.endpoint && sub?.keys?.p256dh && sub?.keys?.auth);
+}
+function clipSms(text) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  return s.length > 300 ? `${s.slice(0, 297)}...` : s;
+}
+function localKickoffLabel(to, startUtc, tz) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: to.timezone || tz,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(startUtc);
+}
+function pushSubs(u) {
+  return (u.pushSubscriptions || [])
+    .filter((sub) => sub?.endpoint && sub?.keys?.p256dh && sub?.keys?.auth)
+    .map((sub) => ({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }));
+}
+function enqueueChannels(outbox, user, { type, fixtureId, email, text, push }) {
+  if (wantsEmail(user) && email) outbox.push({ channel: "email", ...email });
+  if (wantsMatchSms(user) && text) {
+    outbox.push({ channel: "sms", to: user.phone, body: clipSms(text), userId: user.id, type, fixtureId });
+  }
+  if (wantsMatchPush(user) && push) {
+    outbox.push({ channel: "push", userId: user.id, type, fixtureId, subscriptions: pushSubs(user), payload: push });
+  }
+}
 export function matchChatEmail(to, fromUser, fixture, leagueName, preview) {
   const fromName = displayName(fromUser);
   const snippet = String(preview || "").trim();
@@ -56,7 +93,27 @@ export function matchChatEmail(to, fromUser, fixture, leagueName, preview) {
     (snippet ? `<p>${esc(snippet)}</p>` : "") +
     `<p>Open <b>My Matches</b> to read it and reply. The arrange chat stays open until the result is sent for admin approval.</p>` +
     `<p>— TSH Darts League</p>`;
-  return { to: to.email, subject, html, userId: to.id, type: "match_chat", fixtureId: fixture.id };
+  return { channel: "email", to: to.email, subject, html, userId: to.id, type: "match_chat", fixtureId: fixture.id };
+}
+export function matchChatDeliveries(to, fromUser, fixture, leagueName, preview) {
+  const fromName = displayName(fromUser);
+  const snippet = String(preview || "").trim();
+  const short = snippet.length > 140 ? `${snippet.slice(0, 137)}...` : snippet;
+  const outbox = [];
+  enqueueChannels(outbox, to, {
+    type: "match_chat",
+    fixtureId: fixture.id,
+    email: matchChatEmail(to, fromUser, fixture, leagueName, preview),
+    text: short
+      ? `TSH: ${fromName} messaged you about your match: ${short} Open My Matches to reply.`
+      : `TSH: ${fromName} messaged you about your match. Open My Matches to reply.`,
+    push: {
+      title: `Message from ${fromName}`,
+      body: short || "New arrange-chat message. Open My Matches to reply.",
+      url: `/my-matches?fixture=${fixture.id}`,
+    },
+  });
+  return outbox;
 }
 
 function newMatchEmail(to, opp, f, leagueName) {
@@ -67,7 +124,7 @@ function newMatchEmail(to, opp, f, leagueName) {
     `<p>You have a new match in <b>${esc(leagueName)}</b> (Week ${esc(f.week)}) against <b>${esc(oppName)}</b>.</p>` +
     `<p>Open <b>My Matches</b> — the home player proposes a date and time, then the visiting player accepts it. You'll each see it in your own local time.</p>` +
     `<p>— TSH Darts League</p>`;
-  return { to: to.email, subject, html, userId: to.id, type: "new_match", fixtureId: f.id };
+  return { channel: "email", to: to.email, subject, html, userId: to.id, type: "new_match", fixtureId: f.id };
 }
 function weeklyEmail(to, opp, f, leagueName) {
   const oppName = displayName(opp);
@@ -77,25 +134,19 @@ function weeklyEmail(to, opp, f, leagueName) {
     `<p>You have an upcoming match in <b>${esc(leagueName)}</b> (Week ${esc(f.week)}) against <b>${esc(oppName)}</b>.</p>` +
     `<p>Open <b>My Matches</b> if you still need to accept the home player's proposed time, then play on DartCounter.</p>` +
     `<p>— TSH Darts League</p>`;
-  return { to: to.email, subject, html, userId: to.id, type: "weekly", fixtureId: f.id };
+  return { channel: "email", to: to.email, subject, html, userId: to.id, type: "weekly", fixtureId: f.id };
 }
 function reminderEmail(to, opp, f, startUtc, tz) {
   const oppName = displayName(opp);
   // Show the kickoff in the recipient's own timezone.
-  const when = new Intl.DateTimeFormat("en-GB", {
-    timeZone: to.timezone || tz,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(startUtc);
+  const when = localKickoffLabel(to, startUtc, tz);
   const subject = `Your TSH match starts soon vs ${oppName}`;
   const html =
     `<p>Hi ${esc(displayName(to))},</p>` +
     `<p>Your match against <b>${esc(oppName)}</b> starts at <b>${esc(when)}</b> (your local time).</p>` +
     `<p>Get DartCounter ready — good luck!</p>` +
     `<p>— TSH Darts League</p>`;
-  return { to: to.email, subject, html, userId: to.id, type: "reminder", fixtureId: f.id };
+  return { channel: "email", to: to.email, subject, html, userId: to.id, type: "reminder", fixtureId: f.id, when };
 }
 
 // Pure: detect due notifications, stamp dedupe markers on fixtures, return work.
@@ -124,12 +175,26 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
 
     // 0) "You've been scheduled" — fires once, right after a fixture is created.
     if (home && !f.notify.newHomeAt) {
-      if (wantsEmail(home)) outbox.push(newMatchEmail(home, away, f, leagueName));
+      const oppName = displayName(away);
+      enqueueChannels(outbox, home, {
+        type: "new_match",
+        fixtureId: f.id,
+        email: newMatchEmail(home, away, f, leagueName),
+        text: `TSH: New match vs ${oppName} in ${leagueName}, Week ${f.week}. Open My Matches to arrange a time.`,
+        push: { title: "New TSH match", body: `You play ${oppName} in ${leagueName}, Week ${f.week}.`, url: "/my-matches" },
+      });
       f.notify.newHomeAt = now.toISOString();
       changed = true;
     }
     if (away && !f.notify.newAwayAt) {
-      if (wantsEmail(away)) outbox.push(newMatchEmail(away, home, f, leagueName));
+      const oppName = displayName(home);
+      enqueueChannels(outbox, away, {
+        type: "new_match",
+        fixtureId: f.id,
+        email: newMatchEmail(away, home, f, leagueName),
+        text: `TSH: New match vs ${oppName} in ${leagueName}, Week ${f.week}. Open My Matches to arrange a time.`,
+        push: { title: "New TSH match", body: `You play ${oppName} in ${leagueName}, Week ${f.week}.`, url: "/my-matches" },
+      });
       f.notify.newAwayAt = now.toISOString();
       changed = true;
     }
@@ -140,12 +205,26 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
       const dayUtc = zonedWallTimeToUtc(dd.y, dd.mo, dd.d, 0, 0, tz).getTime();
       if (dayUtc >= startOfToday && dayUtc < weekAhead) {
         if (home && !f.notify.weekHomeAt) {
-          if (wantsEmail(home)) outbox.push(weeklyEmail(home, away, f, leagueName));
+          const oppName = displayName(away);
+          enqueueChannels(outbox, home, {
+            type: "weekly",
+            fixtureId: f.id,
+            email: weeklyEmail(home, away, f, leagueName),
+            text: `TSH: You play ${oppName} this week in ${leagueName}, Week ${f.week}. Open My Matches if you still need to agree a time.`,
+            push: { title: "TSH match this week", body: `You play ${oppName} in ${leagueName}, Week ${f.week}.`, url: "/my-matches" },
+          });
           f.notify.weekHomeAt = now.toISOString();
           changed = true;
         }
         if (away && !f.notify.weekAwayAt) {
-          if (wantsEmail(away)) outbox.push(weeklyEmail(away, home, f, leagueName));
+          const oppName = displayName(home);
+          enqueueChannels(outbox, away, {
+            type: "weekly",
+            fixtureId: f.id,
+            email: weeklyEmail(away, home, f, leagueName),
+            text: `TSH: You play ${oppName} this week in ${leagueName}, Week ${f.week}. Open My Matches if you still need to agree a time.`,
+            push: { title: "TSH match this week", body: `You play ${oppName} in ${leagueName}, Week ${f.week}.`, url: "/my-matches" },
+          });
           f.notify.weekAwayAt = now.toISOString();
           changed = true;
         }
@@ -158,8 +237,26 @@ export function runDueNotifications(db, now = new Date(), opts = {}) {
       if (startUtc) {
         const diffMin = (startUtc.getTime() - now.getTime()) / 60000;
         if (diffMin >= 0 && diffMin <= reminderMin) {
-          if (home && wantsEmail(home)) outbox.push(reminderEmail(home, away, f, startUtc, tz));
-          if (away && wantsEmail(away)) outbox.push(reminderEmail(away, home, f, startUtc, tz));
+          if (home) {
+            const mail = reminderEmail(home, away, f, startUtc, tz);
+            enqueueChannels(outbox, home, {
+              type: "reminder",
+              fixtureId: f.id,
+              email: mail,
+              text: `TSH: Your match vs ${displayName(away)} starts at ${mail.when} (your local time). Get DartCounter ready.`,
+              push: { title: "TSH match starting soon", body: `Vs ${displayName(away)} at ${mail.when}.`, url: "/my-matches" },
+            });
+          }
+          if (away) {
+            const mail = reminderEmail(away, home, f, startUtc, tz);
+            enqueueChannels(outbox, away, {
+              type: "reminder",
+              fixtureId: f.id,
+              email: mail,
+              text: `TSH: Your match vs ${displayName(home)} starts at ${mail.when} (your local time). Get DartCounter ready.`,
+              push: { title: "TSH match starting soon", body: `Vs ${displayName(home)} at ${mail.when}.`, url: "/my-matches" },
+            });
+          }
           f.notify.remind30At = now.toISOString();
           changed = true;
         }
@@ -234,4 +331,19 @@ export async function sendEmail(msg) {
   }
   console.log(`[notify] emailed ${msg.to} — "${msg.subject}" (${msg.type})`);
   return { ok: true };
+}
+
+export function alertsConfigStatus() {
+  const email = emailConfigStatus();
+  const sms = smsConfigStatus();
+  const push = pushPublicStatus();
+  return { ...email, sms, push };
+}
+
+// Send one outbox item on its channel. Push returns gone endpoints (404/410)
+// so the caller can drop those subscriptions.
+export async function deliverNotification(msg) {
+  if (msg?.channel === "sms") return sendSms({ to: msg.to, body: msg.body });
+  if (msg?.channel === "push") return deliverPushMessage(msg);
+  return sendEmail(msg);
 }
