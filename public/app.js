@@ -1,6 +1,7 @@
 import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrText, shouldInvertLuma } from "./ocrParse.js";
 import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
 import { divisionSpotCards, openSpotLabel, placePlayerOptionLabel, unplacedPlaceChoices } from "./placePlayers.js";
+import { fixtureWeekGroups, fixtureWeekTitle, selectFixtureWeek } from "./fixtureWeeks.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -1555,54 +1556,7 @@ async function pageLeague(slug, id) {
         tab === "fixtures"
           ? `<div class="mt-4 space-y-4">${
               d.fixtures.length
-                ? `${weeklyReleaseNote(d)}${d.fixtures
-                    .slice()
-                    .sort((a, b) => Number(a.week || 0) - Number(b.week || 0) || String(a.date || "").localeCompare(String(b.date || "")))
-                    .map((f) => {
-                      const mine = inThisMatch(f);
-                      const bye = isByeFixture(f);
-                      const proposed = !bye && f.scheduleStatus === "proposed" && f.proposedDate;
-                      const proposalLine = bye
-                        ? `<div class="mt-1 text-xs text-muted">Bye week. No match to play.</div>`
-                        : proposed
-                        ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
-                            isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
-                          }</div>`
-                        : scheduleUnlocked(f)
-                          ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed: ${esc(scheduleWhen(f))}` : "Week 1 — the result can be submitted without accepting a time."}</div>`
-                          : "";
-                      const actions = bye
-                        ? ""
-                        : mine && f.status !== "played"
-                          ? `<div class="mt-3 flex flex-wrap items-end gap-2">
-                              ${scheduleActions(f)}
-                              ${
-                                scheduleUnlocked(f) && !f.hasBothScreenshots && f.status !== "submitted" && f.status !== "pending_verify"
-                                  ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">${needsMyVerify(f) ? "VERIFY STATS" : "SUBMIT RESULT"}</a>`
-                                  : needsMyVerify(f)
-                                    ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">VERIFY STATS</a>`
-                                    : ""
-                              }
-                            </div>`
-                          : !state.user && f.status !== "played"
-                            ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT A RESULT</a></div>`
-                            : "";
-                      return panel(
-                        `<div id="fixture-${f.id}">
-                          <div class="split-row">
-                            <div class="min-w-0">
-                              <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
-                              <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
-                              ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
-                              ${proposalLine}
-                              ${actions}
-                            </div>
-                            <div class="shrink-0 fixture-side">${fixtureChatIcon(f)}${fixtureStatus(f)}</div>
-                          </div>
-                        </div>`
-                      );
-                    })
-                    .join("")}`
+                ? `${weeklyReleaseNote(d)}${fixturesWeekBoard(slug, id, d.fixtures)}`
                 : weeklyReleaseNote(d, {
                     empty: true,
                     emptyFallback: "No fixtures yet. Division admins can generate a season from the Admin desk.",
@@ -1620,6 +1574,82 @@ async function pageLeague(slug, id) {
   );
 }
 
+function leagueFixtureCard(f) {
+  const mine = inThisMatch(f);
+  const bye = isByeFixture(f);
+  const proposed = !bye && f.scheduleStatus === "proposed" && f.proposedDate;
+  const proposalLine = bye
+    ? `<div class="mt-1 text-xs text-muted">Bye week. No match to play.</div>`
+    : proposed
+      ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
+          isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
+        }</div>`
+      : scheduleUnlocked(f)
+        ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed: ${esc(scheduleWhen(f))}` : "Week 1 — the result can be submitted without accepting a time."}</div>`
+        : "";
+  const actions = bye
+    ? ""
+    : mine && f.status !== "played"
+      ? `<div class="mt-3 flex flex-wrap items-end gap-2">
+          ${scheduleActions(f)}
+          ${
+            scheduleUnlocked(f) && !f.hasBothScreenshots && f.status !== "submitted" && f.status !== "pending_verify"
+              ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">${needsMyVerify(f) ? "VERIFY STATS" : "SUBMIT RESULT"}</a>`
+              : needsMyVerify(f)
+                ? `<a href="/my-matches?fixture=${f.id}" class="btn-gold">VERIFY STATS</a>`
+                : ""
+          }
+        </div>`
+      : !state.user && f.status !== "played"
+        ? `<div class="mt-3"><a href="/sign-in" class="text-xs font-bold tracking-widest gold">SIGN IN TO PROPOSE A TIME OR SUBMIT A RESULT</a></div>`
+        : "";
+  return panel(
+    `<div id="fixture-${f.id}">
+      <div class="split-row">
+        <div class="min-w-0">
+          <div class="text-xs uppercase tracking-widest text-muted">${esc(fixtureWhen(f))}</div>
+          <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
+          ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
+          ${proposalLine}
+          ${actions}
+        </div>
+        <div class="shrink-0 fixture-side">${fixtureChatIcon(f)}${fixtureStatus(f)}</div>
+      </div>
+    </div>`
+  );
+}
+function fixturesWeekBoard(slug, leagueId, fixtures) {
+  const selectedKey = new URLSearchParams(location.search).get("week") || "";
+  const view = selectFixtureWeek(fixtureWeekGroups(fixtures), selectedKey);
+  if (!view.shown) return "";
+  const cards = view.shown.fixtures
+    .slice()
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || Number(a.id) - Number(b.id))
+    .map(leagueFixtureCard)
+    .join("");
+  if (!view.menu.length) return cards;
+  const menuLabel = view.previous.length ? "PREVIOUS WEEKS" : "OTHER WEEKS";
+  const options = [
+    `<option value="">Current week · ${esc(fixtureWeekTitle(view.current))}</option>`,
+    ...view.menu.map(
+      (group) =>
+        `<option value="${esc(group.key)}"${view.picked && view.picked.key === group.key ? " selected" : ""}>${esc(fixtureWeekTitle(group))}</option>`
+    ),
+  ].join("");
+  return `<div class="fixture-week-board">
+    <div class="fixture-week-bar">
+      <div>
+        <div class="text-xs font-bold tracking-widest gold">${view.picked ? "SELECTED WEEK" : "CURRENT WEEK"}</div>
+        <div class="mt-1 font-semibold">${esc(fixtureWeekTitle(view.shown))}</div>
+      </div>
+      <label class="fixture-week-select">
+        <span class="text-xs font-bold tracking-widest text-muted">${menuLabel}</span>
+        <select data-act="fixture-week" data-slug="${esc(slug)}" data-league="${esc(leagueId)}" aria-label="${menuLabel === "PREVIOUS WEEKS" ? "Previous weeks" : "Other weeks"}">${options}</select>
+      </label>
+    </div>
+    <div class="mt-4 space-y-4">${cards}</div>
+  </div>`;
+}
 function passwordField(name, placeholder, autocomplete, extra = "") {
   return `<div class="password-wrap">
     <input name="${name}" type="password" placeholder="${placeholder}" autocomplete="${autocomplete}" ${extra}>
@@ -3481,6 +3511,13 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const fixtureWeek = e.target.closest("[data-act=fixture-week]");
+  if (fixtureWeek) {
+    const params = new URLSearchParams({ tab: "fixtures" });
+    if (fixtureWeek.value) params.set("week", fixtureWeek.value);
+    go(`/regionals/${fixtureWeek.dataset.slug}/leagues/${fixtureWeek.dataset.league}?${params}`);
+    return;
+  }
   const overrideLeague = e.target.closest("[data-act=override-league]");
   if (overrideLeague) {
     state.overrideLeagueId = overrideLeague.value;
