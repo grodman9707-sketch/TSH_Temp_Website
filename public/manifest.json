@@ -1,0 +1,24 @@
+{
+  "name": "TSH Darts League",
+  "short_name": "TSH Darts",
+  "description": "Match alerts for the TSH Darts League",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090b11",
+  "theme_color": "#090b11",
+  "icons": [
+    {
+      "src": "/images/tsh-main-crest.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/tsh-main-crest.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

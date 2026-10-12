@@ -1938,6 +1938,13 @@ async function pageDashboard() {
     /* keep existing user */
   }
   const d = await api("/api/my-fixtures");
+  let pushReady = false;
+  try {
+    const pushCfg = await api("/api/account/push/config");
+    pushReady = Boolean(pushCfg.configured && pushCfg.publicKey);
+  } catch {
+    pushReady = false;
+  }
   const u = state.user;
   const next = d.fixtures.find((f) => f.status === "scheduled");
   const played = d.fixtures.filter((f) => f.status === "played");
@@ -2042,12 +2049,7 @@ async function pageDashboard() {
             <button class="btn-gold">SAVE ACCOUNT</button>
           </form>`)}
       </div>
-      ${panel(`<h2 class="text-lg font-bold">Match notifications</h2>
-        <p class="mt-1 text-sm text-muted">Get an email when you have a match coming up this week, and again shortly before it starts.</p>
-        <form class="mt-4" data-form="NOTIFY">
-          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches and arrange-chat messages</label>
-          <button class="btn-gold mt-4">SAVE PREFERENCES</button>
-        </form>`, "mt-4")}
+      ${panel(matchAlertsPanel(u, pushReady), "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Profile picture</h2>
         <p class="mt-1 text-sm text-muted">Phone photos, PNG, JPG, or WEBP. We resize it automatically. Shows on your dashboard, player page, and league table.</p>
         <div class="mt-4 flex flex-wrap items-center gap-4">${avatarImg(u, 72)}
@@ -3065,8 +3067,12 @@ async function pageAdmin() {
           </form>`;
         })()}`, "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
-        <p class="mt-1 text-sm text-muted">Players are emailed when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, and ~30 minutes before an agreed kickoff (each in their own local time). Send yourself a test to confirm delivery is configured on the server.</p>
-        <form class="mt-3" data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>`, "mt-4")}
+        <p class="mt-1 text-sm text-muted">Players can get an email, a text, or a lock-screen alert when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, and about 30 minutes before an agreed kickoff (each in their own local time). Email uses the existing mail setup. Texts need a verified phone number. Lock-screen alerts need the player to tap Enable alerts on this phone. On iPhone they add the site to the Home Screen first. Send yourself a test for each channel.</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <form data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>
+          <form data-form="TESTSMS"><button class="btn-gold">SEND ME A TEST TEXT</button></form>
+          <form data-form="TESTPUSH"><button class="btn-gold">SEND A TEST ALERT TO THIS PHONE</button></form>
+        </div>`, "mt-4")}
       ${
         d.canOverride
           ? `${
@@ -3297,6 +3303,30 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", async (e) => {
+  const pushEnable = e.target.closest("[data-act=push-enable]");
+  if (pushEnable) {
+    e.preventDefault();
+    try {
+      await enableThisPhoneAlerts();
+    } catch (err) {
+      state.error = err.message || "Could not enable alerts";
+      state.notice = "";
+      render();
+    }
+    return;
+  }
+  const pushStop = e.target.closest("[data-act=push-stop]");
+  if (pushStop) {
+    e.preventDefault();
+    try {
+      await stopThisPhoneAlerts();
+    } catch (err) {
+      state.error = err.message || "Could not stop alerts";
+      state.notice = "";
+      render();
+    }
+    return;
+  }
   const intentBtn = e.target.closest('form[data-form="DROPLEAGUE"] button[name="intent"]');
   if (intentBtn) {
     const form = intentBtn.closest("form");
@@ -3854,9 +3884,34 @@ document.addEventListener("submit", async (e) => {
       render();
     } else if (kind === "NOTIFY") {
       const emailOn = form.querySelector('input[name="email"]')?.checked === true;
-      const d = await api("/api/account/notifications", { method: "POST", body: JSON.stringify({ email: emailOn }) });
+      const smsOn = form.querySelector('input[name="sms"]')?.checked === true;
+      const pushOn = form.querySelector('input[name="push"]')?.checked === true;
+      const d = await api("/api/account/notifications", { method: "POST", body: JSON.stringify({ email: emailOn, sms: smsOn, push: pushOn }) });
       state.user = d.user;
-      state.notice = emailOn ? "You'll get match emails." : "Match emails turned off.";
+      const parts = [];
+      if (emailOn) parts.push("email");
+      if (smsOn) parts.push("texts");
+      if (pushOn) parts.push("lock-screen alerts");
+      state.notice = parts.length ? `Saved. You'll get ${parts.join(", ")}.` : "Match alerts are off.";
+      if (smsOn && !d.user?.phoneVerifiedAt) state.notice += " Texts start after you verify your number.";
+      if (pushOn && !(Number(d.user?.pushDeviceCount) > 0)) state.notice += " Tap Enable alerts on this phone to register this browser.";
+      render();
+    } else if (kind === "PHONE") {
+      const d = await api("/api/account/phone", { method: "POST", body: JSON.stringify({ phone: fd.phone }) });
+      state.user = d.user;
+      state.notice = d.dev
+        ? "Number saved. Texting is not turned on yet, so no text was sent."
+        : "We texted you a 6-digit code. It expires in 10 minutes.";
+      render();
+    } else if (kind === "PHONEVERIFY") {
+      const d = await api("/api/account/phone/verify", { method: "POST", body: JSON.stringify({ code: fd.code }) });
+      state.user = d.user;
+      state.notice = "Phone number verified. You can turn on texts below.";
+      render();
+    } else if (kind === "PHONEREMOVE") {
+      const d = await api("/api/account/phone/remove", { method: "POST", body: "{}" });
+      state.user = d.user;
+      state.notice = "Phone number removed. Texts are off.";
       render();
     } else if (kind === "AVATAR") {
       const file = form.querySelector('input[type="file"]')?.files?.[0];
@@ -3961,6 +4016,24 @@ document.addEventListener("submit", async (e) => {
       else if (res.dev) state.notice = "Email is NOT configured on the server (no EMAIL_API_KEY) — the message was only logged, not sent.";
       else state.notice = `Test email failed: ${res.error || "unknown error"} (from ${res.from}).${res.warning ? ` ${res.warning}` : ""}`;
       render();
+    } else if (kind === "TESTSMS") {
+      const res = await api("/api/admin/notifications/test-sms", { method: "POST", body: "{}" });
+      if (res.sent) state.notice = `Test text sent from ${res.from}. Check your phone.`;
+      else if (res.dev) state.notice = "Texting is NOT configured on the server (Twilio env vars missing) — the message was only logged, not sent.";
+      else state.notice = res.error || "Test text failed.";
+      render();
+    } else if (kind === "TESTPUSH") {
+      let endpoint = "";
+      try {
+        endpoint = await currentPushEndpoint();
+      } catch {
+        endpoint = "";
+      }
+      const res = await api("/api/admin/notifications/test-push", { method: "POST", body: JSON.stringify({ endpoint }) });
+      if (res.sent) state.notice = "Test alert sent to this phone. Check the lock screen.";
+      else if (res.dev) state.notice = "Phone alerts are NOT configured on the server (no VAPID keys) — the alert was only logged, not sent.";
+      else state.notice = res.error || "Test alert failed.";
+      render();
     } else if (kind === "PUBLISH" || kind === "NEWS") {
       await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(fd) });
       state.notice = "Announcement posted.";
@@ -4022,7 +4095,112 @@ document.addEventListener("submit", async (e) => {
   }
 });
 
+function matchAlertsPanel(u, pushReady) {
+  const phone = u.phone || "";
+  const verified = Boolean(u.phoneVerifiedAt);
+  const phoneState = !phone ? "No number saved." : verified ? `${phone} is verified.` : `${phone} is not verified yet.`;
+  const devices = Number(u.pushDeviceCount) || 0;
+  const deviceLine = devices
+    ? `${devices} phone${devices === 1 ? " is" : "s are"} registered for lock-screen alerts.`
+    : "No phone is registered for lock-screen alerts yet.";
+  return `<h2 class="text-lg font-bold">Match notifications</h2>
+        <p class="mt-1 text-sm text-muted">Get a message when you have a new match, when one falls in the next week, about 30 minutes before an agreed kickoff, and when your opponent writes in the arrange chat.</p>
+        <form class="mt-4 space-y-3" data-form="NOTIFY">
+          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches and arrange-chat messages</label>
+          <label class="check-row"><input type="checkbox" name="sms" ${u.notifyPrefs?.sms ? "checked" : ""}> Text me about upcoming matches and arrange-chat messages</label>
+          <p class="text-xs text-muted">Texts start after the number is verified.</p>
+          <label class="check-row"><input type="checkbox" name="push" ${u.notifyPrefs?.push ? "checked" : ""}> Send lock-screen alerts on phones where I turned them on</label>
+          <button class="btn-gold">SAVE PREFERENCES</button>
+        </form>
+        <form class="mt-6 space-y-3" data-form="PHONE">
+          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Phone number</label>
+          <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+447911123456" value="${esc(phone)}">
+          <p class="text-sm ${verified ? "gold" : "text-muted"}">${esc(phoneState)}</p>
+          <button class="btn-gold">Save &amp; text me a code</button>
+        </form>
+        ${
+          phone && !verified
+            ? `<form class="mt-4 space-y-3" data-form="PHONEVERIFY">
+          <label class="block text-xs font-semibold uppercase tracking-widest text-muted">Code</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code">
+          <button class="btn-gold">Verify</button>
+        </form>`
+            : ""
+        }
+        ${phone ? `<form class="mt-3" data-form="PHONEREMOVE"><button class="btn-ghost" type="submit">Remove number</button></form>` : ""}
+        <div class="mt-6 space-y-3 border-t border-white/10 pt-5">
+          <p class="text-sm text-muted">On iPhone, add the site to the Home Screen first (Share → Add to Home Screen), then open the league from that icon and tap Enable alerts.</p>
+          <p class="text-sm text-muted">${esc(deviceLine)}</p>
+          ${pushReady ? "" : `<p class="text-sm text-muted">Lock-screen alerts are not turned on yet.</p>`}
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn-gold" data-act="push-enable">Enable alerts on this phone</button>
+            <button type="button" class="btn-ghost" data-act="push-stop">Stop alerts on this phone</button>
+          </div>
+        </div>`;
+}
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function registerAlertsWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+async function currentPushEndpoint() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "";
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  return sub?.endpoint || "";
+}
+function iosNeedsHomeScreen() {
+  const ua = navigator.userAgent || "";
+  const ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  return ios && !standalone;
+}
+async function enableThisPhoneAlerts() {
+  if (iosNeedsHomeScreen()) {
+    throw new Error("On iPhone, add the site to the Home Screen first (Share → Add to Home Screen), then open the league from that icon and tap Enable alerts.");
+  }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    throw new Error("This browser cannot show lock-screen alerts.");
+  }
+  const cfg = await api("/api/account/push/config");
+  if (!cfg.configured || !cfg.publicKey) throw new Error("Phone alerts are not turned on yet.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("Alerts stay off until you allow notifications.");
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(cfg.publicKey),
+  });
+  const d = await api("/api/account/push", { method: "POST", body: JSON.stringify(sub.toJSON()) });
+  state.user = d.user;
+  state.error = "";
+  state.notice = "Alerts are on for this phone.";
+  render();
+}
+async function stopThisPhoneAlerts() {
+  let endpoint = "";
+  if ("serviceWorker" in navigator) {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    endpoint = sub?.endpoint || "";
+    if (sub) await sub.unsubscribe();
+  }
+  if (!endpoint) throw new Error("This phone was not registered for alerts.");
+  const d = await api("/api/account/push/remove", { method: "POST", body: JSON.stringify({ endpoint }) });
+  state.user = d.user;
+  state.error = "";
+  state.notice = "Alerts are off on this phone.";
+  render();
+}
 async function boot() {
+  registerAlertsWorker();
   const hadJsToken = Boolean(token());
   const remembered = wantsRemember() || Boolean((() => {
     try {
