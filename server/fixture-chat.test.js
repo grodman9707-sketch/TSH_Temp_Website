@@ -131,16 +131,26 @@ try {
     "icon access covers the two players, division admins, and every chat for owners",
     appJs.includes("that division's admin can post") &&
       appJs.includes("Both players are notified when a division admin sends a message") &&
+      appJs.includes("Admins are not notified") &&
       appJs.includes("Owners and head admins can read every chat")
   );
   check("admin desk does not list a match chat history", !appJs.includes("matchChatsPanel") && !appJs.includes(">Match chats<"));
+  check("owner fixture rows show the arrange-chat icon", appJs.includes("fixtureChatIcon(f)") && appJs.includes("manage-fixture-main"));
   check(
     "the header chat icon shows an unread count as soon as someone is logged in",
     appJs.includes("function headerChatLink") && appJs.includes("header-chat") && appJs.includes("chat-icon-badge")
   );
   check(
-    "staff use that same header badge instead of a second chat icon",
-    /function headerChatLink\(\) \{\s*if \(!state\.user\) return "";\s*const count = chatUnreadTotal\(\);/.test(appJs)
+    "message notices and the header badge go only to a player in that match",
+    appJs.includes("function playerChatNotices") &&
+      appJs.includes("item.notify !== false") &&
+      /function chatUnreadTotal\(\) \{\s*return playerChatNotices\(\)/.test(appJs) &&
+      /function chatNoticeBanner\(\) \{\s*const items = playerChatNotices\(\);/.test(appJs) &&
+      /function headerChatLink\(\) \{\s*if \(!state\.user\) return "";\s*const count = chatUnreadTotal\(\);/.test(appJs)
+  );
+  check(
+    "fixture chat icons still show an unread mark for staff",
+    /function chatUnreadFor\(f\) \{\s*return \(state\.chatUnread \|\| \[\]\)\.find/.test(appJs)
   );
 
   const owner = await api(port, "/api/auth/login", {
@@ -235,7 +245,7 @@ try {
   const awaySummary = await api(port, "/api/fixtures/chats?summary=1", { token: awayTok });
   check(
     "opponent is notified in the app",
-    awaySummary.status === 200 && awaySummary.data.unread?.length === 1 && awaySummary.data.unread[0].fixtureId === fixtureA && awaySummary.data.unread[0].count === 2 && awaySummary.data.unread[0].fromName === "Home Chat"
+    awaySummary.status === 200 && awaySummary.data.unread?.length === 1 && awaySummary.data.unread[0].fixtureId === fixtureA && awaySummary.data.unread[0].count === 2 && awaySummary.data.unread[0].fromName === "Home Chat" && awaySummary.data.unread[0].notify === true
   );
   const homeSummary = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
   check("sender is not notified about their own messages", (homeSummary.data.unread || []).length === 0);
@@ -258,18 +268,23 @@ try {
   const mailSoFar = `${stdout}\n${stderr}`.split("\n").filter((line) => line.includes("(match_chat)"));
   check("opted-out player was not emailed again", mailSoFar.filter((line) => line.includes("home-chat@test.com")).length === 1);
   check("opponent was emailed about the first message", mailSoFar.some((line) => line.includes("away-chat@test.com") && line.includes("New message from Home Chat")));
+  check(
+    "staff are not emailed about a player message",
+    !mailSoFar.some((line) => /div-admin-chat@test.com|other-admin-chat@test.com|head-admin-chat@test.com|grodman9707@gmail.com/i.test(line))
+  );
   const homeStillNotified = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
   check("opted-out opponent still gets the in-app notice", homeStillNotified.data.unread?.[0]?.count === 2 && homeStillNotified.data.unread?.[0]?.fromName === "Away Chat");
   await api(port, "/api/account/notifications", { method: "POST", token: homeTok, body: { email: true } });
 
   const adminUnread = await api(port, "/api/fixtures/chats?summary=1", { token: divAdmin.data.token });
   check(
-    "division admin sees an unread count for a chat they can read",
+    "division admin sees an unread mark on the fixture, not a notification",
     adminUnread.status === 200 &&
       adminUnread.data.unread?.length === 1 &&
       adminUnread.data.unread[0].fixtureId === fixtureA &&
       adminUnread.data.unread[0].count === 4 &&
-      adminUnread.data.unread[0].fromName === "Away Chat"
+      adminUnread.data.unread[0].fromName === "Away Chat" &&
+      adminUnread.data.unread[0].notify === false
   );
   const otherUnread = await api(port, "/api/fixtures/chats?summary=1", { token: otherAdmin.data.token });
   check(
@@ -278,13 +293,13 @@ try {
   );
   const ownerUnread = await api(port, "/api/fixtures/chats?summary=1", { token: ownerTok });
   check(
-    "owner sees an unread count for every chat they can read",
-    (ownerUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4)
+    "owner sees an unread mark on the fixture without a notification",
+    (ownerUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4 && item.notify === false)
   );
   const headUnread = await api(port, "/api/fixtures/chats?summary=1", { token: head.data.token });
   check(
-    "head admin sees an unread count for every chat they can read",
-    (headUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4)
+    "head admin sees an unread mark on the fixture without a notification",
+    (headUnread.data.unread || []).some((item) => item.fixtureId === fixtureA && item.count === 4 && item.notify === false)
   );
   const adminOpen = await api(port, `/api/fixtures/${fixtureA}/chat`, { token: divAdmin.data.token });
   check(
@@ -339,7 +354,7 @@ try {
   const homeSeesAdmin = await api(port, "/api/fixtures/chats?summary=1", { token: homeTok });
   check(
     "home sees the division admin message as unread",
-    homeSeesAdmin.data.unread?.[0]?.fixtureId === fixtureA && homeSeesAdmin.data.unread[0].count === 3 && homeSeesAdmin.data.unread[0].fromName === "Div Admin Chat"
+    homeSeesAdmin.data.unread?.[0]?.fixtureId === fixtureA && homeSeesAdmin.data.unread[0].count === 3 && homeSeesAdmin.data.unread[0].fromName === "Div Admin Chat" && homeSeesAdmin.data.unread[0].notify === true
   );
   const awaySeesAdmin = await api(port, "/api/fixtures/chats?summary=1", { token: awayTok });
   check(
@@ -349,7 +364,10 @@ try {
   await new Promise((r) => setTimeout(r, 200));
   const adminMail = `${stdout}\n${stderr}`.split("\n").filter((line) => line.includes("(match_chat)") && line.includes("Div Admin Chat"));
   check("the opponent is emailed about the division admin message", adminMail.some((line) => line.includes("away-chat@test.com")));
-  check("the division admin is not emailed about their own message", !adminMail.some((line) => line.includes("div-admin-chat@test.com")));
+  check(
+    "staff are not emailed when a division admin messages the players",
+    !adminMail.some((line) => /div-admin-chat@test.com|other-admin-chat@test.com|head-admin-chat@test.com|grodman9707@gmail.com/i.test(line))
+  );
 
   const sentB = await api(port, `/api/fixtures/${fixtureB}/chat`, { method: "POST", token: homeB.data.token, body: { body: "Division B only" } });
   check("division B player can post", sentB.status === 200);
