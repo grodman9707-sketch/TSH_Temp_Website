@@ -667,8 +667,11 @@ function fixtureWhen(f) {
   else if (f.when) bits.push(f.when);
   return bits.join(" · ");
 }
+function playerChatNotices() {
+  return (state.chatUnread || []).filter((item) => item.notify !== false);
+}
 function chatUnreadTotal() {
-  return (state.chatUnread || []).reduce((sum, item) => sum + Number(item.count || 0), 0);
+  return playerChatNotices().reduce((sum, item) => sum + Number(item.count || 0), 0);
 }
 function consumeShownChats(chats) {
   const shown = new Set((chats || []).map((chat) => Number(chat.fixtureId)));
@@ -701,7 +704,7 @@ function fixtureChatIcon(f) {
     </button>`;
 }
 function chatNoticeBanner() {
-  const items = state.chatUnread || [];
+  const items = playerChatNotices();
   if (!items.length) return "";
   return panel(
     `<div class="chat-notice">${items
@@ -730,7 +733,7 @@ function matchChatBox(chat) {
     : `<p class="match-chat-empty">${chat.canPost ? "No messages yet. Suggest a day and time." : "No messages yet."}</p>`;
   const locked = chat.locked
     ? `<p class="mt-1 text-xs text-muted">This chat is locked while the result waits for admin approval. It is removed when the result is published.</p>`
-    : `<p class="mt-1 text-xs text-muted">The two players and that division's admin can post while the match is still pending. ${mine ? "Your opponent is notified when you send a message." : "Both players are notified when a division admin sends a message."} Owners and head admins can read every chat.</p>`;
+    : `<p class="mt-1 text-xs text-muted">The two players and that division's admin can post while the match is still pending. ${mine ? "Your opponent is notified when you send a message." : "Both players are notified when a division admin sends a message."} Admins are not notified. They see an unread mark on the fixture until they open the chat. Owners and head admins can read every chat.</p>`;
   const form = chat.canPost
     ? `<form class="mt-2 space-y-2" data-form="MATCHCHAT" data-id="${chat.fixtureId}">
         <textarea name="body" maxlength="500" rows="2" required placeholder="Suggest a day and time">${esc(draft)}</textarea>
@@ -2540,7 +2543,8 @@ function manageFixturesDesk(d, allLeagueOptions) {
               return `<div class="structure-div-row manage-fixture-row">
                   <div class="manage-fixture-main">
                     <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${f.scheduleAcceptRequired === false ? " · skip accept" : ""}${f.released === false ? " · unreleased" : ""}${f.resubmitRequested ? " · resubmit requested" : ""}</span>
-                    <div class="flex flex-wrap gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                      ${fixtureChatIcon(f)}
                       <button type="button" class="btn-ghost" data-act="edit-fixture" data-id="${f.id}">${open ? "CLOSE" : "EDIT"}</button>
                       ${
                         f.status !== "played"
@@ -3656,7 +3660,9 @@ document.addEventListener("submit", async (e) => {
       state.chatPopup = data.chat;
       state.chatPopupError = "";
       consumeShownChats([data.chat]);
-      state.chatNotice = "Message sent. Your opponent has been notified.";
+      state.chatNotice = inThisMatch(data.chat)
+        ? "Message sent. Your opponent has been notified."
+        : "Message sent. Both players have been notified.";
       render();
     } else if (kind === "PROPOSE") {
       await api(`/api/fixtures/${form.dataset.id}/propose`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });

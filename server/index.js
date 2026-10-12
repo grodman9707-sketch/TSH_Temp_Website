@@ -2345,6 +2345,8 @@ function chatUnreadSummary(db, user) {
       week: fixture.week,
       leagueName: named.leagueName,
       latestAt: latest.createdAt,
+      // Players in the match get the notice. Staff only see the unread mark on the fixture.
+      notify: userInFixture(fixture, user),
     });
   }
   return unread;
@@ -3411,6 +3413,8 @@ async function handleApi(req, res, url) {
       createdAt: now.toISOString(),
     });
     markChatRead(db, fixture.id, user.id, now);
+    // Email and in-app notices go to the other player in the fixture. A division
+    // admin's message reaches both players. Staff are not notified.
     const recipientIds = [...new Set([Number(fixture.homeId), Number(fixture.awayId)].filter((id) => id && id !== Number(user.id)))];
     const leagueName = leagueTitle(db, db.leagues.find((league) => league.id === fixture.leagueId) || { name: "your league", regionalId: 0 });
     const preview = cleaned.text.length > 160 ? `${cleaned.text.slice(0, 157)}...` : cleaned.text;
