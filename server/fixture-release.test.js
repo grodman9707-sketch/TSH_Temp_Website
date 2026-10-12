@@ -247,6 +247,10 @@ try {
 
   const appJs = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
   check("fixtures tab explains the Sunday GMT drop", appJs.includes("Sunday at 12:00am GMT"));
+  check(
+    "fixtures tab keeps the current week on screen and offers earlier weeks in a menu",
+    appJs.includes('data-act="fixture-week"') && appJs.includes("PREVIOUS WEEKS") && appJs.includes("selectFixtureWeek")
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

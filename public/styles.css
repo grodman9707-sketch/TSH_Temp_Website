@@ -1499,6 +1499,24 @@ input, select, textarea {
   justify-content: flex-end;
   gap: 0.45rem;
 }
+.fixture-week-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+.fixture-week-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: min(100%, 16rem);
+  flex: 1 1 16rem;
+  max-width: 22rem;
+}
+.fixture-week-select select {
+  width: 100%;
+}
 .chat-icon-btn {
   position: relative;
   display: inline-flex;
