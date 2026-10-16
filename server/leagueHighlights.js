@@ -125,10 +125,26 @@ export function leagueHighlights(divisions) {
   }
   const openers = tablesToOpen(boards, focusWeek);
   const second = openerSentence(openers);
+  const pulse = weekPulse(week);
   return {
     title: "Around the league",
-    paragraphs: [paragraph, second].filter((parts) => parts.length),
+    paragraphs: [paragraph, second, pulse].filter((parts) => parts.length),
   };
+}
+
+function weekPulse(matches) {
+  const divisions = new Set(matches.map((match) => match.division.name));
+  const washes = matches.filter((match) => match.whitewash).length;
+  const deciders = matches.filter((match) => match.decider).length;
+  const bits = [];
+  if (divisions.size === 1) bits.push("All of that landed in one division, and the rest of the league still felt it.");
+  else bits.push(`${divisions.size === 2 ? "Two" : divisions.size} divisions put a result on the board.`);
+  if (washes === 1) bits.push("One whitewash, the kind of scoreline that follows you around.");
+  else if (washes > 1) bits.push(`${washes === 2 ? "Two" : washes} whitewashes, the kind of scoreline that follows you around.`);
+  if (deciders === 1) bits.push("One match went the distance.");
+  else if (deciders > 1) bits.push(`${deciders === 2 ? "Two" : deciders} matches went the distance.`);
+  bits.push("Bring that into the next one. The table is paying attention.");
+  return [text(bits.join(" "))];
 }
 
 function leadStory(matches) {
@@ -151,7 +167,12 @@ function leadSentence(lead, names) {
   const bits = [text(`${who} ${verb} in `), link(match.division.name, match.division.href)];
   if (lead.avg) bits.push(text(", the highest average of the week"));
   bits.push(text("."));
-  if (match.whitewash || lead.avg) bits.push(text(` Enjoy it, ${spoken(who, names)}.`));
+  if (match.whitewash || lead.avg) {
+    bits.push(text(` Enjoy it, ${spoken(who, names)}.`));
+    bits.push(text(" The rest of the league just heard that one. Build on it."));
+  } else if (match.decider) {
+    bits.push(text(" A last-leg win is still a win, and it feels even better when it was close."));
+  }
   return bits;
 }
 
@@ -174,11 +195,11 @@ function finishSentence(finish) {
   if (!finish.won && finish.match.decider) {
     return [
       link(division.name, division.href),
-      text(` still owns the finish: ${who} lost a last-leg decider and walked off with a ${finish.checkout} checkout.`),
+      text(` still owns the finish: ${who} lost a last-leg decider and walked off with a ${finish.checkout} checkout. The points went the other way. The story stayed with that finish.`),
     ];
   }
   const action = finish.won ? `${who} closed a ${finish.match.score} with a ${finish.checkout} checkout` : `${who} walked off with a ${finish.checkout} checkout`;
-  return [link(division.name, division.href), text(` has the finish of the week: ${action}.`)];
+  return [link(division.name, division.href), text(` has the finish of the week: ${action}. That is the one people will still be talking about.`)];
 }
 
 function tablesToOpen(divisions, focusWeek) {
@@ -208,10 +229,10 @@ function openReason(division, focusWeek) {
     if (!bestShot || rank > bestShot.rank) bestShot = { challenger, leader, rank };
   }
   if (leaders.length > 1) {
-    return { score: 3, clause: `where ${nameList(leaders.map((row) => clean(row.name)))} are joint top` };
+    return { score: 3, clause: `where ${nameList(leaders.map((row) => clean(row.name)))} are joint top and neither is giving an inch` };
   }
   if (bestShot && bestShot.rank >= Math.max(division.rows.length - 2, Math.ceil(division.rows.length * 0.6))) {
-    return { score: 2, clause: `where ${bestShot.challenger} has a shot at ${bestShot.leader}` };
+    return { score: 2, clause: `where ${bestShot.challenger} has a shot at ${bestShot.leader} from down the table` };
   }
   return null;
 }
@@ -224,6 +245,6 @@ function openerSentence(openers) {
     parts.push(link(opener.division.name, opener.division.href));
     parts.push(text(`, ${opener.clause}`));
   });
-  parts.push(text("."));
+  parts.push(text(". Open them. That is where this week gets decided."));
   return parts;
 }

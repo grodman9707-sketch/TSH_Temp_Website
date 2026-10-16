@@ -136,10 +136,10 @@ export function divisionReview({ divisionName, standings, fixtures }) {
 
   if (!played.length) {
     const opening = visible.filter((fixture) => Number(fixture.week) === (publicWeek || 1));
-    const paragraphs = ["Nothing is on the table yet. The first published results will write this."];
+    const paragraphs = ["Nothing is on the table yet. The loudest kind of quiet. The first published results will write this, so make the first one worth reading."];
     if (opening.length) {
       const cards = opening.map((fixture) => `${clean(fixture.homeName)} against ${clean(fixture.awayName)}`);
-      paragraphs.push(`First up: ${nameList(cards)}. Come back when those land.`);
+      paragraphs.push(`First up: ${nameList(cards)}. Come back when those land. Somebody is about to put a name on this division.`);
     }
     return { title, paragraphs };
   }
@@ -154,15 +154,21 @@ export function divisionReview({ divisionName, standings, fixtures }) {
   const when = resultsAreCurrent ? "This week" : `In week ${resultsWeek}`;
 
   const paragraphs = [];
-  paragraphs.push(leaderParagraph({ leaders, weekPlayed, weekWaiting, when, names }));
+  paragraphs.push(leaderParagraph({ leaders, weekPlayed, weekWaiting, when, names, rows }));
 
   const featured = new Set();
   for (const match of weekPlayed) {
     if ([...leaderNames].some((name) => match.involves(name))) featured.add(match);
   }
   const rest = weekPlayed.filter((match) => !featured.has(match));
+  const middleBits = [];
+  if (weekPlayed.length > 1) {
+    const word = wordNum(weekPlayed.length);
+    middleBits.push(`${word.charAt(0).toUpperCase()}${word.slice(1)} matches landed, and the table felt every one of them.`);
+  }
   const middle = otherMatchesParagraph(rest);
-  if (middle) paragraphs.push(middle);
+  if (middle) middleBits.push(middle);
+  if (middleBits.length) paragraphs.push(middleBits.join(" "));
 
   const ahead = forwardParagraph({
     forward,
@@ -181,31 +187,44 @@ export function divisionReview({ divisionName, standings, fixtures }) {
   return { title, paragraphs };
 }
 
-function leaderParagraph({ leaders, weekPlayed, weekWaiting, when, names }) {
-  if (leaders.length > 1) return jointLeaderParagraph({ leaders, weekPlayed, weekWaiting, when, names });
+function chaseLine(rows, leaders) {
+  if (!rows?.length || !leaders?.length) return "";
+  if (leaders.length > 1) return "";
+  const leader = leaders[0];
+  const chaser = rows.find((row) => clean(row.name) !== clean(leader.name) && num(row.played) > 0);
+  if (!chaser) return "";
+  const gap = num(leader.points) - num(chaser.points);
+  if (gap <= 0) return "";
+  if (gap === 1) return ` ${clean(chaser.name)} is a single point back. One good night flips the table.`;
+  if (gap <= 4) return ` ${clean(chaser.name)} is ${gap} points back, close enough to hear the footsteps.`;
+  return ` ${clean(chaser.name)} is ${gap} points back. The gap is real. It is not a cushion.`;
+}
+
+function leaderParagraph({ leaders, weekPlayed, weekWaiting, when, names, rows }) {
+  if (leaders.length > 1) return jointLeaderParagraph({ leaders, weekPlayed, weekWaiting, when, names, rows });
   const leader = leaders[0];
   const leaderName = clean(leader.name);
-  let text = `${leaderName} is top after ${recordPhrase(leader)}.`;
+  let text = `${leaderName} is top after ${recordPhrase(leader)}. The rest of the division is looking up at that.`;
   const match = weekPlayed.find((item) => item.involves(leaderName));
   if (match) {
     text += ` ${singleResultSentence(match, leaderName, when, names, weekPlayed)}`;
-    return text;
+    return `${text}${chaseLine(rows, leaders)}`;
   }
   const waiting = weekWaiting.find((fixture) => clean(fixture.homeName) === leaderName || clean(fixture.awayName) === leaderName);
   if (waiting) {
     const opponent = clean(waiting.homeName) === leaderName ? clean(waiting.awayName) : clean(waiting.homeName);
-    text += ` ${spoken(leaderName, names)} against ${opponent} has not landed yet, so the lead is not finished.`;
-    return text;
+    text += ` ${spoken(leaderName, names)} against ${opponent} has not landed yet, so the lead is not finished. Get it played. The table is waiting.`;
+    return `${text}${chaseLine(rows, leaders)}`;
   }
   if (!weekPlayed.length) text += " The lead is waiting on a published result.";
-  return text;
+  return `${text}${chaseLine(rows, leaders)}`;
 }
 
-function jointLeaderParagraph({ leaders, weekPlayed, weekWaiting, when, names }) {
+function jointLeaderParagraph({ leaders, weekPlayed, weekWaiting, when, names, rows }) {
   const leaderNames = leaders.map((row) => clean(row.name));
   const unbeaten = leaders.every((row) => num(row.won) === num(row.played) && num(row.played) > 0);
   const unbeatenWord = leaders.length === 2 ? "both unbeaten" : "all unbeaten";
-  let text = `${nameList(leaderNames)} are joint top${unbeaten ? `, ${unbeatenWord}` : ""}.`;
+  let text = `${nameList(leaderNames)} are joint top${unbeaten ? `, ${unbeatenWord}` : ""}. Nobody is blinking. The next win takes that lead outright.`;
   const bits = [];
   for (const row of leaders) {
     const match = weekPlayed.find((item) => item.involves(row.name));
@@ -216,9 +235,9 @@ function jointLeaderParagraph({ leaders, weekPlayed, weekWaiting, when, names })
   const waiting = weekWaiting.filter((fixture) => leaderNames.includes(clean(fixture.homeName)) || leaderNames.includes(clean(fixture.awayName)));
   if (waiting.length) {
     const fixture = waiting[0];
-    text += ` ${clean(fixture.homeName)} against ${clean(fixture.awayName)} has not landed yet, so the joint lead is not finished.`;
+    text += ` ${clean(fixture.homeName)} against ${clean(fixture.awayName)} has not landed yet, so the joint lead is not finished. The week stays open until it lands.`;
   }
-  return text;
+  return `${text}${chaseLine(rows, leaders)}`;
 }
 
 function jointResultBit(match, name, names, weekPlayed) {
@@ -242,9 +261,9 @@ function singleResultSentence(match, name, when, names, weekPlayed) {
   let line = extras ? `${when} ${who} ${verb}, ${extras}.` : `${when} ${who} ${verb}.`;
   const checkout = checkoutOf(match.fixture, match.side(name));
   const highlight = match.whitewash || extras.includes("best average") || extras.includes("180") || checkout >= 100;
-  if (highlight) line += ` Enjoy it, ${who}.`;
-  if (checkout > 0 && checkout < 80) line += ` A ${checkout} checkout is the one bit of that win you would quietly redo.`;
-  else if (checkout >= 100) line += ` A ${checkout} checkout finished it in style.`;
+  if (highlight) line += ` Enjoy it, ${who}. That is a week you can build a season on.`;
+  if (checkout > 0 && checkout < 80) line += ` A ${checkout} checkout is the one bit of that win you would quietly redo. The legs still count. Make the finish prettier next time.`;
+  else if (checkout >= 100) line += ` A ${checkout} checkout finished it in style. Tell people about that one.`;
   return line;
 }
 
@@ -311,6 +330,16 @@ function otherMatchesParagraph(matches) {
     sentences.push(`${match.winner} edged ${match.loser} ${match.score}.`);
     used.add(match);
   }
+  if (deciders.length) {
+    const routine = matches.filter((match) => !match.decider);
+    if (routine.length === 1 && sentences.length < 5) {
+      const pick = routine[0];
+      const verb = pick.whitewash ? `put ${pick.loser} away ${pick.score}` : `beat ${pick.loser} ${pick.score}`;
+      sentences.push(`${pick.winner} ${verb}, and made it look routine. No drama. Just the points.`);
+    } else if (routine.length > 1 && sentences.length < 5) {
+      sentences.push(`${nameList(routine.map((match) => match.winner))} also got the job done. The week was not only the close ones.`);
+    }
+  }
   if (!deciders.length) {
     const pick = [...matches].sort((a, b) => b.winnerLegs - b.loserLegs - (a.winnerLegs - a.loserLegs))[0];
     const verb = pick.whitewash ? `put ${pick.loser} away ${pick.score}` : `beat ${pick.loser} ${pick.score}`;
@@ -338,13 +367,13 @@ function forwardParagraph({ forward, forwardWeek, resultsAreCurrent, weekPlayed,
   const otherWaiting = weekWaiting.filter((fixture) => !featuredWaiting.includes(fixture));
   if (otherWaiting.length === 1) {
     const fixture = otherWaiting[0];
-    sentences.push(`${clean(fixture.homeName)} against ${clean(fixture.awayName)} has not landed yet, so the table is not finished for the week.`);
+    sentences.push(`${clean(fixture.homeName)} against ${clean(fixture.awayName)} has not landed yet, so the table is not finished for the week. Get it played. People are watching the gap.`);
   } else if (otherWaiting.length > 1) {
-    sentences.push(`${otherWaiting.length} matches have not landed yet, so the table is not finished for the week.`);
+    sentences.push(`${otherWaiting.length} matches have not landed yet, so the table is not finished for the week. The picture changes when they do.`);
   }
 
   if (!forward.length) {
-    if (!sentences.length && resultsAreCurrent) sentences.push("Next week is not on the board yet. The table will be waiting when it drops.");
+    if (!sentences.length && resultsAreCurrent) sentences.push("Next week is not on the board yet. The table will be waiting when it drops. Come back ready.");
     return sentences.join(" ");
   }
 
@@ -358,7 +387,7 @@ function forwardParagraph({ forward, forwardWeek, resultsAreCurrent, weekPlayed,
     const opener = scraped ? `${challenger}, fresh off that scrape, gets ${leader}.` : `${clean(shot.challenger)} gets ${leader}.`;
     const rank = rankOf(rows, shot.challenger);
     const nearBottom = rank != null && rank >= Math.max(rows.length - 2, Math.ceil(rows.length * 0.75));
-    stories.push(`${opener} ${nearBottom ? "A player near the bottom, with a direct shot at the leader." : "A direct shot at the leader."}`);
+    stories.push(`${opener} ${nearBottom ? "A player near the bottom, with a direct shot at the leader." : "A direct shot at the leader."} Take it. That is how tables turn.`);
     used.add(pairKey(shot.fixture));
   }
 
@@ -366,13 +395,13 @@ function forwardParagraph({ forward, forwardWeek, resultsAreCurrent, weekPlayed,
   if (answer) {
     const where = placeWord(rankOf(rows, answer.opponent));
     const spot = where ? ` in ${where}` : "";
-    stories.push(`${clean(answer.victim)} gets ${clean(answer.opponent)}${spot}, and a chance to answer the ${answer.score}.`);
+    stories.push(`${clean(answer.victim)} gets ${clean(answer.opponent)}${spot}, and a chance to answer the ${answer.score}. Different week. Different story. Go and write it.`);
     used.add(pairKey(answer.fixture));
   }
 
   const hunting = firstWinMatch(forward, rows, used);
   if (hunting) {
-    stories.push(`${clean(hunting.player)}, still looking for a first win, plays ${clean(hunting.opponent)}.`);
+    stories.push(`${clean(hunting.player)}, still looking for a first win, plays ${clean(hunting.opponent)}. First wins change how a season feels. This is the chance to get one.`);
     used.add(pairKey(hunting.fixture));
   }
 
@@ -382,7 +411,7 @@ function forwardParagraph({ forward, forwardWeek, resultsAreCurrent, weekPlayed,
   }
 
   const intro = resultsAreCurrent ? "Next week is worth coming back for." : `Week ${forwardWeek} is the one to come back for.`;
-  const closer = stories.length === 1 ? "That one moves the table." : `One of those ${stories.length === 2 ? "two" : "three"} moves the table.`;
+  const closer = stories.length === 1 ? "That one moves the table. Be there for it." : `One of those ${stories.length === 2 ? "two" : "three"} moves the table. Show up like it matters, because it does.`;
   return [sentences.join(" "), intro, ...stories, closer].filter(Boolean).join(" ");
 }
 

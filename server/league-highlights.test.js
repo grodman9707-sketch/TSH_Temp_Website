@@ -60,6 +60,8 @@ check("the winner gets the wink", sampleText.includes("Enjoy it, Allan."));
 check("another division can own the finish", sampleText.includes("Division 4 still owns the finish") && sampleText.includes("Bobby Barnes lost a last-leg decider and walked off with a 120 checkout"));
 check("joint leaders and a shot at the top are the tables to open", sampleText.includes("Division 2, where Allan Sargent and Danny Robbins are joint top") && sampleText.includes("Division 4, where Carl Langridge has a shot at James Dixon"));
 check("division names link through", sample.paragraphs[0].some((part) => part.text === "Division 2" && part.href.endsWith("/leagues/10")));
+check("the lead asks the winner to build on it", sampleText.includes("Enjoy it, Allan.") && sampleText.includes("Build on it"));
+check("the week pulse keeps the league moving", sampleText.includes("Two divisions put a result on the board") && sampleText.includes("The table is paying attention"));
 
 const hidden = leagueHighlights([
   {
