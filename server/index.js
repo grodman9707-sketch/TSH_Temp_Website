@@ -2069,6 +2069,12 @@ function migrate(db) {
       f.resubmitRequest = null;
       changed = true;
     }
+    if (typeof f.staffNotice !== "string") {
+      f.staffNotice = "";
+      f.staffNoticeAt = "";
+      f.staffNoticeBy = null;
+      changed = true;
+    }
     if (!("bye" in f)) {
       f.bye = false;
       changed = true;
@@ -2170,6 +2176,9 @@ function fixtureScheduleLabel(f) {
 function flagOn(v) {
   return v === true || v === "1" || v === "on" || v === "true";
 }
+function cleanFixtureNotice(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
 function skipsVisitorAccept(db, f) {
   return Boolean(f && flagOn(f.skipVisitorAccept));
 }
@@ -2231,6 +2240,9 @@ function withNames(db, f) {
     weekStart: f.weekStart || f.date || "",
     releaseAt: fixtureReleaseAt(f)?.toISOString() || null,
     released: isFixtureReleased(f),
+    staffNotice: cleanFixtureNotice(f.staffNotice),
+    staffNoticeAt: f.staffNotice ? f.staffNoticeAt || "" : "",
+    staffNoticeByName: f.staffNotice ? shotByName(db, f.staffNoticeBy) || "" : "",
   };
   delete named.screenshotFile;
   delete named.screenshot1File;
@@ -2277,6 +2289,9 @@ function newFixture(partial) {
     opponentVerifiedAt: null,
     statsDisputeNote: "",
     resubmitRequest: null,
+    staffNotice: "",
+    staffNoticeAt: "",
+    staffNoticeBy: null,
     bye: false,
     notify: { newHomeAt: null, newAwayAt: null, weekHomeAt: null, weekAwayAt: null, remind30At: null },
     ...partial,
@@ -4510,6 +4525,37 @@ async function handleApi(req, res, url) {
         fixtureId: fixture.id,
         leagueId: fixture.leagueId,
       });
+      writeDb(db);
+      return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
+    }
+    const noticeMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/notice$/);
+    if (method === "POST" && noticeMatch) {
+      const fixture = db.fixtures.find((f) => f.id === Number(noticeMatch[1]));
+      if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
+      if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      const text = cleanFixtureNotice(body.text);
+      if (text.length > 400) return json(res, 400, { ok: false, error: "Keep the notice to 400 characters" });
+      const homeLabel = fixtureSideLabel(db, fixture, "home") || "Home";
+      const awayLabel = fixtureSideLabel(db, fixture, "away") || "Away";
+      if (!text) {
+        fixture.staffNotice = "";
+        fixture.staffNoticeAt = "";
+        fixture.staffNoticeBy = null;
+        recordStaff(db, user, "clear_fixture_notice", {
+          summary: `Cleared the notice on ${homeLabel} vs ${awayLabel}`,
+          fixtureId: fixture.id,
+          leagueId: fixture.leagueId,
+        });
+      } else {
+        fixture.staffNotice = text;
+        fixture.staffNoticeAt = new Date().toISOString();
+        fixture.staffNoticeBy = user.id;
+        recordStaff(db, user, "fixture_notice", {
+          summary: `Posted a notice on ${homeLabel} vs ${awayLabel}: ${text.slice(0, 80)}`,
+          fixtureId: fixture.id,
+          leagueId: fixture.leagueId,
+        });
+      }
       writeDb(db);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
