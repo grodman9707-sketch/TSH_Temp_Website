@@ -51,7 +51,9 @@ check("best average and 180 are only mentioned when saved", text.includes("best 
 check("small checkout is the needle", text.includes("A 69 checkout is the one bit of that win you would quietly redo"));
 check("last-leg loss can still own the finish", text.includes("Bobby still walked off with a 120 checkout") && text.includes("Kieren has the points. Bobby has the moment."));
 check("scruffy decider stays light", text.includes("Carl Langridge nicked Stuart Barton 5–4 the scruffy way"));
-check("comfortable 5–2 is not required", !text.includes("Terry Thompson beat") && !text.includes("Riaan"));
+check("a routine win still gets a line", text.includes("Terry Thompson beat Riaan Roux 5–2") && text.includes("made it look routine"));
+check("the chase is close enough to feel", text.includes("Bobby Barnes is 3 points back, close enough to hear the footsteps"));
+check("the week asks people to show up", text.includes("Show up like it matters"));
 check("next public week is the hook", text.includes("Week 3 is the one to come back for"));
 check("bottom player gets the leader", text.includes("Carl, fresh off that scrape, gets James") && text.includes("direct shot at the leader"));
 check("whitewash gets an answer", text.includes("Ben Ward gets Bobby Barnes in second") && text.includes("answer the 5–0"));
