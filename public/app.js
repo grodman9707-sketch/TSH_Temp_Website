@@ -53,6 +53,8 @@ const state = {
   editingDivisionId: null,
   deskFolds: {},
   manageLeagueOpenIds: [],
+  noticeLeagueOpenIds: [],
+  noticeFixtureId: null,
   overrideLeagueId: "",
   overrideFixtureId: null,
 };
@@ -668,6 +670,34 @@ function fixtureWhen(f) {
   else if (f.when) bits.push(f.when);
   return bits.join(" · ");
 }
+function fixtureNoticeText(f) {
+  return String(f?.staffNotice || "").replace(/\s+/g, " ").trim();
+}
+function fixtureNoticeBlock(f) {
+  const text = fixtureNoticeText(f);
+  if (!text) return "";
+  const who = String(f.staffNoticeByName || "").trim();
+  return `<div class="fixture-notice" role="note">
+      <div class="text-xs font-bold tracking-widest gold">FIXTURE NOTICE${who ? ` · ${esc(who)}` : ""}</div>
+      <p class="mt-1 text-sm leading-relaxed">${esc(text)}</p>
+    </div>`;
+}
+function fixtureNoticeAlerts(fixtures, skipId) {
+  const items = (fixtures || []).filter((f) => fixtureNoticeText(f) && Number(f.id) !== Number(skipId));
+  if (!items.length) return "";
+  return panel(
+    `<div class="fixture-notice-list">${items
+      .map(
+        (f) => `<a class="fixture-notice-link" href="/my-matches?fixture=${f.id}">
+          <span class="text-xs font-bold tracking-widest gold">FIXTURE NOTICE</span>
+          <span class="mt-1 block text-sm font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureWhen(f))}</span>
+          <span class="mt-1 block text-sm leading-relaxed">${esc(fixtureNoticeText(f))}</span>
+        </a>`
+      )
+      .join("")}</div>`,
+    "mt-6"
+  );
+}
 function playerChatNotices() {
   return (state.chatUnread || []).filter((item) => item.notify !== false);
 }
@@ -971,6 +1001,11 @@ document.addEventListener(
       const id = Number(el.getAttribute("data-manage-league-id"));
       const cur = Array.isArray(state.manageLeagueOpenIds) ? state.manageLeagueOpenIds.map(Number) : [];
       state.manageLeagueOpenIds = el.open ? [...new Set([...cur, id])] : cur.filter((x) => x !== id);
+    }
+    if (el.hasAttribute("data-notice-league-id")) {
+      const id = Number(el.getAttribute("data-notice-league-id"));
+      const cur = Array.isArray(state.noticeLeagueOpenIds) ? state.noticeLeagueOpenIds.map(Number) : [];
+      state.noticeLeagueOpenIds = el.open ? [...new Set([...cur, id])] : cur.filter((x) => x !== id);
     }
   },
   true
@@ -1611,6 +1646,7 @@ function leagueFixtureCard(f) {
           <div class="mt-1 font-semibold">${esc(f.homeName)} vs ${esc(f.awayName)}</div>
           ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ""}</div>` : ""}
           ${proposalLine}
+          ${fixtureNoticeBlock(f)}
           ${actions}
         </div>
         <div class="shrink-0 fixture-side">${fixtureChatIcon(f)}${fixtureStatus(f)}</div>
@@ -1977,6 +2013,7 @@ async function pageDashboard() {
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
       ${chatNoticeBanner()}
+      ${fixtureNoticeAlerts(d.fixtures, next?.id)}
       ${
         u.communityJoinPending
           ? panel(
@@ -2000,6 +2037,7 @@ async function pageDashboard() {
         ${panel(`<div class="text-xs tracking-widest text-muted">NEXT MATCH</div><div class="mt-2 font-semibold">${next ? `${esc(next.homeName)} vs ${esc(next.awayName)}` : d.nextFixtureReleaseAt ? "Drops Sunday 12:00am GMT" : "None scheduled"}</div>${
           next
             ? `<div class="mt-2 flex items-center justify-between gap-2"><div class="text-xs text-muted">${esc(fixtureWhen(next))}</div>${fixtureChatIcon(next)}</div>
+               ${fixtureNoticeBlock(next)}
                ${scheduleActions(next)}
                <div class="mt-3 flex flex-wrap gap-2">
                  ${
@@ -2106,6 +2144,7 @@ async function pageMyMatches() {
                       ? `<div class="mt-1 text-xs gold">${f.scheduleStatus === "agreed" ? `Agreed kickoff ${esc(scheduleWhen(f))}` : "You can submit the result now."}</div>`
                       : `<div class="mt-1 text-xs text-muted">Home player still needs to propose a date and time.</div>`
                 }
+                ${fixtureNoticeBlock(f)}
                 ${scheduleActions(f)}
                 </div>
                 ${action}
@@ -2138,7 +2177,7 @@ async function pagePlayer(id) {
         <p class="mt-2 break-words text-muted">${esc((d.leagues || []).map((l) => l.title || l.name).join(" · ") || d.league?.name || "Awaiting division")} · Avg ${esc(d.player.avg)}${(d.player.injuredLeagueIds || []).length ? " · Injured" : ""}</p></div></div>`)}
       ${Number(state.user?.id) === Number(d.player?.id) ? panel(`<h2 class="text-lg font-bold">Player profile</h2>${leagueChangeInner(state.user)}`, "mt-6") : ""}
       <div class="mt-4 space-y-3">${d.fixtures
-        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div></div><div class="shrink-0 fixture-side">${fixtureChatIcon(f)}<div class="font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div></div>`))
+        .map((f) => panel(`<div class="split-row"><div class="min-w-0">${esc(f.homeName)} vs ${esc(f.awayName)}<div class="text-xs text-muted">${esc(f.date)}</div>${fixtureNoticeText(f) ? `<div class="fixture-notice mt-2"><div class="text-xs font-bold tracking-widest gold">FIXTURE NOTICE</div><p class="mt-1 text-sm leading-relaxed">${esc(fixtureNoticeText(f))}</p></div>` : ""}</div><div class="shrink-0 fixture-side">${fixtureChatIcon(f)}<div class="font-bold gold">${isByeFixture(f) ? "BYE" : f.status === "played" ? `${f.homeLegs}–${f.awayLegs}` : f.status === "submitted" ? "In review" : f.status === "pending_verify" ? "To verify" : "TBD"}</div></div></div>`))
         .join("")}</div>
     </div>`,
     { arena: true }
@@ -2615,6 +2654,62 @@ function manageFixturesDesk(d, allLeagueOptions) {
       <div class="structure-folds">${folds}</div>`,
   });
 }
+function fixtureNoticeEditor(f) {
+  const live = fixtureNoticeText(f);
+  return `<form class="fixture-notice-form" data-form="FIXTURENOTICE" data-id="${f.id}">
+      <label>Notice for the players
+        <textarea name="text" maxlength="400" rows="3" placeholder="Overdue, extension granted, or anything else they should know">${esc(live)}</textarea>
+      </label>
+      <div class="manage-fixture-edit-actions">
+        <button class="btn-gold" type="submit">SAVE NOTICE</button>
+        <button class="btn-ghost" type="button" data-act="notice-fixture" data-id="${f.id}">CLOSE</button>
+      </div>
+      <p class="manage-fixture-edit-note">Players see this on the fixture, on My Matches, and on the Player Hub. Clear the box and save to remove it.</p>
+    </form>`;
+}
+function fixtureNoticesDesk(d) {
+  const groups = fixturesGroupedByLeague(d.fixtures, d.leagues);
+  const openIds = new Set((state.noticeLeagueOpenIds || []).map(Number));
+  const editingId = Number(state.noticeFixtureId) || 0;
+  const liveCount = (d.fixtures || []).filter((f) => fixtureNoticeText(f)).length;
+  const folds = groups.length
+    ? groups
+        .map((g) => {
+          const title = g.league.title || g.league.name || "League";
+          const rows = g.fixtures
+            .map((f) => {
+              const open = editingId === Number(f.id);
+              const live = fixtureNoticeText(f);
+              return `<div class="structure-div-row manage-fixture-row">
+                  <div class="manage-fixture-main">
+                    <span>S${esc(f.season || 1)} W${esc(f.week)} · ${esc(f.homeName)} vs ${esc(f.awayName)} · ${esc(fixtureDeskStatus(f))}${live ? " · notice on" : ""}</span>
+                    <button type="button" class="btn-ghost" data-act="notice-fixture" data-id="${f.id}">${open ? "CLOSE" : live ? "EDIT NOTICE" : "ADD NOTICE"}</button>
+                  </div>
+                  ${live && !open ? `<p class="fixture-notice-live">${esc(live)}</p>` : ""}
+                  ${open ? fixtureNoticeEditor(f) : ""}
+                </div>`;
+            })
+            .join("");
+          return `<details class="structure-fold" data-notice-league-id="${g.league.id}"${openIds.has(Number(g.league.id)) ? " open" : ""}>
+            <summary>
+              <span class="structure-fold-copy">
+                <span class="structure-fold-title">${esc(title)}</span>
+                <span class="structure-fold-meta">${g.fixtures.length} match${g.fixtures.length === 1 ? "" : "es"}</span>
+              </span>
+            </summary>
+            <div class="structure-fold-body">${rows}</div>
+          </details>`;
+        })
+        .join("")
+    : `<p class="text-sm text-muted">No fixtures yet. Add a match, then attach a notice here.</p>`;
+  return deskFold({
+    id: "fixture-notices",
+    title: "Fixture notices",
+    meta: liveCount ? `${liveCount} live` : "none live",
+    body: `<p class="text-sm text-muted">Owners, Head Admins, and Division Admins can leave a note on a match. Use it when a fixture is overdue, an extension has been given, or the players should know anything else. It shows on that fixture for the players and on the division fixtures list.</p>
+      <div class="structure-folds">${folds}</div>`,
+  });
+}
 function overwriteStatsDesk(d) {
   const leagues = d.allLeagues || d.leagues || [];
   const leagueId = Number(state.overrideLeagueId) || Number(leagues[0]?.id) || 0;
@@ -3066,6 +3161,7 @@ async function pageAdmin() {
             <button class="btn-gold md:col-span-2"${mode === "individual" && (!leagueId || divisionPlayers.length < 1) ? " disabled" : ""}>${mode === "individual" ? "ADD FIXTURE" : "GENERATE FIXTURES"}</button>
           </form>`;
         })()}`, "mt-4")}
+      ${panel(fixtureNoticesDesk(d), "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
         <p class="mt-1 text-sm text-muted">Players can get an email, a text, or a lock-screen alert when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, and about 30 minutes before an agreed kickoff (each in their own local time). Email uses the existing mail setup. Texts need a verified phone number. Lock-screen alerts need the player to tap Enable alerts on this phone. On iPhone they add the site to the Home Screen first. Send yourself a test for each channel.</p>
         <div class="mt-3 flex flex-wrap gap-2">
@@ -3404,6 +3500,21 @@ document.addEventListener("click", async (e) => {
     const id = Number(editFixture.dataset.id);
     state.editingFixtureId = Number(state.editingFixtureId) === id ? null : id;
     state.deskFolds = { ...(state.deskFolds || {}), "manage-fixtures": true };
+    render();
+    return;
+  }
+  const noticeFixture = e.target.closest("[data-act=notice-fixture]");
+  if (noticeFixture) {
+    e.preventDefault();
+    const id = Number(noticeFixture.dataset.id);
+    state.noticeFixtureId = Number(state.noticeFixtureId) === id ? null : id;
+    const fold = noticeFixture.closest("[data-notice-league-id]");
+    if (fold) {
+      const leagueId = Number(fold.getAttribute("data-notice-league-id"));
+      const cur = Array.isArray(state.noticeLeagueOpenIds) ? state.noticeLeagueOpenIds.map(Number) : [];
+      state.noticeLeagueOpenIds = [...new Set([...cur, leagueId])];
+    }
+    state.deskFolds = { ...(state.deskFolds || {}), "fixture-notices": true };
     render();
     return;
   }
@@ -3945,6 +4056,19 @@ document.addEventListener("submit", async (e) => {
         : fd.skipVisitorAccept
           ? "Fixture created. Visitor accept is skipped for this match only."
           : "Fixture created.";
+      render();
+    } else if (kind === "FIXTURENOTICE") {
+      const text = String(fd.text || "").trim();
+      await api(`/api/admin/fixtures/${form.dataset.id}/notice`, { method: "POST", body: JSON.stringify({ text }) });
+      const fold = form.closest("[data-notice-league-id]");
+      if (fold) {
+        const leagueId = Number(fold.getAttribute("data-notice-league-id"));
+        const cur = Array.isArray(state.noticeLeagueOpenIds) ? state.noticeLeagueOpenIds.map(Number) : [];
+        state.noticeLeagueOpenIds = [...new Set([...cur, leagueId])];
+      }
+      state.noticeFixtureId = text ? Number(form.dataset.id) : null;
+      state.deskFolds = { ...(state.deskFolds || {}), "fixture-notices": true };
+      state.notice = text ? "Fixture notice saved. Players can see it on that match." : "Fixture notice removed.";
       render();
     } else if (kind === "SKIPACCEPT") {
       await api(`/api/admin/fixtures/${form.dataset.id}/skip-accept`, { method: "POST", body: JSON.stringify(fd) });
