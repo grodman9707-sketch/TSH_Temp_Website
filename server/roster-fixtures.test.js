@@ -92,12 +92,21 @@ child.stderr.on("data", (buf) => {
 try {
   await waitHealth(port, child);
   const division = await fetch(`http://127.0.0.1:${port}/api/leagues/9`).then((res) => res.json());
-  const bye = (division.fixtures || []).find((f) => f.week === 1 && f.bye && f.homeName === "Roy Butcher");
+  const bye = (division.fixtures || []).find((f) => f.week === 1 && f.homeName === "Roy Butcher");
   const played = (division.fixtures || []).find((f) => f.id === 1);
-  check("division page shows Roy's week 1 bye", bye?.awayName === "Bye" && bye?.weekStart === "2026-09-21");
+  check(
+    "division page shows Roy's week 1 bye as a 5-0 once week 2 is out",
+    bye?.awayName === "Bye" &&
+      bye?.weekStart === "2026-09-21" &&
+      bye?.byeAwarded === true &&
+      bye?.status === "played" &&
+      bye?.homeLegs === 5 &&
+      bye?.awayLegs === 0
+  );
   check("the played week 1 score is unchanged", played?.homeLegs === 5 && played?.awayLegs === 1 && played?.homeName === "Tony duggan");
   const stored = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8"));
-  check("the repair is marked done", stored.structure?.rosterWeekByesFilled === true && stored.fixtures.filter((f) => f.week === 1 && f.bye).length === 1);
+  const roy = stored.fixtures.find((f) => f.week === 1 && f.homeId === 63);
+  check("the repair is marked done", stored.structure?.rosterWeekByesFilled === true && roy?.byeAwarded === true && roy?.homeLegs === 5 && roy?.awayLegs === 0);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

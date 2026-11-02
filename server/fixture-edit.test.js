@@ -8,6 +8,11 @@ import { fileURLToPath } from "url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+function thisSundayYmd() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - now.getUTCDay())).toISOString().slice(0, 10);
+}
+
 let failures = 0;
 function check(name, cond) {
   if (cond) console.log(`  ok  - ${name}`);
@@ -160,16 +165,17 @@ try {
   });
   check("a played match cannot be turned into a bye", byeBlocked.status === 400);
 
+  const openWeek = thisSundayYmd();
   const open = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId, homeId: home.id, awayId: away.id, week: 2, date: "2026-09-28", season: 1 },
+    body: { leagueId, homeId: home.id, awayId: away.id, week: 2, date: openWeek, season: 1 },
   });
   const openId = open.data.fixture?.id;
   const asBye = await api(port, `/api/admin/fixtures/${openId}`, {
     method: "POST",
     token: ownerTok,
-    body: { week: 2, weekStart: "2026-09-28", date: "2026-09-28", homeId: home.id, awayId: "bye" },
+    body: { week: 2, weekStart: openWeek, date: openWeek, homeId: home.id, awayId: "bye" },
   });
   check("an unplayed match can be edited into a bye", asBye.status === 200 && asBye.data.fixture?.bye === true && asBye.data.fixture?.status === "bye" && asBye.data.fixture?.awayName === "Bye");
 

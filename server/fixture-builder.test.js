@@ -8,6 +8,11 @@ import { fileURLToPath } from "url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+function thisSundayYmd() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - now.getUTCDay())).toISOString().slice(0, 10);
+}
+
 let failures = 0;
 function check(name, cond) {
   if (cond) console.log(`  ok  - ${name}`);
@@ -150,7 +155,7 @@ try {
   const bye = await api(port, "/api/admin/fixtures", {
     method: "POST",
     token: ownerTok,
-    body: { leagueId: 9, homeId: players[0], awayId: "bye", week: 4, date: "2026-08-02" },
+    body: { leagueId: 9, homeId: players[0], awayId: "bye", week: 4, date: thisSundayYmd() },
   });
   check(
     "individual fixture can be a bye",

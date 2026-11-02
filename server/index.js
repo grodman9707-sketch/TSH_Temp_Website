@@ -12,6 +12,7 @@ import { standingsForLeague } from "./standings.js";
 import { injuredLeagueIds, isInjuredIn } from "./injury.js";
 import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
+import { awardByeWin, awardDueByeWins, clearByeAward } from "./byeAward.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
 import { runDueNotifications, sendEmail, deliverNotification, alertsConfigStatus, matchChatDeliveries } from "./notifications.js";
 import { sendSms } from "./sms.js";
@@ -1345,9 +1346,16 @@ function releaseOpenMatch(fixture) {
   fixture.resubmitRequest = null;
   fixture.confirmedBy = null;
   fixture.confirmedAt = null;
+  fixture.byeAwarded = false;
+  fixture.byeAwardedAt = null;
   fixture.bye = true;
   fixture.status = "bye";
   fixture.notify = freshFixtureNotify();
+}
+function undoByeAward(fixture) {
+  if (!clearByeAward(fixture)) return false;
+  clearMatchStats(fixture);
+  return true;
 }
 function rememberVacatedSeat(byLeague, leagueId, seat) {
   const lid = Number(leagueId);
@@ -1584,6 +1592,7 @@ function restoreInjuryHolds(db, user, leagueId) {
     const holds = Array.isArray(fixture.injuryHolds) ? fixture.injuryHolds : [];
     const mine = holds.filter((hold) => Number(hold.userId) === uid);
     if (!mine.length) continue;
+    if (fixture.byeAwarded) undoByeAward(fixture);
     if (fixture.status !== "played") {
       for (const hold of mine) {
         const side = hold.side === "away" ? "away" : "home";
@@ -1661,7 +1670,14 @@ function claimVacantSeat(db, user, leagueId) {
     const fixture = (db.fixtures || []).find((item) => Number(item.id) === Number(seat.fixtureId));
     if (!fixture || Number(fixture.leagueId) !== lid) continue;
     if (seat.side !== "home" && seat.side !== "away") continue;
-    if (seat.played || fixture.status === "played") {
+    // A default bye win is provisional. Filling the empty side clears it.
+    // Filling the side that already has the win keeps that scoreline.
+    if (fixture.byeAwarded && !seat.played) undoByeAward(fixture);
+    else if (fixture.byeAwarded && seat.played) {
+      fixture.byeAwarded = false;
+      fixture.byeAwardedAt = null;
+    }
+    if ((seat.played || fixture.status === "played") && !fixture.byeAwarded) {
       if (seat.side === "home") {
         fixture.homeId = user.id;
         fixture.homeArchiveName = "";
@@ -2102,6 +2118,7 @@ function migrate(db) {
     if (setStructureFlag(db, "weekGridAligned")) changed = true;
   }
   if (syncInjuryVacancies(db)) changed = true;
+  if (awardDueByeWins(db)) changed = true;
   if (changed) writeDb(db);
 }
 
@@ -2191,7 +2208,7 @@ function fixtureSideLabel(db, f, side) {
     if (archive) return archive;
     return undefined;
   }
-  if (f.bye || f.status === "bye") return "Bye";
+  if (f.bye || f.status === "bye" || f.byeAwarded) return "Bye";
   return archive || undefined;
 }
 function withNames(db, f) {
@@ -2666,6 +2683,7 @@ function sendExport(res, status, data, extraHeaders = {}) {
 
 async function handleApi(req, res, url) {
   const db = readDb();
+  if (awardDueByeWins(db)) writeDb(db);
   const method = req.method;
   const p = url.pathname;
   if (method === "OPTIONS" && p.startsWith("/api/export")) {
@@ -4355,6 +4373,8 @@ async function handleApi(req, res, url) {
       if (legsError) return json(res, 400, { ok: false, error: legsError });
       const wasPlayed = fixture.status === "played";
       applyMatchStats(fixture, body);
+      fixture.byeAwarded = false;
+      fixture.byeAwardedAt = null;
       fixture.status = "played";
       fixture.confirmedBy = user.id;
       fixture.confirmedAt = new Date().toISOString();
@@ -4481,10 +4501,20 @@ async function handleApi(req, res, url) {
       const fixture = db.fixtures.find((f) => f.id === Number(clearMatch[1]));
       if (!fixture) return json(res, 404, { ok: false, error: "Fixture not found" });
       if (!managesLeague(user, fixture.leagueId)) return json(res, 403, { ok: false, error: "Not your league" });
+      const wasByeWin = Boolean(fixture.byeAwarded);
       clearMatchStats(fixture);
-      fixture.status = shotCount(fixture) >= 2 ? "submitted" : "scheduled";
+      fixture.byeAwarded = false;
+      fixture.byeAwardedAt = null;
       fixture.confirmedBy = null;
       fixture.confirmedAt = null;
+      if (wasByeWin && !(Number(fixture.homeId) && Number(fixture.awayId))) {
+        fixture.bye = true;
+        fixture.status = "bye";
+        awardByeWin(fixture, db.fixtures, new Date());
+      } else {
+        fixture.status = shotCount(fixture) >= 2 ? "submitted" : "scheduled";
+        fixture.bye = false;
+      }
       recordStaff(db, user, "clear_result", {
         summary: `Cleared result for ${shotByName(db, fixture.homeId) || "Home"} vs ${shotByName(db, fixture.awayId) || "Away"}`,
         fixtureId: fixture.id,
@@ -4572,7 +4602,8 @@ async function handleApi(req, res, url) {
       const homeBye = String(body.homeId || "").trim().toLowerCase() === "bye";
       const awayBye = String(body.awayId || "").trim().toLowerCase() === "bye";
       if (homeBye && awayBye) return json(res, 400, { ok: false, error: "A bye needs one player" });
-      const played = fixture.status === "played";
+      const provisionalBye = Boolean(fixture.byeAwarded);
+      const played = fixture.status === "played" && !provisionalBye;
       if (played && (homeBye || awayBye)) return json(res, 400, { ok: false, error: "A played match needs both players" });
       const resolveSide = (raw, isBye) => {
         if (isBye) return { user: null };
@@ -4605,7 +4636,8 @@ async function handleApi(req, res, url) {
         releaseOpenMatch(fixture);
         fixture.homeId = homeSide.user?.id || null;
         fixture.awayId = awaySide.user?.id || null;
-      } else if (fixture.status === "bye") {
+      } else if (provisionalBye || fixture.status === "bye") {
+        if (provisionalBye) undoByeAward(fixture);
         fixture.bye = false;
         fixture.status = "scheduled";
         fixture.notify = freshFixtureNotify();
@@ -4764,11 +4796,12 @@ function startNotificationLoop(intervalMs = 60000) {
       let outbox = [];
       try {
         const db = readDb();
+        const awarded = awardDueByeWins(db);
         const result = runDueNotifications(db, new Date());
         outbox = result.outbox;
         // Persist the dedupe markers before sending so a crash/restart never
         // re-sends. The write waits behind any request that is already saving.
-        if (result.changed) writeDb(db);
+        if (awarded || result.changed) writeDb(db);
       } catch (err) {
         console.error("Notification poll failed:", err);
         return;

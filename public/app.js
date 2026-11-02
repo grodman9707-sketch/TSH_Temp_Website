@@ -554,6 +554,7 @@ function isByeFixture(f) {
   return Boolean(f && (f.bye || f.status === "bye"));
 }
 function fixtureStatus(f) {
+  if (f.byeAwarded && f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
   if (isByeFixture(f)) return `<div class="text-xs font-bold tracking-widest gold">BYE</div>`;
   if (f.status === "played") return `<div class="text-2xl font-extrabold gold">${f.homeLegs} – ${f.awayLegs}</div>`;
   if (f.status === "submitted") return `<div class="text-xs font-bold tracking-widest gold">AWAITING ADMIN</div>`;
@@ -585,7 +586,7 @@ function shotDraftFor(id) {
 }
 function screenshotUploader(f) {
   if (isByeFixture(f)) {
-    return `<div class="text-left sm:text-right"><div class="text-xs font-bold tracking-widest gold">BYE</div><div class="mt-1 text-xs text-muted">No match this week.</div></div>`;
+    return `<div class="text-left sm:text-right"><div class="text-xs font-bold tracking-widest gold">BYE</div><div class="mt-1 text-xs text-muted">5–0 is added when the next week is released.</div></div>`;
   }
   if (f.status === "played") return fixtureStatus(f);
   if (f.status === "submitted") {
@@ -1614,7 +1615,9 @@ function leagueFixtureCard(f) {
   const bye = isByeFixture(f);
   const proposed = !bye && f.scheduleStatus === "proposed" && f.proposedDate;
   const proposalLine = bye
-    ? `<div class="mt-1 text-xs text-muted">Bye week. No match to play.</div>`
+    ? `<div class="mt-1 text-xs text-muted">Bye week. A 5–0 win is added when the next week is released, unless this spot is filled.</div>`
+    : f.byeAwarded
+      ? `<div class="mt-1 text-xs text-muted">Bye win, 5–0.</div>`
     : proposed
       ? `<div class="mt-1 text-xs gold">${esc(f.proposedByName || "Home player")} proposed ${esc(scheduleWhen(f))}${
           isAwayPlayer(f) ? " · waiting on you to accept" : isHomePlayer(f) ? " · waiting on the visitor" : ""
@@ -2122,7 +2125,11 @@ async function pageMyMatches() {
                 ${f.resubmitRequested ? `<div class="mt-1 text-xs gold">Resubmit requested${f.resubmitNote ? `: ${esc(f.resubmitNote)}` : ". Submit the screenshots and stats again."}</div>` : ""}
                 <div class="mt-1 text-xs text-muted">${
                   isByeFixture(f)
-                    ? "Bye week. No match to arrange."
+                    ? "Bye week. A 5–0 win is added when the next week is released, unless this spot is filled."
+                    : f.byeAwarded
+                    ? "Bye win. Counted as 5–0 when the next week was released."
+                    : f.status === "played"
+                    ? "Result confirmed."
                     : f.status === "pending_verify"
                     ? needsMyVerify(f)
                       ? "Check the screenshots and stats, then verify or send them back."
@@ -2132,7 +2139,7 @@ async function pageMyMatches() {
                     : `${f.screenshotCount || 0}/2 screenshots uploaded`
                 }</div>
                 ${
-                  isByeFixture(f)
+                  isByeFixture(f) || f.status === "played"
                     ? ""
                     : f.status === "submitted"
                     ? `<div class="mt-1 text-xs gold">Awaiting admin approval. Stats hit the table after that.</div>`
@@ -2536,6 +2543,7 @@ function collapsiblePanel({ id, title, body, extra = "", meta = "", startOpen = 
   </details>`;
 }
 function fixtureDeskStatus(f) {
+  if (f.status === "played" && f.byeAwarded) return `${f.homeLegs}–${f.awayLegs} bye`;
   if (f.status === "played") return `${f.homeLegs}–${f.awayLegs}`;
   if (f.status === "submitted") return "awaiting admin";
   if (f.status === "pending_verify") return "awaiting opponent";
@@ -2578,7 +2586,7 @@ function manageFixturePlayerOptions(players, selectedId) {
   return `${bye}${rest}`;
 }
 function manageFixtureEditForm(f, players) {
-  const played = f.status === "played";
+  const played = f.status === "played" && !f.byeAwarded;
   return `<form class="manage-fixture-edit" data-form="EDITFIXTURE" data-id="${f.id}">
       <label>Week<input name="week" type="number" min="1" required value="${esc(f.week || 1)}"></label>
       <label>Week starts<input name="weekStart" type="date" required value="${esc(String(f.weekStart || f.date || "").slice(0, 10))}"></label>
@@ -2597,7 +2605,13 @@ function manageFixtureEditForm(f, players) {
         <button class="btn-ghost" type="button" data-act="edit-fixture" data-id="${f.id}">CLOSE</button>
       </div>
     </form>
-    ${played ? `<p class="manage-fixture-edit-note">Saving keeps this result. Change the legs here if the score should change. Remove deletes the match.</p>` : `<p class="manage-fixture-edit-note">Choose Bye on one side to give that player the week off. Week starts is the Sunday the fixture is released.</p>`}`;
+    ${
+      played
+        ? `<p class="manage-fixture-edit-note">Saving keeps this result. Change the legs here if the score should change. Remove deletes the match.</p>`
+        : f.byeAwarded
+          ? `<p class="manage-fixture-edit-note">This 5–0 is the default bye win. It is added when the next week is released. Choose a player for the open spot and save to turn it back into a match.</p>`
+          : `<p class="manage-fixture-edit-note">Choose Bye on one side to give that player the week off. The 5–0 win is added when the next week is released. Filling that spot puts the match back to a normal result. Week starts is the Sunday the fixture is released.</p>`
+    }`;
 }
 function manageFixturesDesk(d, allLeagueOptions) {
   const groups = fixturesGroupedByLeague(d.fixtures, d.allLeagues || d.leagues);
@@ -3080,7 +3094,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-muted">None waiting. When a player asks to withdraw or join the injured list, their name and email show up here.</p>`
         }`, "mt-6")}
       ${panel(`<h2 class="text-lg font-bold">Place a player</h2>
-        <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. Injured players are the shaded * rows on the division table. The number below is how many spots still need to be filled. If that division has a spot to fill, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then.</p>
+        <p class="mt-1 text-sm text-muted">Only players who are not in a division yet appear here, each once, with their 3DA. Place them in the International League. Injured players are the shaded * rows on the division table. The number below is how many spots still need to be filled. If that division has a spot to fill, this player takes over the fixtures left behind. Unplayed matches become theirs. On a match already played, they inherit only the legs. Average, 180s, and checkout do not move with them. The opponent keeps every stat from that match unless they are replaced too. Opponents have a bye until then. That bye becomes a 5–0 win when the next week is released. Filling the spot before or after that puts the match back to a normal result.</p>
         ${
           spotCards.length
             ? `<div class="spot-board">${spotCards
@@ -3187,14 +3201,14 @@ async function pageAdmin() {
           <button class="btn-gold">ADD PLAYER</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">REMOVE FROM LEAGUE</h3>
-        <p class="mt-1 text-xs text-muted">Choose one league, or keep “All of their leagues” to unplace them from every division. Unplayed matches become byes for the opponent until another player is placed in that division. Played results stay on the record.</p>
+        <p class="mt-1 text-xs text-muted">Choose one league, or keep “All of their leagues” to unplace them from every division. Unplayed matches become byes for the opponent until another player is placed in that division. A bye becomes a 5–0 win when the next week is released. Filling the spot puts that match back to a normal result. Played results stay on the record.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="UNPLACE">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
           <button class="btn-ghost">UNPLACE</button>
         </form>
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">INJURED LIST</h3>
-        <p class="mt-1 text-xs text-muted">They stay in the division. This opens a vacancy for their fixtures, the same as an open spot in Place a player. Return them before that vacancy is filled to put them back on those fixtures.</p>
+        <p class="mt-1 text-xs text-muted">They stay in the division. This opens a vacancy for their fixtures, the same as an open spot in Place a player. Return them before that vacancy is filled to put them back on those fixtures. A bye becomes a 5–0 for the opponent when the next week is released. Returning the player, or filling the spot, puts that match back to a normal result.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-3" data-form="INJURE">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => userLeagueIds(p).length).map(playerOption).join("")}</select>
           <select name="leagueId"><option value="">All of their leagues</option>${allLeagueOptions}</select>
@@ -3214,7 +3228,7 @@ async function pageAdmin() {
             : `<p class="mt-3 text-sm text-muted">No one is on the injured list.</p>`
         }
         <h3 class="mt-6 text-sm font-bold tracking-widest gold">DELETE PLAYER</h3>
-        <p class="mt-1 text-xs text-muted">Deletes the account. Unplayed matches become byes for the opponent until another player is placed in that division. Played results stay on the record. Owners cannot be deleted here.</p>
+        <p class="mt-1 text-xs text-muted">Deletes the account. Unplayed matches become byes for the opponent until another player is placed in that division. A bye becomes a 5–0 win when the next week is released. Filling the spot puts that match back to a normal result. Played results stay on the record. Owners cannot be deleted here.</p>
         <form class="mt-3 grid gap-3 md:grid-cols-2" data-form="DELETEPLAYER">
           <select name="userId" required><option value="">Player</option>${everyone.filter((p) => !hasRole(p, "owner")).map(playerOption).join("")}</select>
           <button class="btn-ghost">DELETE</button>
