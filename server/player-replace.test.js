@@ -10,6 +10,11 @@ import { fileURLToPath } from "url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let failures = 0;
+function thisSundayYmd() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - now.getUTCDay())).toISOString().slice(0, 10);
+}
+
 function check(name, cond) {
   if (cond) console.log(`  ok  - ${name}`);
   else {
@@ -117,7 +122,7 @@ try {
     return api(port, "/api/admin/fixtures", {
       method: "POST",
       token: ownerTok,
-      body: { leagueId, homeId, awayId, week, date: "2024-06-03", season: 1 },
+      body: { leagueId, homeId, awayId, week, date: thisSundayYmd(), season: 1 },
     });
   }
 
