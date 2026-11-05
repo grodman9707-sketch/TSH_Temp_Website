@@ -1,5 +1,6 @@
 // A bye stays a bye until the next week is released, then it is a 5-0.
-// Filling the open spot clears that default and the match is played for a result.
+// Filling the open spot after that gives the new player the win or loss.
+// Filling it earlier, or editing the players on the fixture, makes it a match.
 // Run: `node server/bye-award.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -253,15 +254,29 @@ try {
     token: ownerTok,
     body: { userId: cal, leagueId },
   });
-  check("the open spot is filled", filled.status === 200 && filled.data.filledSeat?.replacedName === "Ada Bye" && filled.data.filledSeat?.matches === 1);
+  check(
+    "the open spot is filled",
+    filled.status === 200 && filled.data.filledSeat?.replacedName === "Ada Bye" && filled.data.filledSeat?.playedRenamed === 1 && !filled.data.filledSeat?.matches
+  );
   const restored = (await api(port, "/api/admin/overview", { token: ownerTok })).data.fixtures.find((f) => f.id === matchId);
   const afterFill = await api(port, `/api/leagues/${leagueId}`);
   const beaAfter = (afterFill.data.standings || []).find((row) => row.playerId === bea);
+  const calAfter = (afterFill.data.standings || []).find((row) => row.playerId === cal);
   check(
-    "filling the spot puts the match back to a result",
-    restored?.byeAwarded !== true && restored?.status === "scheduled" && restored?.bye === false && restored?.homeId === cal && restored?.awayId === bea && restored?.homeLegs == null
+    "filling the spot keeps the 5-0 and gives it to the new player",
+    restored?.byeAwarded === true &&
+      restored?.status === "played" &&
+      restored?.bye === false &&
+      restored?.homeId === cal &&
+      restored?.homeName === "Cal Bye" &&
+      restored?.awayId === bea &&
+      restored?.homeLegs === 0 &&
+      restored?.awayLegs === 5
   );
-  check("the default win comes off the table", beaAfter?.played === 1 && beaAfter?.points === 7);
+  check(
+    "the opponent keeps the win and the new player takes the loss",
+    beaAfter?.played === 2 && beaAfter?.won === 2 && beaAfter?.points === 14 && calAfter?.played === 1 && calAfter?.lost === 1 && calAfter?.legsFor === 0 && calAfter?.legsAgainst === 5
+  );
 
   const edited = await api(port, `/api/admin/fixtures/${dueId}`, {
     method: "POST",
@@ -272,8 +287,13 @@ try {
     "putting a player on an awarded bye clears the 5-0",
     edited.status === 200 && edited.data.fixture?.status === "scheduled" && edited.data.fixture?.byeAwarded !== true && edited.data.fixture?.homeLegs == null && edited.data.fixture?.homeId === cal
   );
-  const clearedTable = (await api(port, `/api/leagues/${leagueId}`)).data.standings.find((row) => row.playerId === bea);
-  check("no default bye win remains", clearedTable?.played === 0 && clearedTable?.points === 0);
+  const clearedRows = (await api(port, `/api/leagues/${leagueId}`)).data.standings || [];
+  const clearedTable = clearedRows.find((row) => row.playerId === bea);
+  const calCleared = clearedRows.find((row) => row.playerId === cal);
+  check(
+    "editing that bye removes it, and the inherited result stays",
+    clearedTable?.played === 1 && clearedTable?.points === 7 && calCleared?.played === 1 && calCleared?.lost === 1
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);

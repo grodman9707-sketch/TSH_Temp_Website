@@ -3,7 +3,9 @@
  * A week 4 bye stays a bye during week 4. It becomes a 5–0 win for the
  * player who is there at 00:00 GMT on the Sunday week 5 is released. If that
  * next week is dated later than seven days on, the win waits for it. Filling
- * the open spot clears the default and the match is played for a real result.
+ * the spot before that Sunday makes it a match to play. Filling it after the
+ * 5–0 is on the table gives that win or loss to the new player. Editing the
+ * fixture and choosing the open player still clears the default.
  */
 
 import { fixtureReleaseAt } from "./fixtureRelease.js";

@@ -1,5 +1,6 @@
 // Standings list the players still in a division, and a move carries their
-// published record onto the new division. The opponent who stayed keeps theirs.
+// published record onto the new division until someone fills the seat they
+// left. The opponent who stayed keeps theirs.
 // Run: `node server/standings.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -233,9 +234,40 @@ try {
   });
   const afterFill = await api(port, "/api/admin/overview", { token: ownerTok });
   const kept = (afterFill.data.fixtures || []).find((item) => item.id === fixture.data.fixture.id);
-  const moverStill = ((await api(port, `/api/leagues/${toId}`)).data.standings || []).find((item) => item.playerId === moverId);
-  check("a later placement does not take the moved player's result", filled.status === 200 && !filled.data.filledSeat && kept?.homeId === moverId && kept?.status === "played");
-  check("the moved player still has that win after someone else joins the old division", moverStill?.won === 1 && moverStill?.points === 7 && moverStill?.avg === 61.2);
+  const oldAfter = (await api(port, `/api/leagues/${fromId}`)).data.standings || [];
+  const newAfter = (await api(port, `/api/leagues/${toId}`)).data.standings || [];
+  const fillerRow = oldAfter.find((item) => item.playerId === fillerId);
+  const stayFilled = oldAfter.find((item) => item.playerId === stayId);
+  const moverFilled = newAfter.find((item) => item.playerId === moverId);
+  const homeFilled = newAfter.find((item) => item.playerId === homeId);
+  check(
+    "the replacement inherits the moved player's result",
+    filled.status === 200 &&
+      filled.data.filledSeat?.playedRenamed === 1 &&
+      kept?.homeId === fillerId &&
+      kept?.status === "played" &&
+      kept?.homeLegs === 5 &&
+      kept?.awayLegs === 2 &&
+      !kept?.homeAvg &&
+      !kept?.homeOneEighties &&
+      kept?.awayAvg === 55.4 &&
+      kept?.awayOneEighties === 2
+  );
+  check(
+    "the old table is level after the seat is filled",
+    fillerRow?.played === 1 &&
+      fillerRow?.won === 1 &&
+      fillerRow?.points === 7 &&
+      fillerRow?.legsFor === 5 &&
+      fillerRow?.oneEighties === 0 &&
+      stayFilled?.played === 1 &&
+      stayFilled?.lost === 1 &&
+      stayFilled?.legsFor === 2 &&
+      stayFilled?.oneEighties === 2 &&
+      fillerRow?.played === stayFilled?.played &&
+      (fillerRow?.won || 0) + (stayFilled?.won || 0) === (fillerRow?.lost || 0) + (stayFilled?.lost || 0)
+  );
+  check("the moved player no longer carries that result once the seat is filled", moverFilled?.played === 0 && moverFilled?.won === 0 && homeFilled?.played === 0);
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
