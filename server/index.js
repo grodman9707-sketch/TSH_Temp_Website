@@ -1363,7 +1363,7 @@ function rememberVacatedSeat(byLeague, leagueId, seat) {
   bucket.push(seat);
   byLeague.set(lid, bucket);
 }
-function vacatePlayerFixtures(db, user, leagueId, { keepPlayed = false } = {}) {
+function vacatePlayerFixtures(db, user, leagueId) {
   ensureVacantSlots(db);
   const uid = Number(user?.id);
   const onlyLeague = Number(leagueId) || 0;
@@ -1375,10 +1375,9 @@ function vacatePlayerFixtures(db, user, leagueId, { keepPlayed = false } = {}) {
     if (!side) continue;
     if (onlyLeague && Number(fixture.leagueId) !== onlyLeague) continue;
     if (fixture.status === "played") {
-      // A move keeps the published result with this player. Their record
-      // follows them onto the new division table. Leaving the league still
-      // opens that result for the next player.
-      if (keepPlayed) continue;
+      // The score stays on this fixture, so a move still shows on the new
+      // table until the seat is filled. The next player inherits every
+      // decided result on the spot, back to week 1.
       if (side === "home") fixture.homeArchiveName = label;
       else fixture.awayArchiveName = label;
       rememberVacatedSeat(byLeague, fixture.leagueId, { fixtureId: fixture.id, side, played: true });
@@ -1655,6 +1654,20 @@ function clearPlayerInjury(db, user, leagueId) {
   }
   return { restored, leagueIds: ids };
 }
+function writeFixtureSide(fixture, side, userId) {
+  if (side === "home") {
+    fixture.homeId = userId;
+    fixture.homeArchiveName = "";
+  } else {
+    fixture.awayId = userId;
+    fixture.awayArchiveName = "";
+  }
+}
+function seatCountsAsPlayed(db, seat) {
+  if (seat?.played) return true;
+  const fixture = (db.fixtures || []).find((item) => Number(item.id) === Number(seat?.fixtureId));
+  return Boolean(fixture && fixture.status === "played");
+}
 function claimVacantSeat(db, user, leagueId) {
   ensureVacantSlots(db);
   const lid = Number(leagueId);
@@ -1666,40 +1679,31 @@ function claimVacantSeat(db, user, leagueId) {
   if (!slot) return null;
   let matches = 0;
   let playedRenamed = 0;
+  const samePlayer = Number(user.id) === Number(slot.userId);
   for (const seat of slot.seats || []) {
     const fixture = (db.fixtures || []).find((item) => Number(item.id) === Number(seat.fixtureId));
     if (!fixture || Number(fixture.leagueId) !== lid) continue;
     if (seat.side !== "home" && seat.side !== "away") continue;
-    // A default bye win is provisional. Filling the empty side clears it.
-    // Filling the side that already has the win keeps that scoreline.
-    if (fixture.byeAwarded && !seat.played) undoByeAward(fixture);
-    else if (fixture.byeAwarded && seat.played) {
+    // A 5–0 already on the table stays. The player filling the empty side
+    // takes that loss (or win) so the division's games played match back to
+    // week 1. A bye that has not been awarded yet is still their match.
+    const awardedToOpenSide = Boolean(fixture.byeAwarded && fixture.status === "played" && !seat.played);
+    if (fixture.byeAwarded && seat.played) {
       fixture.byeAwarded = false;
       fixture.byeAwardedAt = null;
     }
-    if ((seat.played || fixture.status === "played") && !fixture.byeAwarded) {
-      if (seat.side === "home") {
-        fixture.homeId = user.id;
-        fixture.homeArchiveName = "";
-      } else {
-        fixture.awayId = user.id;
-        fixture.awayArchiveName = "";
-      }
-      // The scoreline stays. The replacement takes only the legs on their
-      // side. Average, 180s, checkout, and visit bands from the player who
-      // left do not move. The opponent's side is left untouched.
-      clearSidePerformance(fixture, seat.side);
+    if (awardedToOpenSide || ((seat.played || fixture.status === "played") && !fixture.byeAwarded)) {
+      writeFixtureSide(fixture, seat.side, user.id);
+      // The scoreline stays, so the win or loss moves with the legs. Average,
+      // 180s, checkout, and visit bands from the player who left do not move.
+      // The same player taking their seat back keeps those stats. The
+      // opponent's side is left untouched.
+      if (!samePlayer) clearSidePerformance(fixture, seat.side);
       dropInjuryHold(fixture, slot.userId, seat.side);
       playedRenamed += 1;
       continue;
     }
-    if (seat.side === "home") {
-      fixture.homeId = user.id;
-      fixture.homeArchiveName = "";
-    } else {
-      fixture.awayId = user.id;
-      fixture.awayArchiveName = "";
-    }
+    writeFixtureSide(fixture, seat.side, user.id);
     const opponentId = fixtureSidePlayerId(fixture, otherFixtureSide(seat.side));
     if (opponentId) {
       fixture.bye = false;
@@ -1737,7 +1741,7 @@ function takenSeatPhrase(filledSeat) {
   const played = Number(filledSeat?.playedRenamed) || 0;
   const bits = [];
   if (open) bits.push(`${open} unplayed fixture${open === 1 ? "" : "s"}`);
-  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} (legs only)`);
+  if (played) bits.push(`${played} played result${played === 1 ? "" : "s"} (wins and losses)`);
   return `${filledSeat?.replacedName || "Player"}'s ${bits.join(" and ") || "open seat"}`;
 }
 function publicOpenSeats(db, user) {
@@ -1752,8 +1756,8 @@ function publicOpenSeats(db, user) {
       userId: Number(slot.userId) || null,
       leagueTitle: leagueTitle(db, db.leagues.find((l) => Number(l.id) === Number(slot.leagueId)) || { name: "Division", regionalId: 0 }),
       playerName: slot.name || "Player",
-      matches: (slot.seats || []).filter((seat) => !seat.played).length,
-      playedMatches: (slot.seats || []).filter((seat) => seat.played).length,
+      matches: (slot.seats || []).filter((seat) => !seatCountsAsPlayed(db, seat)).length,
+      playedMatches: (slot.seats || []).filter((seat) => seatCountsAsPlayed(db, seat)).length,
       createdAt: slot.createdAt || "",
     }));
 }
@@ -4172,7 +4176,7 @@ async function handleApi(req, res, url) {
       if (placeError) return json(res, 400, { ok: false, error: placeError });
       const afterLeagues = userLeagueIds(u);
       for (const id of beforeLeagues) {
-        if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id, { keepPlayed: true });
+        if (!afterLeagues.includes(id)) vacatePlayerFixtures(db, u, id);
       }
       syncInjuryVacancies(db);
       const filledSeat = alreadyThere ? null : claimVacantSeat(db, u, league.id);

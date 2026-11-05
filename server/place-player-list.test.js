@@ -216,7 +216,10 @@ try {
     placePlayerOptionLabel(choices.find((p) => p.id === pat.data.user.id)) === "Pat Waiting · 3DA 48.5"
   );
   const samSeats = (overview.data.openSeats || []).filter((seat) => Number(seat.userId) === Number(sam.data.user.id));
-  check("duplicate open seat collapses to one row", samSeats.length === 1 && samSeats[0].matches === 1 && samSeats[0].playerName === "Sam Placed");
+  check(
+    "duplicate open seat collapses to one row",
+    samSeats.length === 1 && samSeats[0].playedMatches === 1 && samSeats[0].matches === 0 && samSeats[0].playerName === "Sam Placed"
+  );
   const spotList = openSpotsByDivision(overview.data.openSeats, overview.data.allLeagues || []);
   const listed = spotList.find((row) => row.leagueId === leagueId);
   check(
@@ -236,7 +239,8 @@ try {
     "one placement fills the collapsed seat",
     seated.status === 200 &&
       seated.data.filledSeat?.replacedName === "Sam Placed" &&
-      seated.data.filledSeat?.matches === 1 &&
+      seated.data.filledSeat?.playedRenamed === 1 &&
+      !seated.data.filledSeat?.matches &&
       !(after.data.openSeats || []).some((seat) => Number(seat.userId) === Number(sam.data.user.id)) &&
       spotsAfter.find((row) => row.leagueId === leagueId)?.openSpots === 0
   );

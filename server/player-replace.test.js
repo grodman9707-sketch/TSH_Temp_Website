@@ -1,5 +1,6 @@
 // Removing a player turns their unplayed fixtures into byes. The next player
-// placed in that division takes over that seat without regenerating the draw.
+// placed in that division takes over that seat, including wins and losses
+// back to week 1, without regenerating the draw.
 // Run: `node server/player-replace.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -13,6 +14,11 @@ let failures = 0;
 function thisSundayYmd() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - now.getUTCDay())).toISOString().slice(0, 10);
+}
+
+function addUtcDays(ymd, days) {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 function check(name, cond) {
@@ -71,8 +77,8 @@ try {
   await waitHealth(port, child);
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  check("place form explains open seats", appJs.includes("takes over the fixtures left behind"));
-  check("played results pass on legs only", appJs.includes("they inherit only the legs"));
+  check("place form explains the inherited record", appJs.includes("takes over that spot from week 1") && appJs.includes("inherit the wins and losses"));
+  check("performance stats stay off the inherited record", appJs.includes("Average, 180s, and checkout do not move"));
   check("remove form explains byes", appJs.includes("Unplayed matches become byes for the opponent"));
   check("delete form keeps played results", appJs.includes("Played results stay on the record"));
 
@@ -475,6 +481,127 @@ try {
       restoredBye.find((f) => f.id === byeId)?.homeId === byePlayer.id &&
       restoredBye.find((f) => f.id === byeId)?.bye === true &&
       restoredBye.find((f) => f.id === weekMatch.data.fixture.id)?.awayId === byeMate.id
+  );
+
+  const levelLeague = await addDivision("Seat Level");
+  const levelAda = await addPlayer("Level Ada");
+  const levelBea = await addPlayer("Level Bea");
+  const levelDee = await addPlayer("Level Dee");
+  await place(levelAda.id, levelLeague);
+  await place(levelBea.id, levelLeague);
+  const past = addUtcDays(thisSundayYmd(), -14);
+  const sunday = thisSundayYmd();
+  async function levelFixture(week, date) {
+    return api(port, "/api/admin/fixtures", {
+      method: "POST",
+      token: ownerTok,
+      body: { leagueId: levelLeague, homeId: levelAda.id, awayId: levelBea.id, week, date, season: 1 },
+    });
+  }
+  const weekOne = await levelFixture(1, past);
+  const weekTwo = await levelFixture(2, past);
+  const weekThree = await levelFixture(3, sunday);
+  check("three weeks of the same pairing", weekOne.status === 200 && weekTwo.status === 200 && weekThree.status === 200);
+  const weekOneId = weekOne.data.fixture.id;
+  const weekTwoId = weekTwo.data.fixture.id;
+  const weekThreeId = weekThree.data.fixture.id;
+  const levelScored = await api(port, `/api/admin/fixtures/${weekOneId}/result`, {
+    method: "POST",
+    token: ownerTok,
+    body: { homeLegs: 5, awayLegs: 2, homeAvg: 61.2, awayAvg: 55.4, homeOneEighties: 1, awayOneEighties: 2 },
+  });
+  check("week 1 result is published", levelScored.status === 200 && levelScored.data.fixture?.status === "played");
+  await api(port, "/api/admin/unplace-player", { method: "POST", token: ownerTok, body: { userId: levelAda.id, leagueId: levelLeague } });
+  const adaBack = await place(levelAda.id, levelLeague);
+  const adaRows = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), levelLeague);
+  const adaWeekOne = adaRows.find((f) => f.id === weekOneId);
+  const adaWeekTwo = adaRows.find((f) => f.id === weekTwoId);
+  const adaWeekThree = adaRows.find((f) => f.id === weekThreeId);
+  check(
+    "returning to the seat keeps week 1 stats and takes the awarded loss",
+    adaBack.data.filledSeat?.replacedName === "Level Ada" &&
+      (adaBack.data.filledSeat?.playedRenamed || 0) >= 2 &&
+      adaBack.data.filledSeat?.matches === 1 &&
+      adaWeekOne?.homeId === levelAda.id &&
+      adaWeekOne?.homeLegs === 5 &&
+      adaWeekOne?.homeAvg === 61.2 &&
+      adaWeekOne?.homeOneEighties === 1 &&
+      adaWeekOne?.awayAvg === 55.4 &&
+      adaWeekTwo?.byeAwarded === true &&
+      adaWeekTwo?.status === "played" &&
+      adaWeekTwo?.homeId === levelAda.id &&
+      adaWeekTwo?.homeLegs === 0 &&
+      adaWeekTwo?.awayLegs === 5 &&
+      adaWeekThree?.status === "scheduled" &&
+      adaWeekThree?.homeId === levelAda.id &&
+      adaWeekThree?.awayId === levelBea.id &&
+      adaWeekThree?.bye === false
+  );
+  const adaTable = (await api(port, `/api/leagues/${levelLeague}`)).data.standings || [];
+  const adaBackRow = adaTable.find((row) => row.playerId === levelAda.id);
+  const beaBackRow = adaTable.find((row) => row.playerId === levelBea.id);
+  check(
+    "both players have the same games, wins, and losses after the return",
+    adaBackRow?.played === 2 &&
+      adaBackRow?.won === 1 &&
+      adaBackRow?.lost === 1 &&
+      adaBackRow?.oneEighties === 1 &&
+      adaBackRow?.avg === 61.2 &&
+      beaBackRow?.played === 2 &&
+      beaBackRow?.won === 1 &&
+      beaBackRow?.lost === 1 &&
+      beaBackRow?.oneEighties === 2 &&
+      beaBackRow?.avg === 55.4
+  );
+  await api(port, "/api/admin/unplace-player", { method: "POST", token: ownerTok, body: { userId: levelAda.id, leagueId: levelLeague } });
+  const deeIn = await place(levelDee.id, levelLeague);
+  const deeRows = leagueFixtures(await api(port, "/api/admin/overview", { token: ownerTok }), levelLeague);
+  const deeWeekOne = deeRows.find((f) => f.id === weekOneId);
+  const deeWeekTwo = deeRows.find((f) => f.id === weekTwoId);
+  const deeWeekThree = deeRows.find((f) => f.id === weekThreeId);
+  check(
+    "the replacement inherits week 1 and the awarded loss, and plays the open week",
+    deeIn.data.filledSeat?.replacedName === "Level Ada" &&
+      deeIn.data.filledSeat?.playedRenamed === 2 &&
+      deeIn.data.filledSeat?.matches === 1 &&
+      deeWeekOne?.homeId === levelDee.id &&
+      deeWeekOne?.homeLegs === 5 &&
+      deeWeekOne?.awayLegs === 2 &&
+      !deeWeekOne?.homeAvg &&
+      !deeWeekOne?.homeOneEighties &&
+      deeWeekOne?.awayAvg === 55.4 &&
+      deeWeekOne?.awayOneEighties === 2 &&
+      deeWeekTwo?.status === "played" &&
+      deeWeekTwo?.homeId === levelDee.id &&
+      deeWeekTwo?.homeLegs === 0 &&
+      deeWeekTwo?.awayLegs === 5 &&
+      deeWeekThree?.status === "scheduled" &&
+      deeWeekThree?.homeId === levelDee.id &&
+      deeWeekThree?.bye !== true
+  );
+  const levelTable = (await api(port, `/api/leagues/${levelLeague}`)).data.standings || [];
+  const deeRow = levelTable.find((row) => row.playerId === levelDee.id);
+  const beaRow = levelTable.find((row) => row.playerId === levelBea.id);
+  const wins = levelTable.reduce((sum, row) => sum + (row.won || 0), 0);
+  const losses = levelTable.reduce((sum, row) => sum + (row.lost || 0), 0);
+  check(
+    "the table stays level in games played and wins and losses",
+    levelTable.length === 2 &&
+      deeRow?.played === 2 &&
+      deeRow?.won === 1 &&
+      deeRow?.lost === 1 &&
+      deeRow?.legsFor === 5 &&
+      deeRow?.legsAgainst === 7 &&
+      deeRow?.oneEighties === 0 &&
+      deeRow?.avg === 48 &&
+      beaRow?.played === 2 &&
+      beaRow?.won === 1 &&
+      beaRow?.lost === 1 &&
+      beaRow?.legsFor === 7 &&
+      beaRow?.legsAgainst === 5 &&
+      beaRow?.oneEighties === 2 &&
+      wins === losses &&
+      wins === 2
   );
 } catch (err) {
   failures++;

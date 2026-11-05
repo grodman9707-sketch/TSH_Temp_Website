@@ -2,8 +2,10 @@ import { isInjuredIn } from "./injury.js";
 
 // Division tables list whoever is in that division now.
 // Each row is that player's own published results from the same regional,
-// so a move between divisions carries the record onto the new table.
-// The opponent who stayed keeps their side of the result where they are listed.
+// so a move between divisions carries the record onto the new table until
+// someone fills the seat they left. That replacement takes those results,
+// from week 1 through the latest decided week. The opponent who stayed
+// keeps their side of the result where they are listed.
 
 function userLeagueIds(user) {
   if (Array.isArray(user?.leagueIds)) return [...new Set(user.leagueIds.map(Number).filter(Boolean))];
