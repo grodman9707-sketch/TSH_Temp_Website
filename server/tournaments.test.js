@@ -95,7 +95,8 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=81") && html.includes("styles.css?v=81"));
+check("cache bust covers the new tab", html.includes("app.js?v=82") && html.includes("styles.css?v=82"));
+check("results can be entered from the tournament page", appJs.includes('data-form="TOURNAMENTRESULT"') && appJs.includes("The winner moves into the next round"));
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;
@@ -302,20 +303,75 @@ try {
 
   const semi = drawn.data.tournament.bracket.rounds[0].matches.find((match) => match.teamA?.name === "Bea Bolt" || match.teamB?.name === "Bea Bolt");
   const bolt = semi.teamA.name === "Bea Bolt" ? semi.teamA : semi.teamB;
+  const beaUser = seeds.find((person) => person.data.user.name === "Bea Bolt");
+  const calUser = seeds.find((person) => person.data.user.name === "Cal Croft");
+  const avaUser = seeds.find((person) => person.data.user.name === "Ava Ace");
   const badScore = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
     method: "POST",
     token: owner,
     body: { winnerTeamId: bolt.id, scoreA: semi.teamAId === bolt.id ? 1 : 4, scoreB: semi.teamAId === bolt.id ? 4 : 1 },
   });
   check("the winner must have the higher score", badScore.status === 400);
-  const semiWin = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
+  const blankScore = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: beaUser.data.token,
+    body: { winnerTeamId: bolt.id },
+  });
+  check("a result needs both scores", blankScore.status === 400);
+  const guestResult = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    body: { winnerTeamId: bolt.id, scoreA: 2, scoreB: 0 },
+  });
+  check("guests cannot enter a result", guestResult.status === 401);
+  const boltScore = { scoreA: semi.teamAId === bolt.id ? 3 : 1, scoreB: semi.teamAId === bolt.id ? 1 : 3 };
+  const semiWin = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: beaUser.data.token,
+    body: { winnerTeamId: bolt.id, ...boltScore },
+  });
+  check("a player in the match can enter the result", semiWin.status === 200 && semiWin.data.tournament.bracket.rounds[0].matches.find((match) => match.id === semi.id)?.canEnter === false);
+  const finalBefore = semiWin.data.tournament.bracket.rounds.at(-1).matches[0];
+  check("a semifinal result advances the winner", [finalBefore.teamA?.name, finalBefore.teamB?.name].includes("Bea Bolt"));
+  check("final is not ready until the other semi is played", !finalBefore.teamA || !finalBefore.teamB);
+  const outsider = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: avaUser.data.token,
+    body: { winnerTeamId: bolt.id, ...boltScore },
+  });
+  check("a player from another match cannot enter it", outsider.status === 403);
+  const calSide = semi.teamAId === bolt.id ? semi.teamBId : semi.teamAId;
+  const rival = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: calUser.data.token,
+    body: {
+      winnerTeamId: calSide,
+      scoreA: semi.teamAId === calSide ? 2 : 0,
+      scoreB: semi.teamAId === calSide ? 0 : 2,
+    },
+  });
+  check("the other player cannot overwrite a saved result", rival.status === 400);
+  const flipped = await api(port, `/api/tournaments/${singlesId}/matches/${semi.id}`, {
     method: "POST",
     token: owner,
-    body: { winnerTeamId: bolt.id, scoreA: semi.teamAId === bolt.id ? 3 : 1, scoreB: semi.teamAId === bolt.id ? 1 : 3 },
+    body: {
+      winnerTeamId: calSide,
+      scoreA: semi.teamAId === calSide ? 2 : 0,
+      scoreB: semi.teamAId === calSide ? 0 : 2,
+    },
   });
-  check("a semifinal result advances the winner", semiWin.status === 200);
-  const finalBefore = semiWin.data.tournament.bracket.rounds.at(-1).matches[0];
-  check("final is not ready until the other semi is played", !finalBefore.teamA || !finalBefore.teamB);
+  const flippedFinal = flipped.data.tournament.bracket.rounds.at(-1).matches[0];
+  const flippedNames = [flippedFinal.teamA?.name, flippedFinal.teamB?.name].filter(Boolean);
+  check(
+    "changing the result moves the new winner on",
+    flipped.status === 200 && flippedNames.includes("Cal Croft") && !flippedNames.includes("Bea Bolt")
+  );
+  const restored = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: bolt.id, ...boltScore },
+  });
+  const restoredFinal = restored.data.tournament.bracket.rounds.at(-1).matches[0];
+  check("staff can put the original winner back", restored.status === 200 && [restoredFinal.teamA?.name, restoredFinal.teamB?.name].includes("Bea Bolt"));
   const other = drawn.data.tournament.bracket.rounds[0].matches.find((match) => match.id !== semi.id);
   const aceSide = other.teamA.name === "Ava Ace" ? other.teamA : other.teamB;
   const otherWin = await api(port, `/api/admin/tournaments/${singlesId}/matches/${other.id}`, {
@@ -352,12 +408,14 @@ try {
     body: { title: "Bye Cup", format: "singles", startsAt: "2026-12-09T20:00", tz: "UTC" },
   });
   const byeId = byes.data.tournament.id;
+  const byePlayers = [];
   for (const [name, avg] of [
     ["Fay Fly", 90],
     ["Gil Glen", 70],
     ["Hal Hope", 50],
   ]) {
     const person = await register(port, name, avg);
+    byePlayers.push({ name, token: person.data.token });
     await api(port, `/api/tournaments/${byeId}/signup`, { method: "POST", token: person.data.token, body: {} });
   }
   const byeDraw = await api(port, `/api/admin/tournaments/${byeId}/bracket`, { method: "POST", token: owner, body: {} });
@@ -380,6 +438,81 @@ try {
   check(
     "bye winner meets the first-round winner",
     [byeFinal.teamA?.name, byeFinal.teamB?.name].sort().join(" vs ") === "Fay Fly vs Hal Hope"
+  );
+  const halToken = byePlayers.find((person) => person.name === "Hal Hope").token;
+  const playerClear = await api(port, `/api/tournaments/${byeId}/matches/${playable.id}`, {
+    method: "POST",
+    token: halToken,
+    body: { clear: true },
+  });
+  check("a player cannot clear a result", playerClear.status === 403);
+  const cleared = await api(port, `/api/tournaments/${byeId}/matches/${playable.id}`, {
+    method: "POST",
+    token: owner,
+    body: { clear: true },
+  });
+  const clearedFinal = cleared.data.tournament.bracket.rounds.at(-1).matches[0];
+  const clearedNames = [clearedFinal.teamA?.name, clearedFinal.teamB?.name].filter(Boolean);
+  check(
+    "clearing a result takes that player out of the next round",
+    cleared.status === 200 && clearedNames.includes("Fay Fly") && !clearedNames.includes("Hal Hope") && cleared.data.tournament.status === "brackets"
+  );
+  const locked = await api(port, `/api/tournaments/${byeId}/matches/${playable.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: underdog, scoreA: playable.teamAId === underdog ? 3 : 1, scoreB: playable.teamAId === underdog ? 1 : 3 },
+  });
+  const lockedFinal = locked.data.tournament.bracket.rounds.at(-1).matches[0];
+  const faySide = lockedFinal.teamA?.name === "Fay Fly" ? lockedFinal.teamAId : lockedFinal.teamBId;
+  const finalLocked = await api(port, `/api/tournaments/${byeId}/matches/${lockedFinal.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: faySide, scoreA: lockedFinal.teamAId === faySide ? 2 : 0, scoreB: lockedFinal.teamAId === faySide ? 0 : 2 },
+  });
+  check("the final can be played after the first round", finalLocked.status === 200 && finalLocked.data.tournament.championName === "Fay Fly");
+  const tooLate = await api(port, `/api/tournaments/${byeId}/matches/${playable.id}`, {
+    method: "POST",
+    token: owner,
+    body: { clear: true },
+  });
+  check("a later result locks the earlier one", tooLate.status === 400);
+
+  const legs = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Legs Cup", format: "singles", startsAt: "2026-12-10T20:00", tz: "UTC", bestOf: 5 },
+  });
+  const legsId = legs.data.tournament.id;
+  for (const [name, avg] of [
+    ["Ned Nock", 70],
+    ["Ora Oak", 40],
+  ]) {
+    const person = await register(port, name, avg);
+    await api(port, `/api/tournaments/${legsId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const legsDraw = await api(port, `/api/admin/tournaments/${legsId}/bracket`, { method: "POST", token: owner, body: {} });
+  const legsMatch = legsDraw.data.tournament.bracket.rounds[0].matches[0];
+  const ned = legsMatch.teamA.name === "Ned Nock" ? legsMatch.teamAId : legsMatch.teamBId;
+  const shortLegs = await api(port, `/api/tournaments/${legsId}/matches/${legsMatch.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: ned, scoreA: legsMatch.teamAId === ned ? 2 : 1, scoreB: legsMatch.teamAId === ned ? 1 : 2 },
+  });
+  check("best of 5 is first to 3", shortLegs.status === 400 && /first to 3/.test(shortLegs.data.error || ""));
+  const longLegs = await api(port, `/api/tournaments/${legsId}/matches/${legsMatch.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: ned, scoreA: legsMatch.teamAId === ned ? 4 : 1, scoreB: legsMatch.teamAId === ned ? 1 : 4 },
+  });
+  check("best of 5 rejects a score past first to 3", longLegs.status === 400);
+  const legsWin = await api(port, `/api/tournaments/${legsId}/matches/${legsMatch.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: ned, scoreA: legsMatch.teamAId === ned ? 3 : 2, scoreB: legsMatch.teamAId === ned ? 2 : 3 },
+  });
+  check(
+    "a finished final crowns the winner",
+    legsWin.status === 200 && legsWin.data.tournament.status === "complete" && legsWin.data.tournament.championName === "Ned Nock"
   );
 
   const mixed = await api(port, "/api/admin/tournaments", {
@@ -451,6 +584,17 @@ try {
   check("random doubles do not take partner requests", randomPartner.status === 400);
   const redraw = await api(port, `/api/admin/tournaments/${mixedId}/bracket`, { method: "POST", token: owner, body: { replace: true } });
   check("staff can redraw before any result", redraw.status === 200 && redraw.data.tournament.teams.every((team) => teamBands(team).join(",") === "high,low"));
+  const doublesMatch = redraw.data.tournament.bracket.rounds.at(-1).matches[0];
+  const doublesReporter = field.find((person) => doublesMatch.teamA.players.some((player) => player.name === person.name));
+  const doublesWin = await api(port, `/api/tournaments/${mixedId}/matches/${doublesMatch.id}`, {
+    method: "POST",
+    token: doublesReporter.token,
+    body: { winnerTeamId: doublesMatch.teamAId, scoreA: 2, scoreB: 1 },
+  });
+  check(
+    "a doubles partner can enter the result and finish the bracket",
+    doublesWin.status === 200 && doublesWin.data.tournament.status === "complete" && doublesWin.data.tournament.championName === doublesMatch.teamA.name
+  );
 
   const chosen = await api(port, "/api/admin/tournaments", {
     method: "POST",

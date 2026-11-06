@@ -1,4 +1,4 @@
-// Scheduled tournaments: signup, doubles pairing, and single-elimination brackets.
+// Scheduled tournaments: signup, doubles pairing, single-elimination brackets, and results.
 // Averages of 50.00 and above are the 50+ pool. Anything lower is the 50- pool.
 
 import { isValidTimeZone, wallStringToUtc } from "./timezones.js";
@@ -222,6 +222,8 @@ export function buildSingleElim(teams) {
         winnerTeamId: null,
         scoreA: null,
         scoreB: null,
+        reportedById: null,
+        reportedAt: null,
         status: "pending",
         nextMatchId: null,
         nextSlot: null,
@@ -601,10 +603,15 @@ export function generateTournamentBracket(db, id, { replace = false, rng = Math.
   return { status: 200, tournament, unpairedCount: unpaired.length };
 }
 
-function parseScores(body, winnerTeamId, match) {
+export function legsToWin(bestOf) {
+  const n = Number(bestOf);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.floor(n / 2) + 1;
+}
+
+function parseScores(body, winnerTeamId, match, bestOf) {
   const blank = (value) => value === undefined || value === null || String(value).trim() === "";
-  if (blank(body?.scoreA) && blank(body?.scoreB)) return { scoreA: null, scoreB: null };
-  if (blank(body?.scoreA) || blank(body?.scoreB)) return { error: "Enter both scores, or leave both blank" };
+  if (blank(body?.scoreA) || blank(body?.scoreB)) return { error: "Enter both scores" };
   const scoreA = Number(body.scoreA);
   const scoreB = Number(body.scoreB);
   if (!Number.isInteger(scoreA) || !Number.isInteger(scoreB) || scoreA < 0 || scoreB < 0 || scoreA > 99 || scoreB > 99) {
@@ -612,24 +619,70 @@ function parseScores(body, winnerTeamId, match) {
   }
   const winnerScore = winnerTeamId === match.teamAId ? scoreA : scoreB;
   const loserScore = winnerTeamId === match.teamAId ? scoreB : scoreA;
-  if (winnerScore <= loserScore) return { error: "The winner needs the higher score" };
+  const target = legsToWin(bestOf);
+  if (target != null) {
+    const limit = Number(bestOf);
+    if (winnerScore !== target || loserScore >= target) return { error: `Best of ${limit} is first to ${target}` };
+    if (winnerScore + loserScore > limit) return { error: `A best of ${limit} cannot have more than ${limit} legs` };
+  } else if (winnerScore <= loserScore) {
+    return { error: "The winner needs the higher score" };
+  }
   return { scoreA, scoreB };
 }
 
-export function recordTournamentResult(db, id, matchId, body) {
+function rosterTeam(tournament, teamId) {
+  return (tournament.teams || []).find((team) => team.id === teamId) || null;
+}
+
+function playerInMatch(tournament, match, userId) {
+  if (!userId) return false;
+  return [match.teamAId, match.teamBId].some((teamId) => {
+    const team = rosterTeam(tournament, teamId);
+    return Boolean(team && (team.playerIds || []).some((id) => Number(id) === Number(userId)));
+  });
+}
+
+function wantsClear(body) {
+  return body?.clear === true || body?.clear === 1 || body?.clear === "1";
+}
+
+export function recordTournamentResult(db, id, matchId, body, actor, { staff = false } = {}) {
   const tournament = findTournament(db, id);
   if (!tournament) return fail(404, "Tournament not found");
   if (!tournament.bracket) return fail(400, "Generate the bracket first");
   const match = findMatch(tournament.bracket.rounds, String(matchId || ""));
   if (!match) return fail(404, "Match not found");
+  if (wantsClear(body)) {
+    if (!staff) return fail(403, "Only league staff can clear a result");
+    if (match.status !== "complete") return fail(400, "That match has no result to clear");
+    if (downstreamHasComplete(tournament.bracket.rounds, match.id)) {
+      return fail(400, "A later match already has a result");
+    }
+    match.status = "pending";
+    match.winnerTeamId = null;
+    match.scoreA = null;
+    match.scoreB = null;
+    match.reportedById = null;
+    match.reportedAt = null;
+    settleBracket(tournament.bracket.rounds);
+    tournament.status = championTeamId(tournament.bracket) ? "complete" : "brackets";
+    return { status: 200, tournament, cleared: true };
+  }
   if (match.status === "bye") return fail(400, "That match is a bye");
   if (match.status === "empty") return fail(400, "That match has no players");
   if (!match.teamAId || !match.teamBId) return fail(400, "Both sides are not in yet");
+  if (!staff) {
+    if (!actor) return fail(401, "Login required");
+    if (!playerInMatch(tournament, match, actor.id)) {
+      return fail(403, "Only the players in this match can enter the result");
+    }
+    if (match.status === "complete") return fail(400, "This result is already in. Ask staff if it needs changing.");
+  }
   const winnerTeamId = String(body?.winnerTeamId || "");
   if (winnerTeamId !== match.teamAId && winnerTeamId !== match.teamBId) {
     return fail(400, "Winner must be one of the two sides");
   }
-  const scores = parseScores(body, winnerTeamId, match);
+  const scores = parseScores(body, winnerTeamId, match, tournament.bestOf);
   if (scores.error) return fail(400, scores.error);
   if (downstreamHasComplete(tournament.bracket.rounds, match.id)) {
     return fail(400, "A later match already has a result");
@@ -638,6 +691,8 @@ export function recordTournamentResult(db, id, matchId, body) {
   match.winnerTeamId = winnerTeamId;
   match.scoreA = scores.scoreA;
   match.scoreB = scores.scoreB;
+  match.reportedById = actor?.id ?? null;
+  match.reportedAt = new Date().toISOString();
   settleBracket(tournament.bracket.rounds);
   tournament.status = championTeamId(tournament.bracket) ? "complete" : "brackets";
   return { status: 200, tournament };
@@ -728,19 +783,27 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
         rounds: (tournament.bracket.rounds || []).map((round) => ({
           round: round.round,
           name: round.name,
-          matches: (round.matches || []).map((match) => ({
-            id: match.id,
-            status: match.status,
-            teamAId: match.teamAId || null,
-            teamBId: match.teamBId || null,
-            teamA: match.teamAId ? teamById.get(match.teamAId) || null : null,
-            teamB: match.teamBId ? teamById.get(match.teamBId) || null : null,
-            winnerTeamId: match.winnerTeamId || null,
-            scoreA: match.scoreA ?? null,
-            scoreB: match.scoreB ?? null,
-            nextMatchId: match.nextMatchId || null,
-            nextSlot: match.nextSlot || null,
-          })),
+          matches: (round.matches || []).map((match) => {
+            const inMatch = meId ? playerInMatch(tournament, match, meId) : false;
+            const unlocked = Boolean(match.teamAId && match.teamBId) && !downstreamHasComplete(tournament.bracket.rounds, match.id);
+            const reporter = match.reportedById ? playerView(findUser(db, match.reportedById)) : null;
+            return {
+              id: match.id,
+              status: match.status,
+              teamAId: match.teamAId || null,
+              teamBId: match.teamBId || null,
+              teamA: match.teamAId ? teamById.get(match.teamAId) || null : null,
+              teamB: match.teamBId ? teamById.get(match.teamBId) || null : null,
+              winnerTeamId: match.winnerTeamId || null,
+              scoreA: match.scoreA ?? null,
+              scoreB: match.scoreB ?? null,
+              nextMatchId: match.nextMatchId || null,
+              nextSlot: match.nextSlot || null,
+              reportedByName: reporter?.name || "",
+              canEnter: Boolean(unlocked && match.status === "pending" && (canManage || inMatch)),
+              canCorrect: Boolean(canManage && unlocked && match.status === "complete"),
+            };
+          }),
         })),
       }
     : null;

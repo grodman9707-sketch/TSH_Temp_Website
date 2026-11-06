@@ -2759,6 +2759,28 @@ function handleTournamentRoutes(res, db, user, method, p, body) {
     respondTournament(res, db, user, result);
     return true;
   }
+  const resultMatch = p.match(/^\/api\/tournaments\/(\d+)\/matches\/([A-Za-z0-9]+)$/);
+  if (method === "POST" && resultMatch) {
+    if (!user) {
+      json(res, 401, { ok: false, error: "Login required" });
+      return true;
+    }
+    const result = recordTournamentResult(db, resultMatch[1], resultMatch[2], body, user, { staff: isStaff(user) });
+    const title = tournamentTitle(result.tournament);
+    respondTournament(
+      res,
+      db,
+      user,
+      result,
+      !result.error && isStaff(user)
+        ? {
+            action: result.cleared ? "tournament_result_clear" : "tournament_result",
+            summary: result.cleared ? `Cleared a result in “${title}”` : `Recorded a result in “${title}”`,
+          }
+        : null
+    );
+    return true;
+  }
   return false;
 }
 
@@ -4813,10 +4835,12 @@ async function handleApi(req, res, url) {
     }
     const tournamentResultMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/matches\/([A-Za-z0-9]+)$/);
     if (method === "POST" && tournamentResultMatch) {
-      const result = recordTournamentResult(db, tournamentResultMatch[1], tournamentResultMatch[2], body);
+      const result = recordTournamentResult(db, tournamentResultMatch[1], tournamentResultMatch[2], body, user, { staff: true });
       return respondTournament(res, db, user, result, result.error ? null : {
-        action: "tournament_result",
-        summary: `Recorded a result in “${tournamentTitle(result.tournament)}”`,
+        action: result.cleared ? "tournament_result_clear" : "tournament_result",
+        summary: result.cleared
+          ? `Cleared a result in “${tournamentTitle(result.tournament)}”`
+          : `Recorded a result in “${tournamentTitle(result.tournament)}”`,
       });
     }
     const deleteNews = p.match(/^\/api\/admin\/announcements\/(\d+)\/delete$/);
