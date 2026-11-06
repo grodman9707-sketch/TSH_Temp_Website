@@ -914,12 +914,12 @@ async function api(path, options = {}) {
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
 }
-function go(path) {
+function go(path, notice = "") {
   history.pushState({}, "", path);
   state.path = String(path).split("#")[0] || "/";
   state.menu = false;
   state.error = "";
-  state.notice = "";
+  state.notice = notice || "";
   render();
 }
 async function loadNavTree(force = false) {
@@ -1117,6 +1117,7 @@ function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
     ["/regionals", "Regionals"],
+    ["/tournaments", "Tournaments"],
     ["/announcements", "News"],
     ["/rules", "Rules"],
     ["/about", "About Us"],
@@ -1437,7 +1438,7 @@ async function pageHome() {
         <div>
           <h3 class="text-lg font-bold">Join the league</h3>
           <p class="mt-3 text-sm text-muted">Free to enter. Create an account and we will place you by your DartCounter average.</p>
-          <div class="mt-4 flex flex-wrap gap-3"><a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/rules" class="btn-ghost">Rules</a></div>
+          <div class="mt-4 flex flex-wrap gap-3"><a href="/sign-in" class="btn-ghost">SIGN IN</a><a href="/sign-up" class="btn-gold">SIGN UP</a><a href="/tournaments" class="btn-ghost">Tournaments</a><a href="/rules" class="btn-ghost">Rules</a></div>
         </div>
       </div>
       <p class="mx-auto mt-10 max-w-5xl text-xs text-muted">© 2026 The Social Hub Darts League. All rights reserved.</p>
@@ -2360,6 +2361,11 @@ function staffActionLabel(action) {
     clear_injury: "Returned from injured list",
     post_news: "Posted news",
     delete_news: "Deleted news",
+    post_tournament: "Posted tournament",
+    update_tournament: "Updated tournament",
+    delete_tournament: "Removed tournament",
+    tournament_bracket: "Generated bracket",
+    tournament_result: "Recorded tournament result",
     add_region: "Added region",
     update_region: "Updated region",
     delete_region: "Removed region",
@@ -3012,6 +3018,7 @@ async function pageAdmin() {
             ? "Approve player-verified match stats, generate fixtures, and override another admin’s confirmed result when needed."
             : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
       }</p>
+      <p class="mt-3"><a href="/tournaments" class="text-sm font-bold tracking-widest gold">TOURNAMENTS →</a></p>
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${ownersPanel}
@@ -3244,6 +3251,305 @@ async function pageAdmin() {
   );
 }
 
+function pageFlash() {
+  return `${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}`;
+}
+function tournamentFormatLabel(t) {
+  if (t?.format === "doubles" && t?.partnerMode === "choose") return "Doubles · choose your partner";
+  if (t?.format === "doubles") return "Doubles · random 50+ with 50-";
+  return "Singles";
+}
+function tournamentStatusLabel(status) {
+  if (status === "brackets") return "Bracket live";
+  if (status === "complete") return "Complete";
+  return "Signup open";
+}
+function tournamentWhen(iso) {
+  if (!iso) return "Date to be announced";
+  return `${fmtInstant(iso)} ${tzAbbr(iso, BROWSER_TZ)}`.trim();
+}
+function tournamentMeta(t) {
+  const bits = [tournamentFormatLabel(t), tournamentWhen(t.startsAt)];
+  if (t.bestOf) bits.push(`Best of ${t.bestOf}`);
+  bits.push(t.capacity ? `${t.entryCount} / ${t.capacity} players` : `${t.entryCount} signed up`);
+  if (t.joined) bits.push("You're in");
+  if (t.championName) bits.push(`Winner: ${t.championName}`);
+  return bits;
+}
+function tournamentRules(t) {
+  if (t.format === "doubles" && t.partnerMode === "choose") {
+    return "Doubles. Sign up, then ask another signed-up player to be your partner. They have to accept. The bracket uses confirmed pairs only and is seeded by the pair's average.";
+  }
+  if (t.format === "doubles") {
+    return "Doubles. When the bracket is generated, each pair is one player with an average of 50 or higher and one player under 50, drawn at random. A 50.00 average counts as 50+. If one side has more players, the extras are left out. Your average is saved when you sign up.";
+  }
+  return "Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.";
+}
+function bandPill(player) {
+  if (!player?.band) return "";
+  const cls = player.band === "high" ? "band-high" : "band-low";
+  const label = player.bandLabel || (player.band === "high" ? "50+" : "50-");
+  return `<span class="${cls}">${esc(label)}</span>`;
+}
+function multilineText(s) {
+  return esc(s).replaceAll("\n", "<br>");
+}
+function tournamentCard(t) {
+  return `<a href="/tournaments/${t.id}" class="glass block rounded-xl p-5 hover:border-primary">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <h2 class="text-lg font-bold">${esc(t.title)}</h2>
+      <span class="text-xs font-bold tracking-widest gold">${esc(tournamentStatusLabel(t.status))}</span>
+    </div>
+    <p class="mt-2 text-sm text-muted">${tournamentMeta(t).map((bit) => esc(bit)).join(" · ")}</p>
+  </a>`;
+}
+function tournamentPostForm() {
+  return panel(
+    `<h2 class="text-lg font-bold">Post a tournament</h2>
+    <p class="mt-1 text-sm text-muted">Players see this on the Tournaments tab and can sign up until you generate the bracket.</p>
+    <form class="mt-4 space-y-3" data-form="POSTTOURNAMENT">
+      <input name="title" maxlength="80" placeholder="Title" required aria-label="Title">
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="block text-xs font-bold tracking-widest text-muted">FORMAT
+          <select name="format" aria-label="Format" class="mt-1 w-full">
+            <option value="singles">Singles</option>
+            <option value="doubles">Doubles (2v2)</option>
+          </select>
+        </label>
+        <label class="block text-xs font-bold tracking-widest text-muted">DOUBLES PARTNERS
+          <select name="partnerMode" aria-label="Doubles partners" class="mt-1 w-full">
+            <option value="random">Random: one 50+ with one 50-</option>
+            <option value="choose">Players choose their partner</option>
+          </select>
+        </label>
+      </div>
+      <p class="text-xs text-muted">Partner choice is only used for doubles. 50+ means an average of 50.00 or higher.</p>
+      <input name="startsAt" type="datetime-local" required aria-label="Start date and time">
+      <div class="grid gap-3 sm:grid-cols-2">
+        <input name="capacity" inputmode="numeric" placeholder="Player limit (optional)" aria-label="Player limit">
+        <input name="bestOf" inputmode="numeric" placeholder="Best of (optional)" aria-label="Best of">
+      </div>
+      <textarea name="description" rows="4" placeholder="Where to meet, format notes, anything players should know" aria-label="Description"></textarea>
+      <button class="btn-gold" type="submit">POST TOURNAMENT</button>
+    </form>`,
+    "mt-6"
+  );
+}
+function tournamentActions(t) {
+  if (t.status !== "open") return t.joined ? `<p class="mt-4 text-sm">You're in this tournament.</p>` : "";
+  if (!state.user) return `<p class="mt-4"><a href="/sign-in" class="btn-gold">SIGN IN TO ENTER</a></p>`;
+  if (t.joined) return `<form class="mt-4" data-form="TOURNAMENTWITHDRAW" data-id="${t.id}"><button class="btn-ghost" type="submit">LEAVE TOURNAMENT</button></form>`;
+  if (t.capacity != null && t.entryCount >= t.capacity) return `<p class="mt-4 text-sm text-muted">This tournament is full.</p>`;
+  return `<form class="mt-4" data-form="TOURNAMENTSIGNUP" data-id="${t.id}"><button class="btn-gold" type="submit">SIGN UP</button></form>`;
+}
+function tournamentPartnerPanel(t) {
+  if (t.format !== "doubles" || t.partnerMode !== "choose" || t.status !== "open" || !t.me) return "";
+  const me = t.me;
+  const incoming = (me.incoming || [])
+    .map(
+      (player) => `<div class="mt-3 border-t border-white/10 pt-3">
+      <p class="text-sm">${esc(player.name)} (avg ${esc(player.avg)}, ${esc(player.bandLabel)}) asked to be your partner.</p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <form data-form="TOURNAMENTACCEPT" data-id="${t.id}"><input type="hidden" name="partnerUserId" value="${player.userId}"><button class="btn-gold" type="submit">ACCEPT</button></form>
+        <form data-form="TOURNAMENTDECLINE" data-id="${t.id}"><input type="hidden" name="partnerUserId" value="${player.userId}"><button class="btn-ghost" type="submit">DECLINE</button></form>
+      </div>
+    </div>`
+    )
+    .join("");
+  let current = "";
+  if (me.confirmedPartnerUserId) {
+    current = `<p class="text-sm">Your partner is <b>${esc(me.partnerName)}</b>.</p>
+      <form class="mt-2" data-form="TOURNAMENTUNPAIR" data-id="${t.id}"><button class="btn-ghost" type="submit">CLEAR PARTNER</button></form>`;
+  } else if (me.partnerRequestUserId) {
+    current = `<p class="text-sm">Waiting for <b>${esc(me.requestedPartnerName)}</b> to accept.</p>
+      <form class="mt-2" data-form="TOURNAMENTUNPAIR" data-id="${t.id}"><button class="btn-ghost" type="submit">CANCEL REQUEST</button></form>`;
+  }
+  let ask = "";
+  if (!me.confirmedPartnerUserId) {
+    const choices = t.partnerChoices || [];
+    ask = choices.length
+      ? `<form class="mt-3 flex flex-wrap items-end gap-2" data-form="TOURNAMENTPARTNER" data-id="${t.id}">
+        <label class="block text-xs font-bold tracking-widest text-muted">PARTNER
+          <select name="partnerUserId" class="mt-1" aria-label="Partner" required>
+            ${choices
+              .map(
+                (player) =>
+                  `<option value="${player.userId}"${Number(player.userId) === Number(me.partnerRequestUserId) ? " selected" : ""}>${esc(player.name)} · avg ${esc(player.avg)} · ${esc(player.bandLabel)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <button class="btn-gold" type="submit">${me.partnerRequestUserId ? "CHANGE REQUEST" : "ASK TO PARTNER"}</button>
+      </form>`
+      : `<p class="mt-2 text-sm text-muted">When someone else signs up, you can ask them to partner.</p>`;
+  }
+  return panel(
+    `<h2 class="text-lg font-bold">Your partner</h2>
+    <p class="mt-1 text-sm text-muted">You each sign up on your own. A pair counts only after the other player accepts.</p>
+    <div class="mt-3">${current}${incoming}${ask}</div>`,
+    "mt-6"
+  );
+}
+function tournamentStaffPanel(t) {
+  if (!t.canManage) return "";
+  const editing = Number(state.editingTournamentId) === Number(t.id);
+  const hasBracket = Boolean(t.bracket);
+  const generate =
+    t.status === "complete"
+      ? ""
+      : `<form data-form="TOURNAMENTBRACKET" data-id="${t.id}">
+        ${hasBracket ? `<input type="hidden" name="replace" value="1">` : ""}
+        <button class="btn-gold" type="submit">${hasBracket ? "REGENERATE BRACKET" : "GENERATE BRACKET"}</button>
+      </form>`;
+  const edit = editing
+    ? `<form class="mt-4 space-y-3" data-form="EDITTOURNAMENT" data-id="${t.id}">
+        <input name="title" maxlength="80" required value="${esc(t.title)}" aria-label="Title">
+        <input name="startsAt" type="datetime-local" required value="${esc(toLocalInputFromInstant(t.startsAt))}" aria-label="Start date and time">
+        <div class="grid gap-3 sm:grid-cols-2">
+          <input name="capacity" inputmode="numeric" placeholder="Player limit (optional)" aria-label="Player limit" value="${t.capacity ?? ""}">
+          <input name="bestOf" inputmode="numeric" placeholder="Best of (optional)" aria-label="Best of" value="${t.bestOf ?? ""}">
+        </div>
+        <textarea name="description" rows="4" aria-label="Description">${esc(t.description || "")}</textarea>
+        <div class="flex flex-wrap gap-2">
+          <button class="btn-gold" type="submit">SAVE</button>
+          <button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">CANCEL</button>
+        </div>
+      </form>`
+    : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
+  return panel(
+    `<h2 class="text-lg font-bold">Staff</h2>
+    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Random doubles pairs one 50+ player with one player under 50. Chosen partners must already be confirmed.</p>
+    <div class="mt-3 flex flex-wrap gap-2">${generate}
+      <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
+    </div>
+    ${edit}`,
+    "mt-6"
+  );
+}
+function entrantPartner(t, entry) {
+  if (t.format !== "doubles" || t.partnerMode !== "choose") return "";
+  if (entry.confirmedPartnerUserId) return `with ${entry.partnerName}`;
+  if (entry.partnerRequestUserId) return `asked ${entry.requestedPartnerName}`;
+  return "no partner yet";
+}
+function tournamentEntrants(t) {
+  const rows = (t.entries || [])
+    .map((entry) => {
+      const pill = t.format === "doubles" ? bandPill(entry) : "";
+      return `<div class="split-row border-b border-white/10 py-2 text-sm">
+      <span class="min-w-0">${esc(entry.name)} ${pill} <span class="text-muted">avg ${esc(entry.avg)}</span></span>
+      <span class="text-muted">${esc(entrantPartner(t, entry))}</span>
+    </div>`;
+    })
+    .join("");
+  return panel(`<h2 class="text-lg font-bold">Signed up</h2><div class="mt-3">${rows || `<p class="text-sm text-muted">No one yet.</p>`}</div>`, "mt-6");
+}
+function tournamentUnpaired(t) {
+  const list = t.unpaired || [];
+  if (!list.length) return "";
+  const reason =
+    t.partnerMode === "choose"
+      ? "These players did not have a confirmed partner when the bracket was made."
+      : "These players were left out because the 50+ and 50- sides were uneven.";
+  const rows = list
+    .map((entry) => `<div class="py-1 text-sm">${esc(entry.name)} ${t.format === "doubles" ? bandPill(entry) : ""} <span class="text-muted">avg ${esc(entry.avg)}</span></div>`)
+    .join("");
+  return panel(`<h2 class="text-lg font-bold">Left out of the draw</h2><p class="mt-1 text-sm text-muted">${esc(reason)}</p><div class="mt-3">${rows}</div>`, "mt-6");
+}
+function bracketSide(team, match) {
+  const winner = team && match.winnerTeamId === team.id;
+  const score = team && match.teamAId === team.id ? match.scoreA : team && match.teamBId === team.id ? match.scoreB : null;
+  const label = team ? team.name : match.status === "pending" ? "Waiting" : "Bye";
+  const seed = team?.seed ? `<span class="bracket-seed">#${team.seed}</span>` : "";
+  const scoreText = score == null || score === "" ? "" : `<span class="bracket-score">${esc(score)}</span>`;
+  return `<div class="bracket-side${winner ? " winner" : ""}">${seed}<span class="bracket-name">${esc(label)}</span>${scoreText}</div>`;
+}
+function tournamentResultForm(t, match) {
+  if (!t.canManage || !match.teamA || !match.teamB) return "";
+  if (match.status !== "pending" && match.status !== "complete") return "";
+  const selected = (id) => (match.winnerTeamId === id ? " selected" : "");
+  return `<form class="bracket-result" data-form="TOURNAMENTRESULT" data-id="${t.id}" data-match="${esc(match.id)}">
+    <select name="winnerTeamId" aria-label="Winner" required>
+      <option value="${esc(match.teamAId)}"${selected(match.teamAId)}>${esc(match.teamA.name)}</option>
+      <option value="${esc(match.teamBId)}"${selected(match.teamBId)}>${esc(match.teamB.name)}</option>
+    </select>
+    <div class="bracket-scores">
+      <input name="scoreA" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamA.name)}" value="${match.scoreA ?? ""}">
+      <input name="scoreB" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamB.name)}" value="${match.scoreB ?? ""}">
+    </div>
+    <button class="btn-gold" type="submit">${match.status === "complete" ? "UPDATE RESULT" : "SAVE RESULT"}</button>
+  </form>`;
+}
+function tournamentBracket(t) {
+  if (!t.bracket) return "";
+  const rounds = (t.bracket.rounds || [])
+    .map((round) => {
+      const matches = (round.matches || []).filter((match) => match.status !== "empty");
+      if (!matches.length) return "";
+      return `<div class="bracket-round">
+      <h3 class="bracket-round-name">${esc(round.name)}</h3>
+      ${matches.map((match) => `<div class="bracket-match">${bracketSide(match.teamA, match)}${bracketSide(match.teamB, match)}${tournamentResultForm(t, match)}</div>`).join("")}
+    </div>`;
+    })
+    .join("");
+  const winner = t.championName ? `<p class="mb-4 text-lg font-bold gold">Winner: ${esc(t.championName)}</p>` : "";
+  return `<section class="mt-6">
+    <h2 class="text-lg font-bold">Bracket</h2>
+    <p class="mt-1 text-sm text-muted">Single elimination. Scroll sideways on a phone.</p>
+    ${winner}
+    <div class="bracket mt-4">${rounds}</div>
+  </section>`;
+}
+function tournamentBands(t) {
+  if (t.format !== "doubles" || t.partnerMode === "choose" || !t.bandCounts) return "";
+  return `<p class="mt-2 text-sm text-muted">Signed up: ${t.bandCounts.high} in 50+ · ${t.bandCounts.low} in 50-.</p>`;
+}
+function tournamentPoolNote(t) {
+  if (!t.viewer || t.format !== "doubles" || t.partnerMode === "choose") return "";
+  return `<p class="mt-2 text-sm">Your profile average is ${esc(t.viewer.avg)} (${esc(t.viewer.bandLabel)}). The pool is locked in when you sign up.</p>`;
+}
+async function pageTournaments() {
+  const d = await api("/api/tournaments");
+  const cards = (d.tournaments || []).map(tournamentCard).join("");
+  return layout(
+    `<div class="mx-auto max-w-3xl px-4 py-10">
+      <h1 class="page-title font-extrabold">Tournaments</h1>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and admins post the event, then generate the bracket. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner.</p>
+      ${pageFlash()}
+      ${d.canManage ? tournamentPostForm() : ""}
+      <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
+    </div>`,
+    { arena: true }
+  );
+}
+async function pageTournament(id) {
+  const d = await api(`/api/tournaments/${id}`);
+  const t = d.tournament;
+  return layout(
+    `<div class="mx-auto max-w-5xl px-4 py-10">
+      <a href="/tournaments" class="gold text-sm font-bold">← Tournaments</a>
+      <div class="mt-4 flex flex-wrap items-start justify-between gap-3">
+        <h1 class="page-title font-extrabold">${esc(t.title)}</h1>
+        <span class="text-xs font-bold tracking-widest gold">${esc(tournamentStatusLabel(t.status))}</span>
+      </div>
+      <p class="mt-2 text-sm text-muted">${tournamentMeta(t).map((bit) => esc(bit)).join(" · ")}</p>
+      <p class="mt-1 text-xs text-muted">Posted by ${esc(t.postedByName)}</p>
+      ${pageFlash()}
+      ${t.description ? `<div class="mt-4 text-sm leading-relaxed">${multilineText(t.description)}</div>` : ""}
+      <p class="mt-4 text-sm text-muted">${esc(tournamentRules(t))}</p>
+      ${tournamentBands(t)}
+      ${tournamentPoolNote(t)}
+      ${tournamentActions(t)}
+      ${tournamentPartnerPanel(t)}
+      ${tournamentStaffPanel(t)}
+      ${tournamentEntrants(t)}
+      ${tournamentUnpaired(t)}
+      ${tournamentBracket(t)}
+    </div>`,
+    { arena: true }
+  );
+}
+
 function matchRoute(path) {
   const q = path.split("?")[0].split("#")[0];
   if (q === "/") return ["home"];
@@ -3261,6 +3567,9 @@ function matchRoute(path) {
   if (q === "/rules") return ["rules"];
   if (q === "/about" || q === "/contact") return ["about"];
   if (q === "/announcements") return ["news"];
+  if (q === "/tournaments") return ["tournaments"];
+  m = q.match(/^\/tournaments\/(\d+)$/);
+  if (m) return ["tournament", m[1]];
   if (q === "/admin") return ["admin"];
   m = q.match(/^\/player\/(\d+)$/);
   if (m) return ["player", m[1]];
@@ -3374,6 +3683,8 @@ async function render() {
       rules: pageRules,
       about: () => pageAbout(),
       news: pageNews,
+      tournaments: pageTournaments,
+      tournament: () => pageTournament(route[1]),
       admin: pageAdmin,
     };
     app.innerHTML = await map[route[0]]();
@@ -3529,6 +3840,14 @@ document.addEventListener("click", async (e) => {
       state.noticeLeagueOpenIds = [...new Set([...cur, leagueId])];
     }
     state.deskFolds = { ...(state.deskFolds || {}), "fixture-notices": true };
+    render();
+    return;
+  }
+  const editTournament = e.target.closest("[data-act=edit-tournament]");
+  if (editTournament) {
+    e.preventDefault();
+    const id = Number(editTournament.dataset.id);
+    state.editingTournamentId = Number(state.editingTournamentId) === id ? null : id;
     render();
     return;
   }
@@ -4225,6 +4544,68 @@ document.addEventListener("submit", async (e) => {
       if (!window.confirm("Delete this announcement? This cannot be undone.")) return;
       await api(`/api/admin/announcements/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
       state.notice = "Announcement deleted.";
+      render();
+    } else if (kind === "POSTTOURNAMENT") {
+      const posted = await api("/api/admin/tournaments", { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
+      go(`/tournaments/${posted.tournament.id}`, "Tournament posted. Players can sign up from this page.");
+    } else if (kind === "EDITTOURNAMENT") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/update`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
+      state.editingTournamentId = null;
+      state.error = "";
+      state.notice = "Tournament updated.";
+      render();
+    } else if (kind === "DELETETOURNAMENT") {
+      if (!window.confirm("Remove this tournament? Signups and the bracket will be deleted.")) return;
+      await api(`/api/admin/tournaments/${form.dataset.id}/delete`, { method: "POST", body: "{}" });
+      state.editingTournamentId = null;
+      go("/tournaments", "Tournament removed.");
+    } else if (kind === "TOURNAMENTSIGNUP") {
+      await api(`/api/tournaments/${form.dataset.id}/signup`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "You're signed up.";
+      render();
+    } else if (kind === "TOURNAMENTWITHDRAW") {
+      if (!window.confirm("Leave this tournament?")) return;
+      await api(`/api/tournaments/${form.dataset.id}/withdraw`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "You left the tournament.";
+      render();
+    } else if (kind === "TOURNAMENTPARTNER") {
+      const asked = await api(`/api/tournaments/${form.dataset.id}/partner`, { method: "POST", body: JSON.stringify(fd) });
+      state.error = "";
+      state.notice = asked.tournament?.me?.confirmedPartnerUserId ? "Partner confirmed." : "Partner request sent.";
+      render();
+    } else if (kind === "TOURNAMENTACCEPT") {
+      await api(`/api/tournaments/${form.dataset.id}/partner/accept`, { method: "POST", body: JSON.stringify(fd) });
+      state.error = "";
+      state.notice = "Partner confirmed.";
+      render();
+    } else if (kind === "TOURNAMENTDECLINE") {
+      await api(`/api/tournaments/${form.dataset.id}/partner/decline`, { method: "POST", body: JSON.stringify(fd) });
+      state.error = "";
+      state.notice = "Partner request declined.";
+      render();
+    } else if (kind === "TOURNAMENTUNPAIR") {
+      await api(`/api/tournaments/${form.dataset.id}/partner/clear`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "Partner cleared.";
+      render();
+    } else if (kind === "TOURNAMENTBRACKET") {
+      if (fd.replace === "1" && !window.confirm("Replace the current bracket? Recorded results cannot be kept.")) return;
+      const drawn = await api(`/api/admin/tournaments/${form.dataset.id}/bracket`, {
+        method: "POST",
+        body: JSON.stringify({ replace: fd.replace === "1" }),
+      });
+      const left = Number(drawn.unpairedCount) || 0;
+      state.error = "";
+      state.notice = left
+        ? `Bracket generated. ${left} player${left === 1 ? " was" : "s were"} left out of the draw.`
+        : "Bracket generated.";
+      render();
+    } else if (kind === "TOURNAMENTRESULT") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify(fd) });
+      state.error = "";
+      state.notice = "Result saved.";
       render();
     }
   } catch (err) {

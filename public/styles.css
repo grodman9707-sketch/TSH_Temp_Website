@@ -1678,4 +1678,89 @@ input, select, textarea {
     align-items: center;
   }
 }
+.band-high,
+.band-low {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  vertical-align: 0.05em;
+}
+.band-high {
+  color: #f3d48a;
+  border: 1px solid rgba(232, 180, 37, 0.55);
+}
+.band-low {
+  color: #b9d4ff;
+  border: 1px solid rgba(140, 180, 255, 0.45);
+}
+.bracket {
+  display: flex;
+  gap: 0.9rem;
+  overflow-x: auto;
+  padding-bottom: 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+.bracket-round {
+  flex: 0 0 16rem;
+  min-width: 16rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 0.75rem;
+}
+.bracket-round-name {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e8b425;
+}
+.bracket-match {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.bracket-side {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.65rem;
+}
+.bracket-side + .bracket-side {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.bracket-side.winner {
+  background: rgba(232, 180, 37, 0.16);
+}
+.bracket-name {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+}
+.bracket-seed,
+.bracket-score {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #e8b425;
+}
+.bracket-result {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.bracket-scores {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
 

@@ -1,0 +1,528 @@
+// Tournaments: signup, doubles pairing, and single-elimination brackets.
+// Run: `node server/tournaments.test.js`
+import { spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { fileURLToPath } from "url";
+import {
+  avgBand,
+  buildSingleElim,
+  createTournament,
+  pairRandomMixed,
+  parseStartsAt,
+  seedPositions,
+  signupTournament,
+  updateTournament,
+} from "./tournaments.js";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+let failures = 0;
+function check(name, cond) {
+  if (cond) console.log(`  ok  - ${name}`);
+  else {
+    failures++;
+    console.error(`  FAIL - ${name}`);
+  }
+}
+
+function identityRng() {
+  return 0.999999;
+}
+
+check("50.00 is 50+", avgBand(50) === "high" && avgBand(50.01) === "high");
+check("49.99 is 50-", avgBand(49.99) === "low" && avgBand(0) === "low");
+check("seed order keeps 1 opposite 2", JSON.stringify(seedPositions(8)) === JSON.stringify([1, 8, 4, 5, 2, 7, 3, 6]));
+check("size 4 seed order", JSON.stringify(seedPositions(4)) === JSON.stringify([1, 4, 2, 3]));
+
+const paired = pairRandomMixed(
+  [
+    { userId: 1, avg: 80 },
+    { userId: 2, avg: 50 },
+    { userId: 5, avg: 90 },
+    { userId: 3, avg: 40 },
+    { userId: 4, avg: 30 },
+  ],
+  identityRng
+);
+check(
+  "random pairs are one 50+ and one 50-",
+  paired.pairs.length === 2 &&
+    paired.pairs.every(([a, b]) => avgBand(a.avg) !== avgBand(b.avg)) &&
+    paired.unpaired.length === 1 &&
+    paired.unpaired[0].userId === 5
+);
+
+const bracket = buildSingleElim([
+  { id: "t1", playerIds: [1], avg: 90 },
+  { id: "t2", playerIds: [2], avg: 70 },
+  { id: "t3", playerIds: [3], avg: 50 },
+]);
+const semis = bracket.rounds[0].matches;
+check("top seed gets the bye", semis[0].teamAId === "t1" && semis[0].status === "bye" && semis[0].winnerTeamId === "t1");
+check("other two meet in the first round", semis[1].teamAId === "t2" && semis[1].teamBId === "t3" && semis[1].status === "pending");
+check("bye winner is waiting in the final", bracket.rounds[1].matches[0].teamAId === "t1" && bracket.rounds[1].matches[0].teamBId == null);
+check(
+  "New York wall time becomes UTC",
+  parseStartsAt("2026-12-01T19:00", "America/New_York") === "2026-12-02T00:00:00.000Z"
+);
+check("a zoned instant is kept", parseStartsAt("2026-12-01T19:00:00.000Z", "America/New_York") === "2026-12-01T19:00:00.000Z");
+
+const limitDb = {
+  users: [
+    { id: 1, name: "A", avg: 60 },
+    { id: 2, name: "B", avg: 40 },
+    { id: 3, name: "C", avg: 55 },
+  ],
+  tournaments: [],
+};
+const limitEvent = createTournament(limitDb, { id: 9 }, { title: "Limit", format: "singles", startsAt: "2026-12-01T19:00", tz: "UTC" });
+for (const user of limitDb.users) signupTournament(limitDb, limitEvent.tournament.id, user);
+const tooTight = updateTournament(limitDb, limitEvent.tournament.id, {
+  title: "Limit",
+  startsAt: "2026-12-01T19:00",
+  tz: "UTC",
+  capacity: 2,
+});
+check("player limit cannot drop below the field", tooTight.status === 400 && /already signed up/i.test(tooTight.error));
+
+const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
+const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
+const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+check("nav has a Tournaments tab", appJs.includes('["/tournaments", "Tournaments"]'));
+check("tournament routes render", appJs.includes('if (q === "/tournaments")') && appJs.includes("pageTournament"));
+check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
+check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
+check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
+check("cache bust covers the new tab", html.includes("app.js?v=81") && html.includes("styles.css?v=81"));
+
+async function waitHealth(port, child) {
+  const deadline = Date.now() + 15000;
+  let lastErr;
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) throw new Error(`server exited early with ${child.exitCode}`);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      if (res.ok) return;
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw lastErr || new Error("server did not become healthy");
+}
+
+async function api(port, pathname, { method = "GET", token, body } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method,
+    headers,
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, data };
+}
+
+let seq = 0;
+async function register(port, name, avg) {
+  seq += 1;
+  const slug = `${name.toLowerCase().replace(/[^a-z0-9]/g, "")}${seq}`;
+  const res = await api(port, "/api/auth/register", {
+    method: "POST",
+    body: {
+      name,
+      email: `${slug}@test.com`,
+      password: "pass1234",
+      regional: "international",
+      dartcounterName: `${slug}DC`,
+      avg,
+    },
+  });
+  return res;
+}
+
+function teamBands(team) {
+  return (team.players || []).map((player) => player.band).sort();
+}
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-tournaments-"));
+const port = 21000 + Math.floor(Math.random() * 2000);
+const child = spawn(process.execPath, [path.join(root, "server/index.js")], {
+  cwd: root,
+  env: { ...process.env, DATA_DIR: dir, PORT: String(port), HOST: "127.0.0.1" },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let stderr = "";
+child.stderr.on("data", (buf) => {
+  stderr += buf.toString();
+});
+
+try {
+  await waitHealth(port, child);
+
+  const guestList = await api(port, "/api/tournaments");
+  check("guests can open the tournament list", guestList.status === 200 && guestList.data.ok && guestList.data.tournaments.length === 0);
+  check("guests cannot manage tournaments", guestList.data.canManage === false);
+  const guestPost = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    body: { title: "Nope", format: "singles", startsAt: "2026-12-01T19:00", tz: "America/New_York" },
+  });
+  check("guests cannot post", guestPost.status === 401);
+
+  const ownerLogin = await api(port, "/api/auth/login", {
+    method: "POST",
+    body: { email: "GRodman9707@gmail.com", password: "Rodm@n85" },
+  });
+  check("owner login", ownerLogin.status === 200 && Boolean(ownerLogin.data.token));
+  const owner = ownerLogin.data.token;
+
+  const player = await register(port, "Pat Player", 55);
+  check("player registers", player.status === 200 && Boolean(player.data.token));
+  const playerTok = player.data.token;
+  const playerPost = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: playerTok,
+    body: { title: "Player cup", format: "singles", startsAt: "2026-12-01T19:00", tz: "America/New_York" },
+  });
+  check("players cannot post", playerPost.status === 403);
+
+  const admin = await register(port, "Dee Admin", 48);
+  const assigned = await api(port, "/api/admin/assign-admin", {
+    method: "POST",
+    token: owner,
+    body: { userId: admin.data.user.id, leagueId: 9 },
+  });
+  check("owner assigns a division admin", assigned.status === 200);
+  const adminPost = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      title: "Admin Open",
+      format: "singles",
+      startsAt: "2026-12-05T18:00",
+      tz: "America/New_York",
+      description: "Posted by a division admin",
+      bestOf: 5,
+    },
+  });
+  check("division admins can post", adminPost.status === 200 && adminPost.data.tournament.title === "Admin Open");
+
+  const later = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Later Open", format: "singles", startsAt: "2026-12-20T19:00", tz: "UTC" },
+  });
+  const sooner = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: {
+      title: "Sooner Open",
+      format: "singles",
+      startsAt: "2026-12-01T19:00",
+      tz: "America/New_York",
+      capacity: 2,
+      description: "Be on time",
+    },
+  });
+  check("start time is stored in UTC", sooner.data.tournament.startsAt === "2026-12-02T00:00:00.000Z");
+  const listed = await api(port, "/api/tournaments");
+  const openTitles = listed.data.tournaments.filter((t) => t.status === "open").map((t) => t.title);
+  check("open tournaments are soonest first", openTitles.indexOf("Sooner Open") < openTitles.indexOf("Later Open") && openTitles.indexOf("Sooner Open") < openTitles.indexOf("Admin Open"));
+
+  const soonerId = sooner.data.tournament.id;
+  const badEdit = await api(port, `/api/admin/tournaments/${soonerId}/update`, {
+    method: "POST",
+    token: owner,
+    body: { title: "Sooner Open", startsAt: "2026-12-01T19:00", tz: "America/New_York", capacity: 1, description: "Be on time" },
+  });
+  check("player limit is at least 2", badEdit.status === 400);
+  const one = await register(port, "Only One", 61);
+  const joinedOne = await api(port, `/api/tournaments/${soonerId}/signup`, { method: "POST", token: one.data.token, body: {} });
+  check("first player can sign up", joinedOne.status === 200 && joinedOne.data.tournament.joined === true);
+  const two = await register(port, "Number Two", 44);
+  const joinedTwo = await api(port, `/api/tournaments/${soonerId}/signup`, { method: "POST", token: two.data.token, body: {} });
+  check("a second player can take the last spot", joinedTwo.status === 200 && joinedTwo.data.tournament.entryCount === 2);
+  const three = await register(port, "Number Three", 52);
+  const joinedThree = await api(port, `/api/tournaments/${soonerId}/signup`, { method: "POST", token: three.data.token, body: {} });
+  check("full tournament rejects the next player", joinedThree.status === 400);
+  const shrink = await api(port, `/api/admin/tournaments/${soonerId}/update`, {
+    method: "POST",
+    token: owner,
+    body: { title: "Sooner Open", startsAt: "2026-12-01T19:00", tz: "America/New_York", capacity: 1, description: "Be on time" },
+  });
+  check("a limit of 1 is rejected", shrink.status === 400);
+  const again = await api(port, `/api/tournaments/${soonerId}/signup`, { method: "POST", token: one.data.token, body: {} });
+  check("a player cannot sign up twice", again.status === 400);
+  const guestSignup = await api(port, `/api/tournaments/${soonerId}/signup`, { method: "POST", body: {} });
+  check("guests must sign in to enter", guestSignup.status === 401);
+  const left = await api(port, `/api/tournaments/${soonerId}/withdraw`, { method: "POST", token: one.data.token, body: {} });
+  check("a player can leave while signup is open", left.status === 200 && left.data.tournament.entryCount === 1 && left.data.tournament.joined === false);
+
+  const renamed = await api(port, `/api/admin/tournaments/${soonerId}/update`, {
+    method: "POST",
+    token: owner,
+    body: { title: "Friday Open", startsAt: "2026-12-01T19:00", tz: "America/New_York", capacity: "", description: "Friday night", bestOf: 7 },
+  });
+  check("staff can rename and clear the limit", renamed.status === 200 && renamed.data.tournament.title === "Friday Open" && renamed.data.tournament.capacity == null && renamed.data.tournament.bestOf === 7);
+
+  const singles = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Singles Cup", format: "singles", startsAt: "2026-12-08T20:00", tz: "UTC" },
+  });
+  const singlesId = singles.data.tournament.id;
+  const seeds = [];
+  for (const [name, avg] of [
+    ["Ava Ace", 90],
+    ["Bea Bolt", 70],
+    ["Cal Croft", 60],
+    ["Dee Dart", 40],
+  ]) {
+    const person = await register(port, name, avg);
+    seeds.push(person);
+    const up = await api(port, `/api/tournaments/${singlesId}/signup`, { method: "POST", token: person.data.token, body: {} });
+    check(`${name} enters singles`, up.status === 200);
+  }
+  const tooSoon = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: playerTok, body: {} });
+  check("players cannot generate a bracket", tooSoon.status === 403);
+  const drawn = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: owner, body: {} });
+  check("singles bracket generates", drawn.status === 200 && drawn.data.tournament.status === "brackets");
+  const firstRound = drawn.data.tournament.bracket.rounds[0];
+  const pairings = firstRound.matches.map((match) => [match.teamA?.name, match.teamB?.name].sort().join(" vs "));
+  check(
+    "highest average plays the lowest",
+    pairings.includes("Ava Ace vs Dee Dart") && pairings.includes("Bea Bolt vs Cal Croft")
+  );
+  const ace = drawn.data.tournament.teams.find((team) => team.name === "Ava Ace");
+  check("highest average is seed 1", ace?.seed === 1);
+  const closed = await api(port, `/api/tournaments/${singlesId}/signup`, { method: "POST", token: playerTok, body: {} });
+  check("signup closes when the bracket is up", closed.status === 400);
+
+  const semi = drawn.data.tournament.bracket.rounds[0].matches.find((match) => match.teamA?.name === "Bea Bolt" || match.teamB?.name === "Bea Bolt");
+  const bolt = semi.teamA.name === "Bea Bolt" ? semi.teamA : semi.teamB;
+  const badScore = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: bolt.id, scoreA: semi.teamAId === bolt.id ? 1 : 4, scoreB: semi.teamAId === bolt.id ? 4 : 1 },
+  });
+  check("the winner must have the higher score", badScore.status === 400);
+  const semiWin = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: bolt.id, scoreA: semi.teamAId === bolt.id ? 3 : 1, scoreB: semi.teamAId === bolt.id ? 1 : 3 },
+  });
+  check("a semifinal result advances the winner", semiWin.status === 200);
+  const finalBefore = semiWin.data.tournament.bracket.rounds.at(-1).matches[0];
+  check("final is not ready until the other semi is played", !finalBefore.teamA || !finalBefore.teamB);
+  const other = drawn.data.tournament.bracket.rounds[0].matches.find((match) => match.id !== semi.id);
+  const aceSide = other.teamA.name === "Ava Ace" ? other.teamA : other.teamB;
+  const otherWin = await api(port, `/api/admin/tournaments/${singlesId}/matches/${other.id}`, {
+    method: "POST",
+    token: owner,
+    body: {
+      winnerTeamId: aceSide.id,
+      scoreA: other.teamAId === aceSide.id ? 3 : 0,
+      scoreB: other.teamAId === aceSide.id ? 0 : 3,
+    },
+  });
+  const finalMatch = otherWin.data.tournament.bracket.rounds.at(-1).matches[0];
+  const finalNames = [finalMatch.teamA?.name, finalMatch.teamB?.name].sort();
+  check("final is Ace against Bolt", finalNames.join(" vs ") === "Ava Ace vs Bea Bolt");
+  const boltSide = finalMatch.teamA.name === "Bea Bolt" ? finalMatch.teamAId : finalMatch.teamBId;
+  const finalWin = await api(port, `/api/admin/tournaments/${singlesId}/matches/${finalMatch.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: boltSide, scoreA: finalMatch.teamAId === boltSide ? 4 : 2, scoreB: finalMatch.teamAId === boltSide ? 2 : 4 },
+  });
+  check("final result crowns the winner", finalWin.status === 200 && finalWin.data.tournament.status === "complete" && finalWin.data.tournament.championName === "Bea Bolt");
+  const rewrite = await api(port, `/api/admin/tournaments/${singlesId}/matches/${semi.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: semi.teamAId, scoreA: 3, scoreB: 1 },
+  });
+  check("a played later round blocks an earlier change", rewrite.status === 400);
+  const regen = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: owner, body: { replace: true } });
+  check("a bracket with results cannot be regenerated", regen.status === 400);
+
+  const byes = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Bye Cup", format: "singles", startsAt: "2026-12-09T20:00", tz: "UTC" },
+  });
+  const byeId = byes.data.tournament.id;
+  for (const [name, avg] of [
+    ["Fay Fly", 90],
+    ["Gil Glen", 70],
+    ["Hal Hope", 50],
+  ]) {
+    const person = await register(port, name, avg);
+    await api(port, `/api/tournaments/${byeId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const byeDraw = await api(port, `/api/admin/tournaments/${byeId}/bracket`, { method: "POST", token: owner, body: {} });
+  const byeMatch = byeDraw.data.tournament.bracket.rounds[0].matches.find((match) => match.status === "bye");
+  const playable = byeDraw.data.tournament.bracket.rounds[0].matches.find((match) => match.status === "pending");
+  check("a field of three gives the top seed a bye", byeMatch?.teamA?.name === "Fay Fly" || byeMatch?.teamB?.name === "Fay Fly");
+  const reportBye = await api(port, `/api/admin/tournaments/${byeId}/matches/${byeMatch.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: byeMatch.winnerTeamId },
+  });
+  check("a bye is not scored by hand", reportBye.status === 400);
+  const underdog = playable.teamA.name === "Hal Hope" ? playable.teamAId : playable.teamBId;
+  const byePath = await api(port, `/api/admin/tournaments/${byeId}/matches/${playable.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: underdog, scoreA: playable.teamAId === underdog ? 3 : 1, scoreB: playable.teamAId === underdog ? 1 : 3 },
+  });
+  const byeFinal = byePath.data.tournament.bracket.rounds.at(-1).matches[0];
+  check(
+    "bye winner meets the first-round winner",
+    [byeFinal.teamA?.name, byeFinal.teamB?.name].sort().join(" vs ") === "Fay Fly vs Hal Hope"
+  );
+
+  const mixed = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Mixed Doubles", format: "doubles", partnerMode: "random", startsAt: "2026-12-12T19:00", tz: "America/New_York" },
+  });
+  const mixedId = mixed.data.tournament.id;
+  const field = [];
+  for (const [name, avg] of [
+    ["Ivy Ink", 80],
+    ["Jo Jung", 50],
+    ["Kit King", 90],
+    ["Lee Low", 49.9],
+    ["Mo Moss", 30],
+  ]) {
+    const person = await register(port, name, avg);
+    field.push({ name, avg, token: person.data.token, id: person.data.user.id, dartcounterName: person.data.user.dartcounterName });
+    const up = await api(port, `/api/tournaments/${mixedId}/signup`, { method: "POST", token: person.data.token, body: {} });
+    check(`${name} enters mixed doubles`, up.status === 200 && up.data.tournament.entries.find((entry) => entry.name === name)?.band === (avg >= 50 ? "high" : "low"));
+  }
+  const ivy = field.find((person) => person.name === "Ivy Ink");
+  const bumped = await api(port, "/api/account/profile", {
+    method: "POST",
+    token: ivy.token,
+    body: { name: "Ivy Ink", dartcounterName: ivy.dartcounterName, avg: 10 },
+  });
+  check("profile average can change after signup", bumped.status === 200 && bumped.data.user.avg === 10);
+  const short = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Too Few Mixed", format: "doubles", partnerMode: "random", startsAt: "2026-12-13T19:00", tz: "UTC" },
+  });
+  const onlyHigh = await register(port, "No Low", 70);
+  const onlyLow = await register(port, "No High", 20);
+  await api(port, `/api/tournaments/${short.data.tournament.id}/signup`, { method: "POST", token: onlyHigh.data.token, body: {} });
+  const onePair = await api(port, `/api/admin/tournaments/${short.data.tournament.id}/bracket`, { method: "POST", token: owner, body: {} });
+  check("one player cannot fill a doubles draw", onePair.status === 400);
+  await api(port, `/api/tournaments/${short.data.tournament.id}/signup`, { method: "POST", token: onlyLow.data.token, body: {} });
+  const stillShort = await api(port, `/api/admin/tournaments/${short.data.tournament.id}/bracket`, { method: "POST", token: owner, body: {} });
+  check("a single pair still cannot fill a bracket", stillShort.status === 400);
+  const allHigh = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "All High", format: "doubles", partnerMode: "random", startsAt: "2026-12-14T19:00", tz: "UTC" },
+  });
+  const hiA = await register(port, "High A", 60);
+  const hiB = await register(port, "High B", 70);
+  await api(port, `/api/tournaments/${allHigh.data.tournament.id}/signup`, { method: "POST", token: hiA.data.token, body: {} });
+  await api(port, `/api/tournaments/${allHigh.data.tournament.id}/signup`, { method: "POST", token: hiB.data.token, body: {} });
+  const noLowDraw = await api(port, `/api/admin/tournaments/${allHigh.data.tournament.id}/bracket`, { method: "POST", token: owner, body: {} });
+  check("random doubles need both average pools", noLowDraw.status === 400 && /50\+/.test(noLowDraw.data.error || ""));
+
+  const mixedDraw = await api(port, `/api/admin/tournaments/${mixedId}/bracket`, { method: "POST", token: owner, body: {} });
+  check("mixed doubles draws two pairs and leaves one out", mixedDraw.status === 200 && mixedDraw.data.unpairedCount === 1 && mixedDraw.data.tournament.teams.length === 2);
+  const mixedTeams = mixedDraw.data.tournament.teams;
+  check(
+    "every random pair is 50+ with 50-",
+    mixedTeams.every((team) => teamBands(team).join(",") === "high,low")
+  );
+  check("the player left out is from the bigger pool", mixedDraw.data.tournament.unpaired.length === 1 && mixedDraw.data.tournament.unpaired[0].band === "high");
+  const ivyEntry = [...mixedDraw.data.tournament.teams.flatMap((team) => team.players), ...mixedDraw.data.tournament.unpaired].find((player) => player.name === "Ivy Ink");
+  check("signup average stays 50+ after the profile change", ivyEntry?.avg === 80 && ivyEntry?.band === "high");
+  const randomPartner = await api(port, `/api/tournaments/${mixedId}/partner`, {
+    method: "POST",
+    token: ivy.token,
+    body: { partnerUserId: field[1].id },
+  });
+  check("random doubles do not take partner requests", randomPartner.status === 400);
+  const redraw = await api(port, `/api/admin/tournaments/${mixedId}/bracket`, { method: "POST", token: owner, body: { replace: true } });
+  check("staff can redraw before any result", redraw.status === 200 && redraw.data.tournament.teams.every((team) => teamBands(team).join(",") === "high,low"));
+
+  const chosen = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Choose Partners", format: "doubles", partnerMode: "choose", startsAt: "2026-12-18T19:00", tz: "UTC", description: "Pick your own partner" },
+  });
+  const chooseId = chosen.data.tournament.id;
+  const pickers = [];
+  for (const [name, avg] of [
+    ["Nia North", 80],
+    ["Oli Oak", 20],
+    ["Pia Pine", 70],
+    ["Quin Quill", 75],
+  ]) {
+    const person = await register(port, name, avg);
+    pickers.push({ name, id: person.data.user.id, token: person.data.token });
+    await api(port, `/api/tournaments/${chooseId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const [nia, oli, pia, quin] = pickers;
+  const early = await api(port, `/api/admin/tournaments/${chooseId}/bracket`, { method: "POST", token: owner, body: {} });
+  check("chosen doubles need confirmed pairs", early.status === 400);
+  const ask = await api(port, `/api/tournaments/${chooseId}/partner`, { method: "POST", token: nia.token, body: { partnerUserId: oli.id } });
+  check("a player can ask a signed-up partner", ask.status === 200 && ask.data.tournament.me.partnerRequestUserId === oli.id);
+  const declined = await api(port, `/api/tournaments/${chooseId}/partner/decline`, { method: "POST", token: oli.token, body: { partnerUserId: nia.id } });
+  check("the partner can decline", declined.status === 200 && !declined.data.tournament.entries.find((entry) => entry.userId === nia.id)?.partnerRequestUserId);
+  await api(port, `/api/tournaments/${chooseId}/partner`, { method: "POST", token: nia.token, body: { partnerUserId: oli.id } });
+  const accepted = await api(port, `/api/tournaments/${chooseId}/partner/accept`, { method: "POST", token: oli.token, body: { partnerUserId: nia.id } });
+  const niaEntry = accepted.data.tournament.entries.find((entry) => entry.userId === nia.id);
+  const oliEntry = accepted.data.tournament.entries.find((entry) => entry.userId === oli.id);
+  check("accept confirms both players", niaEntry.confirmedPartnerUserId === oli.id && oliEntry.confirmedPartnerUserId === nia.id);
+  const blocked = await api(port, `/api/tournaments/${chooseId}/partner`, { method: "POST", token: nia.token, body: { partnerUserId: pia.id } });
+  check("a confirmed player must clear before switching", blocked.status === 400);
+  await api(port, `/api/tournaments/${chooseId}/partner`, { method: "POST", token: pia.token, body: { partnerUserId: quin.id } });
+  const mutual = await api(port, `/api/tournaments/${chooseId}/partner`, { method: "POST", token: quin.token, body: { partnerUserId: pia.id } });
+  const piaEntry = mutual.data.tournament.entries.find((entry) => entry.userId === pia.id);
+  check("asking each other confirms the pair", piaEntry.confirmedPartnerUserId === quin.id);
+  const chooseDraw = await api(port, `/api/admin/tournaments/${chooseId}/bracket`, { method: "POST", token: owner, body: {} });
+  check("chosen pairs become the bracket", chooseDraw.status === 200 && chooseDraw.data.tournament.unpaired.length === 0 && chooseDraw.data.tournament.teams.length === 2);
+  const pairIds = chooseDraw.data.tournament.teams.map((team) => team.playerIds.slice().sort((a, b) => a - b).join("-")).sort();
+  check(
+    "teams are the partners the players picked",
+    pairIds.join("|") === [ [nia.id, oli.id].sort((a, b) => a - b).join("-"), [pia.id, quin.id].sort((a, b) => a - b).join("-") ].sort().join("|")
+  );
+  const higher = chooseDraw.data.tournament.teams.find((team) => team.playerIds.includes(pia.id));
+  check("chosen pairs are seeded by combined average", higher?.seed === 1);
+
+  const removed = await api(port, `/api/admin/tournaments/${chooseId}/delete`, { method: "POST", token: owner, body: {} });
+  check("staff can remove a tournament", removed.status === 200);
+  const gone = await api(port, `/api/tournaments/${chooseId}`);
+  check("a removed tournament is gone", gone.status === 404);
+
+  const detail = await api(port, `/api/tournaments/${mixedId}`, { token: owner });
+  check("detail includes the bracket", detail.status === 200 && detail.data.tournament.bracket.rounds.length >= 1 && detail.data.tournament.canManage === true);
+} catch (err) {
+  failures++;
+  console.error("  FAIL - suite error:", err.message);
+  if (stderr) console.error(stderr);
+} finally {
+  if (child.exitCode == null) {
+    child.kill("SIGTERM");
+    await new Promise((r) => {
+      const t = setTimeout(r, 2000);
+      child.on("exit", () => {
+        clearTimeout(t);
+        r();
+      });
+    });
+  }
+}
+
+if (failures) {
+  console.error(`\n${failures} failed`);
+  process.exit(1);
+}
+console.log("\ntournament tests passed");
