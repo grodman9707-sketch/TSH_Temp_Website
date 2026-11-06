@@ -2366,6 +2366,7 @@ function staffActionLabel(action) {
     delete_tournament: "Removed tournament",
     tournament_bracket: "Generated bracket",
     tournament_result: "Recorded tournament result",
+    tournament_result_clear: "Cleared tournament result",
     add_region: "Added region",
     update_region: "Updated region",
     delete_region: "Removed region",
@@ -3260,7 +3261,7 @@ function tournamentFormatLabel(t) {
   return "Singles";
 }
 function tournamentStatusLabel(status) {
-  if (status === "brackets") return "Bracket live";
+  if (status === "brackets") return "Under way";
   if (status === "complete") return "Complete";
   return "Signup open";
 }
@@ -3418,7 +3419,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Random doubles pairs one 50+ player with one player under 50. Chosen partners must already be confirmed.</p>
+    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Random doubles pairs one 50+ player with one player under 50. Chosen partners must already be confirmed. Once the bracket is up, enter each result below. The winner moves into the next round.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -3464,21 +3465,81 @@ function bracketSide(team, match) {
   const scoreText = score == null || score === "" ? "" : `<span class="bracket-score">${esc(score)}</span>`;
   return `<div class="bracket-side${winner ? " winner" : ""}">${seed}<span class="bracket-name">${esc(label)}</span>${scoreText}</div>`;
 }
+function legsTarget(bestOf) {
+  const n = Number(bestOf);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.floor(n / 2) + 1;
+}
+function matchStateLine(match) {
+  if (match.status === "bye") {
+    const name = match.teamA?.name || match.teamB?.name || "One side";
+    return `${name} has a bye and moves on.`;
+  }
+  if (!match.teamA || !match.teamB) return "Waiting on the previous round.";
+  if (match.status === "complete") {
+    const winner = match.winnerTeamId === match.teamAId ? match.teamA?.name : match.teamB?.name;
+    const score = match.scoreA != null && match.scoreB != null ? ` ${match.scoreA}–${match.scoreB}` : "";
+    const by = match.reportedByName ? ` Entered by ${match.reportedByName}.` : "";
+    return `${winner || "The winner"} won${score}.${by}`;
+  }
+  return "Ready for a result.";
+}
 function tournamentResultForm(t, match) {
-  if (!t.canManage || !match.teamA || !match.teamB) return "";
-  if (match.status !== "pending" && match.status !== "complete") return "";
+  if (!match.canEnter && !match.canCorrect) return "";
   const selected = (id) => (match.winnerTeamId === id ? " selected" : "");
+  const target = legsTarget(t.bestOf);
+  const hint = target ? `First to ${target}` : "Legs";
+  const clear = match.canCorrect
+    ? `<form class="mt-2" data-form="TOURNAMENTCLEAR" data-id="${t.id}" data-match="${esc(match.id)}"><button class="btn-ghost" type="submit">CLEAR RESULT</button></form>`
+    : "";
   return `<form class="bracket-result" data-form="TOURNAMENTRESULT" data-id="${t.id}" data-match="${esc(match.id)}">
-    <select name="winnerTeamId" aria-label="Winner" required>
-      <option value="${esc(match.teamAId)}"${selected(match.teamAId)}>${esc(match.teamA.name)}</option>
-      <option value="${esc(match.teamBId)}"${selected(match.teamBId)}>${esc(match.teamB.name)}</option>
-    </select>
+    <label class="block text-xs font-bold tracking-widest text-muted">WINNER
+      <select name="winnerTeamId" aria-label="Winner" required class="mt-1 w-full">
+        <option value="${esc(match.teamAId)}"${selected(match.teamAId)}>${esc(match.teamA.name)}</option>
+        <option value="${esc(match.teamBId)}"${selected(match.teamBId)}>${esc(match.teamB.name)}</option>
+      </select>
+    </label>
     <div class="bracket-scores">
-      <input name="scoreA" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamA.name)}" value="${match.scoreA ?? ""}">
-      <input name="scoreB" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamB.name)}" value="${match.scoreB ?? ""}">
+      <input name="scoreA" inputmode="numeric" placeholder="${esc(hint)}" aria-label="Legs for ${esc(match.teamA.name)}" value="${match.scoreA ?? ""}">
+      <input name="scoreB" inputmode="numeric" placeholder="${esc(hint)}" aria-label="Legs for ${esc(match.teamB.name)}" value="${match.scoreB ?? ""}">
     </div>
-    <button class="btn-gold" type="submit">${match.status === "complete" ? "UPDATE RESULT" : "SAVE RESULT"}</button>
-  </form>`;
+    <button class="btn-gold" type="submit">${match.canCorrect ? "UPDATE RESULT" : "SAVE RESULT"}</button>
+  </form>${clear}`;
+}
+function tournamentResults(t) {
+  if (!t.bracket) return "";
+  const ready = (t.bracket.rounds || []).some((round) => (round.matches || []).some((match) => match.canEnter));
+  const target = legsTarget(t.bestOf);
+  const rule = target
+    ? `Matches are first to ${target} (best of ${t.bestOf}).`
+    : "Enter the legs each side won. The winner needs the higher score.";
+  const rounds = (t.bracket.rounds || [])
+    .map((round) => {
+      const matches = (round.matches || []).filter((match) => match.status !== "empty");
+      if (!matches.length) return "";
+      const rows = matches
+        .map((match) => {
+          const title =
+            match.status === "bye"
+              ? match.teamA?.name || match.teamB?.name || "Bye"
+              : `${match.teamA?.name || "Waiting"} vs ${match.teamB?.name || "Waiting"}`;
+          return `<div class="result-match">
+          <p class="text-sm font-bold">${esc(title)}</p>
+          <p class="mt-1 text-sm text-muted">${esc(matchStateLine(match))}</p>
+          ${tournamentResultForm(t, match)}
+        </div>`;
+        })
+        .join("");
+      return `<div class="mt-4"><h3 class="text-xs font-bold tracking-widest gold">${esc(round.name)}</h3>${rows}</div>`;
+    })
+    .join("");
+  return panel(
+    `<h2 class="text-lg font-bold">Results</h2>
+    <p class="mt-1 text-sm text-muted">${esc(rule)} Saving a result moves the winner into the next round. Byes move on by themselves. Staff can change a result until a later round has been played.</p>
+    ${ready ? `<p class="mt-2 text-sm">A match is ready. Enter the result and the winner moves on.</p>` : ""}
+    ${rounds}`,
+    "mt-6"
+  );
 }
 function tournamentBracket(t) {
   if (!t.bracket) return "";
@@ -3488,14 +3549,14 @@ function tournamentBracket(t) {
       if (!matches.length) return "";
       return `<div class="bracket-round">
       <h3 class="bracket-round-name">${esc(round.name)}</h3>
-      ${matches.map((match) => `<div class="bracket-match">${bracketSide(match.teamA, match)}${bracketSide(match.teamB, match)}${tournamentResultForm(t, match)}</div>`).join("")}
+      ${matches.map((match) => `<div class="bracket-match">${bracketSide(match.teamA, match)}${bracketSide(match.teamB, match)}</div>`).join("")}
     </div>`;
     })
     .join("");
   const winner = t.championName ? `<p class="mb-4 text-lg font-bold gold">Winner: ${esc(t.championName)}</p>` : "";
   return `<section class="mt-6">
     <h2 class="text-lg font-bold">Bracket</h2>
-    <p class="mt-1 text-sm text-muted">Single elimination. Scroll sideways on a phone.</p>
+    <p class="mt-1 text-sm text-muted">Single elimination. The gold row is the side that moved on. Scroll sideways on a phone.</p>
     ${winner}
     <div class="bracket mt-4">${rounds}</div>
   </section>`;
@@ -3514,7 +3575,7 @@ async function pageTournaments() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">Tournaments</h1>
-      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and admins post the event, then generate the bracket. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner.</p>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and admins post the event, then generate the bracket. Once it is under way, enter each result and the winner moves on. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner.</p>
       ${pageFlash()}
       ${d.canManage ? tournamentPostForm() : ""}
       <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
@@ -3544,6 +3605,7 @@ async function pageTournament(id) {
       ${tournamentStaffPanel(t)}
       ${tournamentEntrants(t)}
       ${tournamentUnpaired(t)}
+      ${tournamentResults(t)}
       ${tournamentBracket(t)}
     </div>`,
     { arena: true }
@@ -4603,9 +4665,19 @@ document.addEventListener("submit", async (e) => {
         : "Bracket generated.";
       render();
     } else if (kind === "TOURNAMENTRESULT") {
-      await api(`/api/admin/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify(fd) });
+      const saved = await api(`/api/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify(fd) });
+      const next = saved.tournament;
       state.error = "";
-      state.notice = "Result saved.";
+      state.notice =
+        next?.status === "complete" && next.championName
+          ? `Result saved. ${next.championName} won the tournament.`
+          : "Result saved. The winner moves into the next round.";
+      render();
+    } else if (kind === "TOURNAMENTCLEAR") {
+      if (!window.confirm("Clear this result? That player comes out of the next round.")) return;
+      await api(`/api/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify({ clear: true }) });
+      state.error = "";
+      state.notice = "Result cleared. That place in the next round is open again.";
       render();
     }
   } catch (err) {

@@ -1763,4 +1763,14 @@ input, select, textarea {
   grid-template-columns: 1fr 1fr;
   gap: 0.4rem;
 }
+.result-match {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.result-match .bracket-result {
+  margin-top: 0.55rem;
+  padding: 0;
+  border-top: 0;
+}
 
