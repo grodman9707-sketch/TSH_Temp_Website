@@ -49,6 +49,22 @@ import {
   sheetsKeyPayload,
   sheetsRows,
 } from "./sheetsExport.js";
+import {
+  acceptPartner,
+  clearPartner,
+  createTournament,
+  declinePartner,
+  deleteTournament,
+  findTournament,
+  generateTournamentBracket,
+  listTournaments,
+  publicTournament,
+  recordTournamentResult,
+  requestPartner,
+  signupTournament,
+  updateTournament,
+  withdrawTournament,
+} from "./tournaments.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -242,6 +258,7 @@ function readDb() {
   if (!Array.isArray(db.leagueRequests)) db.leagueRequests = [];
   if (!Array.isArray(db.matchChats)) db.matchChats = [];
   if (!Array.isArray(db.matchChatReads)) db.matchChatReads = [];
+  if (!Array.isArray(db.tournaments)) db.tournaments = [];
   return db;
 }
 function writeDb(db) {
@@ -1832,6 +1849,10 @@ function migrate(db) {
     db.staffLog = [];
     changed = true;
   }
+  if (!Array.isArray(db.tournaments)) {
+    db.tournaments = [];
+    changed = true;
+  }
   if (!Array.isArray(db.vacantSlots)) {
     db.vacantSlots = [];
     changed = true;
@@ -2689,6 +2710,62 @@ function sendExport(res, status, data, extraHeaders = {}) {
   json(res, status, data, headers);
 }
 
+function tournamentTitle(tournament) {
+  return String(tournament?.title || "Tournament").slice(0, 80);
+}
+
+function respondTournament(res, db, user, result, staffEvent) {
+  if (!result || result.error) {
+    return json(res, result?.status || 400, { ok: false, error: result?.error || "Could not update the tournament" });
+  }
+  if (staffEvent) recordStaff(db, user, staffEvent.action, { summary: staffEvent.summary });
+  writeDb(db);
+  if (result.removed) return json(res, 200, { ok: true });
+  const payload = {
+    ok: true,
+    tournament: publicTournament(db, result.tournament, user, { detail: true, canManage: isStaff(user) }),
+  };
+  if (result.unpairedCount != null) payload.unpairedCount = result.unpairedCount;
+  return json(res, 200, payload);
+}
+
+function handleTournamentRoutes(res, db, user, method, p, body) {
+  if (method === "GET" && p === "/api/tournaments") {
+    json(res, 200, {
+      ok: true,
+      canManage: isStaff(user),
+      tournaments: listTournaments(db, user, isStaff(user)),
+    });
+    return true;
+  }
+  const detail = p.match(/^\/api\/tournaments\/(\d+)$/);
+  if (method === "GET" && detail) {
+    const tournament = findTournament(db, detail[1]);
+    if (!tournament) json(res, 404, { ok: false, error: "Tournament not found" });
+    else json(res, 200, { ok: true, tournament: publicTournament(db, tournament, user, { detail: true, canManage: isStaff(user) }) });
+    return true;
+  }
+  const action = p.match(/^\/api\/tournaments\/(\d+)\/(signup|withdraw|partner\/accept|partner\/decline|partner\/clear|partner)$/);
+  if (method === "POST" && action) {
+    if (!user) {
+      json(res, 401, { ok: false, error: "Login required" });
+      return true;
+    }
+    const id = Number(action[1]);
+    const kind = action[2];
+    let result;
+    if (kind === "signup") result = signupTournament(db, id, user);
+    else if (kind === "withdraw") result = withdrawTournament(db, id, user);
+    else if (kind === "partner/accept") result = acceptPartner(db, id, user, body.partnerUserId);
+    else if (kind === "partner/decline") result = declinePartner(db, id, user, body.partnerUserId);
+    else if (kind === "partner/clear") result = clearPartner(db, id, user);
+    else result = requestPartner(db, id, user, body.partnerUserId);
+    respondTournament(res, db, user, result);
+    return true;
+  }
+  return false;
+}
+
 async function handleApi(req, res, url) {
   const db = readDb();
   if (awardDueByeWins(db)) writeDb(db);
@@ -2728,6 +2805,7 @@ async function handleApi(req, res, url) {
       canDelete: canOverride(user),
     });
   }
+  if (handleTournamentRoutes(res, db, user, method, p, body)) return;
   if (method === "GET" && p === "/api/ticker") return json(res, 200, await getPdcTicker(), { "Cache-Control": "public, max-age=60" });
   if ((method === "GET" || method === "HEAD") && (p === "/api/export" || p.startsWith("/api/export/"))) {
     const provided = sheetsApiKeyFrom(req, url);
@@ -4702,6 +4780,48 @@ async function handleApi(req, res, url) {
       });
       writeDb(db);
       return json(res, 200, { ok: true, announcement: item });
+    }
+    if (method === "POST" && p === "/api/admin/tournaments") {
+      const result = createTournament(db, user, body);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "post_tournament",
+        summary: `Posted tournament “${tournamentTitle(result.tournament)}”`,
+      });
+    }
+    const updateTournamentMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/update$/);
+    if (method === "POST" && updateTournamentMatch) {
+      const existing = findTournament(db, updateTournamentMatch[1]);
+      const result = updateTournament(db, updateTournamentMatch[1], body);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "update_tournament",
+        summary: `Updated tournament “${tournamentTitle(result.tournament || existing)}”`,
+      });
+    }
+    const deleteTournamentMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/delete$/);
+    if (method === "POST" && deleteTournamentMatch) {
+      const result = deleteTournament(db, deleteTournamentMatch[1]);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "delete_tournament",
+        summary: `Removed tournament “${tournamentTitle(result.tournament)}”`,
+      });
+    }
+    const bracketMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/bracket$/);
+    if (method === "POST" && bracketMatch) {
+      const result = generateTournamentBracket(db, bracketMatch[1], { replace: body.replace === true || body.replace === "1" || body.replace === 1 });
+      const left = result.unpairedCount || 0;
+      const extra = left ? ` ${left} player${left === 1 ? "" : "s"} left out of the draw.` : "";
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_bracket",
+        summary: `Generated brackets for “${tournamentTitle(result.tournament)}”.${extra}`,
+      });
+    }
+    const tournamentResultMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/matches\/([A-Za-z0-9]+)$/);
+    if (method === "POST" && tournamentResultMatch) {
+      const result = recordTournamentResult(db, tournamentResultMatch[1], tournamentResultMatch[2], body);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_result",
+        summary: `Recorded a result in “${tournamentTitle(result.tournament)}”`,
+      });
     }
     const deleteNews = p.match(/^\/api\/admin\/announcements\/(\d+)\/delete$/);
     if (method === "POST" && deleteNews) {
