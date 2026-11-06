@@ -3019,7 +3019,13 @@ async function pageAdmin() {
             ? "Approve player-verified match stats, generate fixtures, and override another admin’s confirmed result when needed."
             : `Confirm results for ${esc(d.leagues[0]?.title || "your league")}.`
       }</p>
-      <p class="mt-3"><a href="/tournaments" class="text-sm font-bold tracking-widest gold">TOURNAMENTS →</a></p>
+      ${collapsiblePanel({
+        id: "post-tournament",
+        title: "Post a tournament",
+        extra: "mt-6",
+        startOpen: true,
+        body: tournamentPostForm(),
+      })}
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}
       ${ownersPanel}
@@ -3305,9 +3311,7 @@ function tournamentCard(t) {
   </a>`;
 }
 function tournamentPostForm() {
-  return panel(
-    `<h2 class="text-lg font-bold">Post a tournament</h2>
-    <p class="mt-1 text-sm text-muted">Players see this on the Tournaments tab and can sign up until you generate the bracket.</p>
+  return `<p class="text-sm text-muted">Players see the event on the Tournaments tab and can sign up until you generate the bracket. This form stays on the Admin desk.</p>
     <form class="mt-4 space-y-3" data-form="POSTTOURNAMENT">
       <input name="title" maxlength="80" placeholder="Title" required aria-label="Title">
       <div class="grid gap-3 sm:grid-cols-2">
@@ -3332,9 +3336,8 @@ function tournamentPostForm() {
       </div>
       <textarea name="description" rows="4" placeholder="Where to meet, format notes, anything players should know" aria-label="Description"></textarea>
       <button class="btn-gold" type="submit">POST TOURNAMENT</button>
-    </form>`,
-    "mt-6"
-  );
+    </form>
+    <p class="mt-4"><a href="/tournaments" class="text-sm font-bold tracking-widest gold">VIEW TOURNAMENTS →</a></p>`;
 }
 function tournamentActions(t) {
   if (t.status !== "open") return t.joined ? `<p class="mt-4 text-sm">You're in this tournament.</p>` : "";
@@ -3575,9 +3578,8 @@ async function pageTournaments() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">Tournaments</h1>
-      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and admins post the event, then generate the bracket. Once it is under way, enter each result and the winner moves on. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner.</p>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner. Once a bracket is up, enter your result and the winner moves on.</p>
       ${pageFlash()}
-      ${d.canManage ? tournamentPostForm() : ""}
       <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
     </div>`,
     { arena: true }
