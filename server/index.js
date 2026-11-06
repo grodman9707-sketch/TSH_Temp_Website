@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { getPdcTicker, warmPdcTicker } from "./pdcTicker.js";
 import { roundRobinWeeks, addDays, pairingKey } from "./season.js";
 import { fillMissingRosterByes } from "./rosterFixtures.js";
+import { giveHarleyWeekOneToJamie } from "./harleyWeekOne.js";
 import { alignLaggingDivisionWeeks } from "./fixtureCalendar.js";
 import { divisionReview } from "./divisionReview.js";
 import { standingsForLeague } from "./standings.js";
@@ -2015,6 +2016,9 @@ function migrate(db) {
       }
     }
   }
+  // Jamie is already on Harley's week 1 result before the roster bye pass,
+  // so that pass does not invent a second week 1 game for him.
+  if (giveHarleyWeekOneToJamie(db)) changed = true;
   // One pass: a roster player who is the only name missing from an existing
   // week gets that week as a bye. Played scores are not rewritten here.
   if (!structureState(db).rosterWeekByesFilled) {
