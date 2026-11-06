@@ -92,10 +92,14 @@ const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
 const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 check("nav has a Tournaments tab", appJs.includes('["/tournaments", "Tournaments"]'));
 check("tournament routes render", appJs.includes('if (q === "/tournaments")') && appJs.includes("pageTournament"));
-check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
+const adminPage = appJs.slice(appJs.indexOf("async function pageAdmin"), appJs.indexOf("function tournamentFormatLabel"));
+const tournamentListPage = appJs.slice(appJs.indexOf("async function pageTournaments"), appJs.indexOf("async function pageTournament"));
+check("staff post tournaments from the admin desk", adminPage.includes("tournamentPostForm()") && adminPage.includes('id: "post-tournament"'));
+check("the tournaments tab has no creation form", !tournamentListPage.includes("tournamentPostForm") && !tournamentListPage.includes("POSTTOURNAMENT") && !tournamentListPage.includes("Post a tournament"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
+check("bracket generation stays available to staff", appJs.includes("GENERATE BRACKET"));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=82") && html.includes("styles.css?v=82"));
+check("cache bust covers the new tab", html.includes("app.js?v=83") && html.includes("styles.css?v=83"));
 check("results can be entered from the tournament page", appJs.includes('data-form="TOURNAMENTRESULT"') && appJs.includes("The winner moves into the next round"));
 
 async function waitHealth(port, child) {
