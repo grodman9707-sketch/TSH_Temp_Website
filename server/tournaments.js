@@ -3,6 +3,7 @@
 // The cutoff defaults to 50. Even teams pair the highest average with the lowest.
 // Signup can also be split into separate brackets by that cutoff or by division.
 
+import { wheelStepMs } from "../public/tournamentWheel.js";
 import { isValidTimeZone, wallStringToUtc } from "./timezones.js";
 
 export const AVG_SPLIT = 50;
@@ -617,6 +618,7 @@ export function createTournament(db, user, body, access = { override: true }) {
     avgSplit: setup.avgSplit,
     pools: setup.pools,
     manualTeams: [],
+    wheelReveal: null,
     status: "open",
     createdById: user?.id ?? null,
     createdAt: new Date().toISOString(),
@@ -713,6 +715,7 @@ export function withdrawTournament(db, id, user) {
   tournament.manualTeams = (tournament.manualTeams || [])
     .map((team) => ({ ...team, playerIds: (team.playerIds || []).map(Number).filter((id) => id !== leaving) }))
     .filter((team) => team.playerIds.length);
+  scrubWheelReveal(tournament, leaving);
   tournament.entries = tournament.entries.filter((entry) => Number(entry.userId) !== leaving);
   return { status: 200, tournament };
 }
@@ -994,18 +997,60 @@ export function saveTournamentTeams(db, id, body) {
   const parsed = parseManualTeams(db, tournament, body?.teams);
   if (parsed.error) return fail(400, parsed.error);
   const previousManual = tournament.manualTeams;
+  const previousReveal = tournament.wheelReveal || null;
   tournament.manualTeams = parsed.teams;
+  tournament.wheelReveal = null;
   if (!drawList(tournament).length) return { status: 200, tournament };
   const composed = composeBracket(db, tournament, Math.random);
   if (composed.error) {
     tournament.manualTeams = previousManual;
+    tournament.wheelReveal = previousReveal;
     return fail(400, composed.error);
   }
   applyBracket(tournament, composed);
   return { status: 200, tournament, unpairedCount: composed.unpaired.length };
 }
 
-export function balanceTournamentTeams(db, id) {
+function scrubWheelReveal(tournament, userId) {
+  const reveal = tournament.wheelReveal;
+  if (!reveal) return;
+  const id = Number(userId);
+  if ((reveal.order || []).map(Number).includes(id)) {
+    tournament.wheelReveal = null;
+    return;
+  }
+  reveal.satOut = (reveal.satOut || []).filter((person) => Number(person.userId) !== id);
+  reveal.players = (reveal.players || []).filter((person) => Number(person.userId) !== id);
+}
+
+function buildWheelReveal(db, tournament, rng) {
+  const players = playersFromEntries(db, tournament);
+  const byId = new Map(players.map((player) => [Number(player.userId), player]));
+  const pairs = [];
+  const used = new Set();
+  for (const team of tournament.manualTeams || []) {
+    const seats = (team.playerIds || []).map((id) => byId.get(Number(id))).filter(Boolean);
+    if (seats.length !== 2) continue;
+    seats.forEach((player) => used.add(player.userId));
+    pairs.push(seats);
+  }
+  const ordered = shuffle(pairs, rng).map((pair) => shuffle(pair.slice(), rng));
+  const wheelPlayers = players
+    .map((player) => ({ userId: Number(player.userId), name: player.name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+  return {
+    id: `${Date.now().toString(36)}-${Math.floor(rng() * 1e9).toString(36)}`,
+    startedAt: new Date().toISOString(),
+    stepMs: wheelStepMs(ordered.length * 2),
+    order: ordered.flat().map((player) => Number(player.userId)),
+    pairs: ordered.map((pair) => pair.map((player) => Number(player.userId))),
+    satOut: players.filter((player) => !used.has(player.userId)).map((player) => ({ userId: Number(player.userId), name: player.name })),
+    players: wheelPlayers,
+  };
+}
+
+export function balanceTournamentTeams(db, id, options = {}) {
+  const rng = typeof options.rng === "function" ? options.rng : Math.random;
   const tournament = findTournament(db, id);
   if (!tournament) return fail(404, "Tournament not found");
   if (tournament.format !== "doubles") return fail(400, "Even teams are for doubles");
@@ -1023,7 +1068,10 @@ export function balanceTournamentTeams(db, id) {
     }
   }
   if (!teams.length) return fail(400, "Need at least two players in a pool to make an even team");
-  return saveTournamentTeams(db, id, { teams });
+  const saved = saveTournamentTeams(db, id, { teams });
+  if (saved.error || !saved.tournament) return saved;
+  saved.tournament.wheelReveal = buildWheelReveal(db, saved.tournament, rng);
+  return saved;
 }
 
 function parseScores(body, winnerTeamId, match) {
@@ -1220,6 +1268,30 @@ function statusRank(status) {
   return 9;
 }
 
+function presentWheel(entryViews, tournament) {
+  if (drawList(tournament).length) return null;
+  const live = entryViews
+    .map((entry) => ({ userId: Number(entry.userId), name: entry.name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+  const reveal = tournament.wheelReveal;
+  if (!reveal || !Array.isArray(reveal.order) || !reveal.order.length) return { players: live, reveal: null };
+  const step = Number(reveal.stepMs) || wheelStepMs(reveal.order.length);
+  const started = Date.parse(reveal.startedAt);
+  const playing = Number.isFinite(started) && Date.now() < started + reveal.order.length * step + 800;
+  const frozen = Array.isArray(reveal.players) ? reveal.players : null;
+  return {
+    players: playing && frozen?.length ? frozen.map((player) => ({ userId: Number(player.userId), name: String(player.name || "Player") })) : live,
+    reveal: {
+      id: String(reveal.id),
+      startedAt: reveal.startedAt,
+      stepMs: step,
+      order: reveal.order.map(Number),
+      pairs: (reveal.pairs || []).map((pair) => (pair || []).map(Number)),
+      satOut: (reveal.satOut || []).map((person) => ({ userId: Number(person.userId), name: String(person.name || "Player") })),
+    },
+  };
+}
+
 export function publicTournament(db, tournament, viewer, { detail = false, canManage = false } = {}) {
   const entries = Array.isArray(tournament.entries) ? tournament.entries : [];
   const meId = viewer ? Number(viewer.id) : null;
@@ -1318,6 +1390,7 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
     teamEdits: (tournament.manualTeams || []).some((team) => (team.playerIds || []).length),
     teamCards: editable ? editorCards(db, tournament) : [],
     teamPlayers: editable ? teamPlayerOptions(db, tournament) : [],
+    wheel: presentWheel(entryViews, tournament),
   };
 }
 

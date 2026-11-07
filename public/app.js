@@ -2,6 +2,7 @@ import { hasNumericExtracted, mergeOcrStats, overlayExtractedStats, pickBestOcrT
 import { applyAnnouncementFormat, announcementsForHome, formatAnnouncementBody, NEWS_EMOJIS, newsTabShouldGlow } from "./announcementFormat.js";
 import { divisionSpotCards, openSpotLabel, placePlayerOptionLabel, unplacedPlaceChoices } from "./placePlayers.js";
 import { fixtureWeekGroups, fixtureWeekTitle, selectFixtureWeek } from "./fixtureWeeks.js";
+import { nextWheelRotation, wheelPlan, wheelStopRotation, wheelSvg } from "./tournamentWheel.js";
 
 const TOKEN_KEY = "tsh_token";
 const REMEMBER_KEY = "tsh_remember";
@@ -57,6 +58,11 @@ const state = {
   noticeFixtureId: null,
   overrideLeagueId: "",
   overrideFixtureId: null,
+  wheelForcePlay: null,
+  wheelHold: false,
+  wheelSpinning: null,
+  tournamentDirty: false,
+  tournamentPoll: null,
 };
 
 function token() {
@@ -3609,7 +3615,7 @@ function tournamentTeamEditor(t) {
   const intro =
     t.partnerMode === "choose"
       ? "Confirmed partners are filled in. A player without a partner stays on a card with a blank seat. Choose a player for that seat, then save."
-      : "Make even teams to pair the highest average with the lowest, then move anyone you want. Save before you generate, or generate straight from the partner rule.";
+      : "Make even teams to spin the wheel. It lands on each player, pairing the highest average with the lowest. Move anyone you want, then generate the bracket.";
   const cards = (t.teamCards || [])
     .map((card) => {
       const ids = card.playerIds || [];
@@ -3669,7 +3675,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Chosen partners can be filled in on a blank seat. Saved team edits are used when you generate. Regenerating clears those edits.</p>
+    <p class="mt-1 text-sm text-muted">The draw wheel stays up until you generate the bracket. That replaces the wheel and starts the tournament. Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -3738,17 +3744,15 @@ function bracketSide(team, match) {
 function tournamentResultForm(t, match) {
   if (!t.canManage || !match.teamA || !match.teamB) return "";
   if (match.status !== "pending" && match.status !== "complete") return "";
-  const selected = (id) => (match.winnerTeamId === id ? " selected" : "");
+  const button = (team) => {
+    const won = match.winnerTeamId === team.id;
+    const label = won ? `${team.name} won` : `${team.name} wins`;
+    return `<button class="${won ? "btn-gold" : "btn-ghost"}" type="submit" name="winnerTeamId" value="${esc(team.id)}">${esc(label)}</button>`;
+  };
   return `<form class="bracket-result" data-form="TOURNAMENTRESULT" data-id="${t.id}" data-match="${esc(match.id)}">
-    <select name="winnerTeamId" aria-label="Winner" required>
-      <option value="${esc(match.teamAId)}"${selected(match.teamAId)}>${esc(match.teamA.name)}</option>
-      <option value="${esc(match.teamBId)}"${selected(match.teamBId)}>${esc(match.teamB.name)}</option>
-    </select>
-    <div class="bracket-scores">
-      <input name="scoreA" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamA.name)}" value="${match.scoreA ?? ""}">
-      <input name="scoreB" inputmode="numeric" placeholder="Legs" aria-label="Legs for ${esc(match.teamB.name)}" value="${match.scoreB ?? ""}">
-    </div>
-    <button class="btn-gold" type="submit">${match.status === "complete" ? "UPDATE RESULT" : "SAVE RESULT"}</button>
+    <p class="text-xs font-bold tracking-widest text-muted">WIN / LOSS</p>
+    ${button(match.teamA)}
+    ${button(match.teamB)}
   </form>`;
 }
 function bracketMarkup(t, bracket) {
@@ -3779,6 +3783,47 @@ function tournamentBracket(t) {
   if ((t.draws || []).length) return t.draws.map((draw) => bracketSection(t, draw)).join("");
   if (!t.bracket) return "";
   return bracketSection(t, { name: "", championName: t.championName, bracket: t.bracket });
+}
+function tournamentWatchKey(t) {
+  const bits = [t?.status || "", t?.wheel?.reveal?.id || "", t?.championName || ""];
+  const pushBracket = (bracket) => {
+    for (const round of bracket?.rounds || []) {
+      for (const match of round.matches || []) bits.push(`${match.id}:${match.status}:${match.winnerTeamId || ""}`);
+    }
+  };
+  pushBracket(t?.bracket);
+  for (const draw of t?.draws || []) pushBracket(draw.bracket);
+  bits.push((t?.entries || []).map((entry) => entry.userId).join("."));
+  return bits.join("|");
+}
+function tournamentWheel(t) {
+  const wheel = t.wheel || { players: [], reveal: null };
+  const players = wheel.players || [];
+  const payload = { doubles: t.format === "doubles", players, reveal: wheel.reveal || null };
+  const names = players.map((player) => `<li>${esc(player.name)}</li>`).join("");
+  const canSpin = t.canManage && t.format === "doubles" && t.status !== "complete" && !t.teamsLocked;
+  const blurb =
+    t.format === "doubles"
+      ? "Every player who signed up is on the wheel. Make even teams and it spins, landing on each player in the draw."
+      : "Every player who signed up is on the wheel. The bracket replaces it when the tournament starts.";
+  return panel(
+    `<h2 class="text-lg font-bold">Draw wheel</h2>
+    <p class="mt-1 text-sm text-muted">${esc(blurb)}</p>
+    <div class="wheel-stage" data-tournament-wheel>
+      <div class="wheel-pointer" aria-hidden="true"></div>
+      <div class="wheel-rotor" data-wheel-rotor>${wheelSvg(players)}</div>
+    </div>
+    <p class="wheel-live" data-wheel-live aria-live="polite">${players.length ? "Every signed-up player is on the wheel." : "No one has signed up yet."}</p>
+    <ol class="wheel-drawn" data-wheel-teams></ol>
+    ${names ? `<ul class="wheel-names">${names}</ul>` : ""}
+    ${canSpin ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>` : ""}
+    <div hidden data-wheel-state>${esc(JSON.stringify(payload))}</div>`,
+    "mt-6"
+  );
+}
+function tournamentStage(t) {
+  if ((t.draws || []).length || t.bracket) return tournamentBracket(t);
+  return tournamentWheel(t);
 }
 function tournamentBands(t) {
   if (t.poolMode === "avg" || t.poolMode === "division") {
@@ -3817,7 +3862,7 @@ async function pageTournament(id) {
   const d = await api(`/api/tournaments/${id}`);
   const t = d.tournament;
   return layout(
-    `<div class="mx-auto max-w-5xl px-4 py-10">
+    `<div class="mx-auto max-w-5xl px-4 py-10" data-tournament-page="${t.id}" data-tournament-watch="${esc(tournamentWatchKey(t))}">
       <a href="/tournaments" class="gold text-sm font-bold">← Tournaments</a>
       <div class="mt-4 flex flex-wrap items-start justify-between gap-3">
         <h1 class="page-title font-extrabold">${esc(t.title)}</h1>
@@ -3832,12 +3877,12 @@ async function pageTournament(id) {
       ${tournamentPoolList(t)}
       ${tournamentPoolNote(t)}
       ${tournamentActions(t)}
+      ${tournamentStage(t)}
       ${tournamentPartnerPanel(t)}
       ${tournamentStaffPanel(t)}
       ${tournamentTeamEditor(t)}
       ${tournamentEntrants(t)}
       ${tournamentUnpaired(t)}
-      ${tournamentBracket(t)}
     </div>`,
     { arena: true }
   );
@@ -3869,6 +3914,166 @@ function matchRoute(path) {
   return ["home"];
 }
 
+const wheelTimers = [];
+function clearWheelTimers() {
+  for (const id of wheelTimers) clearTimeout(id);
+  wheelTimers.length = 0;
+}
+function mountTournamentWheel() {
+  clearWheelTimers();
+  const root = document.querySelector("[data-tournament-wheel]");
+  if (!root) {
+    state.wheelSpinning = null;
+    return;
+  }
+  let payload = {};
+  try {
+    payload = JSON.parse(root.parentElement?.querySelector("[data-wheel-state]")?.textContent || "{}");
+  } catch {
+    payload = {};
+  }
+  const rotor = root.querySelector("[data-wheel-rotor]");
+  const live = root.parentElement?.querySelector("[data-wheel-live]");
+  const teamsEl = root.parentElement?.querySelector("[data-wheel-teams]");
+  const players = payload.players || [];
+  const reveal = payload.reveal;
+  const names = new Map(players.map((player) => [Number(player.userId), player.name]));
+  for (const person of reveal?.satOut || []) names.set(Number(person.userId), person.name);
+  let rotation = players.length ? wheelStopRotation(0, players.length) : 0;
+  const say = (text) => {
+    if (live) live.textContent = text;
+  };
+  const paint = (pairsDone) => {
+    if (!teamsEl || !reveal) return;
+    const pairs = reveal.pairs || [];
+    const items = pairs.slice(0, pairsDone).map((pair, index) => {
+      const label = pair.map((id) => names.get(Number(id)) || "Player").join(" & ");
+      return `<li><span>Team ${index + 1}</span><b>${esc(label)}</b></li>`;
+    });
+    if (pairsDone >= pairs.length && (reveal.satOut || []).length) {
+      items.push(`<li><span>Sat out</span><b>${esc(reveal.satOut.map((person) => person.name).join(", "))}</b></li>`);
+    }
+    teamsEl.innerHTML = items.join("");
+  };
+  const spinTo = (userId, ms, snap = false) => {
+    const index = players.findIndex((player) => Number(player.userId) === Number(userId));
+    if (index < 0 || !rotor) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (snap) {
+      rotation = wheelStopRotation(index, players.length);
+      rotor.style.transition = "none";
+      rotor.style.transform = `rotate(${rotation}deg)`;
+      return;
+    }
+    const turns = reduced ? 0 : ms < 700 ? 1 : 4;
+    rotation = nextWheelRotation(rotation, index, players.length, turns);
+    rotor.style.transition = reduced ? "none" : `transform ${Math.max(0, ms)}ms cubic-bezier(.12,.75,.12,1)`;
+    rotor.style.transform = `rotate(${rotation}deg)`;
+  };
+  if (rotor) {
+    rotor.style.transition = "none";
+    rotor.style.transform = `rotate(${rotation}deg)`;
+  }
+  if (!players.length) {
+    say("No one has signed up yet.");
+    state.wheelSpinning = null;
+    return;
+  }
+  if (!reveal?.order?.length) {
+    say(payload.doubles ? "Every signed-up player is on the wheel. It spins when even teams are drawn." : "Every signed-up player is on the wheel.");
+    state.wheelSpinning = null;
+    return;
+  }
+  let started = Date.parse(reveal.startedAt);
+  const force = String(state.wheelForcePlay || "") === String(reveal.id);
+  if (force) {
+    started = Date.now();
+    state.wheelForcePlay = null;
+    root.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  const step = Number(reveal.stepMs) || 2200;
+  const spinMs = Math.max(450, Math.round(step * 0.72));
+  const count = reveal.order.length;
+  const finish = (snap) => {
+    if (snap) spinTo(reveal.order[count - 1], 0, true);
+    paint((reveal.pairs || []).length);
+    say("Teams are set. The bracket appears here when the tournament is ready to start.");
+    state.wheelSpinning = null;
+    if (state.tournamentDirty) {
+      state.tournamentDirty = false;
+      render();
+    }
+  };
+  const playIndex = (index, into) => {
+    const userId = reveal.order[index];
+    const name = names.get(Number(userId)) || "Player";
+    const remain = Math.max(280, spinMs - into);
+    const already = into >= spinMs;
+    spinTo(userId, already ? 0 : remain, already);
+    const timer = setTimeout(() => {
+      say(`Landed on ${name}`);
+      if (index % 2 === 1) paint((index + 1) / 2);
+    }, already ? 0 : remain);
+    wheelTimers.push(timer);
+  };
+  const plan = wheelPlan(Date.now(), started, count, step);
+  if (plan.phase === "done") {
+    finish(true);
+    return;
+  }
+  state.wheelSpinning = reveal.id;
+  if (plan.phase === "wait") {
+    say("The wheel is about to spin.");
+    wheelTimers.push(setTimeout(() => mountTournamentWheel(), plan.delayMs + 20));
+    return;
+  }
+  paint(plan.donePairs);
+  playIndex(plan.index, plan.into || 0);
+  for (let index = plan.index + 1; index < count; index++) {
+    const at = started + index * step;
+    wheelTimers.push(setTimeout(() => playIndex(index, 0), Math.max(0, at - Date.now())));
+  }
+  const endAt = started + count * step;
+  wheelTimers.push(setTimeout(() => finish(false), Math.max(0, endAt - Date.now()) + 40));
+}
+let tournamentPollGen = 0;
+function stopTournamentWatch() {
+  tournamentPollGen += 1;
+  if (state.tournamentPoll) clearInterval(state.tournamentPoll);
+  state.tournamentPoll = null;
+}
+function startTournamentWatch() {
+  stopTournamentWatch();
+  const page = document.querySelector("[data-tournament-page]");
+  if (!page) return;
+  const id = page.dataset.tournamentPage;
+  const gen = tournamentPollGen;
+  state.tournamentPoll = setInterval(() => refreshTournament(gen, id), 2500);
+}
+async function refreshTournament(gen, id) {
+  if (gen !== tournamentPollGen || state.rendering || state.wheelHold) return;
+  const page = document.querySelector("[data-tournament-page]");
+  if (!page || page.dataset.tournamentPage !== String(id)) return;
+  const active = document.activeElement;
+  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+  try {
+    const data = await api(`/api/tournaments/${id}`);
+    if (gen !== tournamentPollGen) return;
+    const next = tournamentWatchKey(data.tournament);
+    const current = document.querySelector("[data-tournament-page]")?.dataset.tournamentWatch || "";
+    if (next === current) return;
+    const bracketLive = Boolean(data.tournament.bracket) || (data.tournament.draws || []).length > 0;
+    const sameReveal = String(data.tournament.wheel?.reveal?.id || "") === String(state.wheelSpinning || "");
+    if (state.wheelSpinning && sameReveal && !bracketLive) {
+      state.tournamentDirty = true;
+      return;
+    }
+    state.tournamentDirty = false;
+    render();
+  } catch {
+    /* keep the open tournament page */
+  }
+}
 function chatNoticeKey(items) {
   return (items || []).map((item) => `${item.fixtureId}:${item.count}:${item.latestAt || ""}`).join("|");
 }
@@ -3943,6 +4148,8 @@ async function render() {
   }
   state.rendering = true;
   stopChatWatch();
+  stopTournamentWatch();
+  clearWheelTimers();
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
@@ -3997,6 +4204,8 @@ async function render() {
     });
     document.querySelectorAll('form[data-form="POSTTOURNAMENT"]').forEach(syncTournamentForm);
     document.querySelectorAll('form[data-form="TOURNAMENTTEAMS"]').forEach(syncTeamForm);
+    mountTournamentWheel();
+    startTournamentWatch();
     startChatWatch();
   } catch (err) {
     app.innerHTML = layout(`<div class="px-4 py-20 text-center sm:px-6"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
@@ -4959,10 +5168,16 @@ document.addEventListener("submit", async (e) => {
       state.notice = kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : "Teams saved.";
       render();
     } else if (kind === "TOURNAMENTBALANCE") {
-      await api(`/api/admin/tournaments/${form.dataset.id}/teams/balance`, { method: "POST", body: "{}" });
-      state.error = "";
-      state.notice = "Even teams saved. The highest averages are paired with the lowest. Generate the bracket when the cards look right.";
-      render();
+      state.wheelHold = true;
+      try {
+        const balanced = await api(`/api/admin/tournaments/${form.dataset.id}/teams/balance`, { method: "POST", body: "{}" });
+        state.wheelForcePlay = balanced.tournament?.wheel?.reveal?.id || null;
+        state.error = "";
+        state.notice = "The wheel is spinning. It stops on each player. Highest averages are paired with the lowest.";
+        await render();
+      } finally {
+        state.wheelHold = false;
+      }
     } else if (kind === "TOURNAMENTBRACKET") {
       if (fd.replace === "1" && !window.confirm("Replace the current bracket and clear team edits? This is blocked once a result is saved.")) return;
       if (fd.replace !== "1") {
