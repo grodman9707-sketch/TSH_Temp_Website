@@ -501,11 +501,13 @@ input[type="file"] {
   color: #999;
   font-size: 0.875rem;
 }
-.check-row input[type="checkbox"] {
+.check-row input[type="checkbox"],
+.check-row input[type="radio"] {
   width: 1.1rem;
   height: 1.1rem;
   padding: 0;
   accent-color: #e8b425;
+  flex: 0 0 auto;
 }
 input[type="datetime-local"],
 input[type="date"] {
@@ -1762,5 +1764,22 @@ input, select, textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.4rem;
+}
+.team-board {
+  display: grid;
+  gap: 0.75rem;
+}
+.team-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(232, 180, 37, 0.35);
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.22);
+}
+@media (min-width: 720px) {
+  .team-board {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
