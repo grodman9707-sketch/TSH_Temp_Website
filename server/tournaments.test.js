@@ -9,6 +9,7 @@ import {
   avgBand,
   buildSingleElim,
   createTournament,
+  pairEven,
   pairRandomMixed,
   parseStartsAt,
   seedPositions,
@@ -53,6 +54,22 @@ check(
     paired.unpaired.length === 1 &&
     paired.unpaired[0].userId === 5
 );
+check("a custom cutoff moves the 50 line", avgBand(60, 70) === "low" && avgBand(70, 70) === "high");
+const evened = pairEven([
+  { userId: 1, avg: 90 },
+  { userId: 2, avg: 70 },
+  { userId: 3, avg: 50 },
+  { userId: 4, avg: 40 },
+  { userId: 5, avg: 20 },
+]);
+const evenSums = evened.pairs.map(([a, b]) => a.avg + b.avg).sort((a, b) => a - b);
+check(
+  "even teams pair the highest average with the lowest and sit the middle player",
+  evened.unpaired.length === 1 &&
+    evened.unpaired[0].userId === 3 &&
+    evenSums[0] === 110 &&
+    evenSums[1] === 110
+);
 
 const bracket = buildSingleElim([
   { id: "t1", playerIds: [1], avg: 90 },
@@ -95,7 +112,9 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=81") && html.includes("styles.css?v=81"));
+check("cache bust covers the new tab", html.includes("app.js?v=84") && html.includes("styles.css?v=84"));
+check("staff can build even teams and fill blank seats", appJs.includes("MAKE EVEN TEAMS") && appJs.includes("ADD BLANK TEAM") && appJs.includes("Blank seat"));
+check("staff can split a tournament into pools", appJs.includes('name="poolMode"') && appJs.includes("Split by division"));
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;
@@ -208,6 +227,32 @@ try {
     },
   });
   check("division admins can post", adminPost.status === 200 && adminPost.data.tournament.title === "Admin Open");
+  check(
+    "a division admin's tournament is only their division",
+    (adminPost.data.tournament.leagueIds || []).join() === "9" && adminPost.data.tournament.entryLabel === "Division 1 only"
+  );
+  const otherDivision = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: admin.data.token,
+    body: { title: "Wrong division", format: "singles", startsAt: "2026-12-06T18:00", tz: "UTC", leagueIds: [10] },
+  });
+  check("a division admin cannot post another division", otherDivision.status === 400);
+  const divisionGuest = await register(port, "Outside Division", 55);
+  const adminEventId = adminPost.data.tournament.id;
+  const deniedEntry = await api(port, `/api/tournaments/${adminEventId}/signup`, { method: "POST", token: divisionGuest.data.token, body: {} });
+  check("players outside the division cannot enter", deniedEntry.status === 400);
+  const placedGuest = await api(port, "/api/admin/place-player", {
+    method: "POST",
+    token: owner,
+    body: { userId: divisionGuest.data.user.id, leagueId: 9 },
+  });
+  check("owner can place the player in Division 1", placedGuest.status === 200);
+  const divisionEntry = await api(port, `/api/tournaments/${adminEventId}/signup`, { method: "POST", token: divisionGuest.data.token, body: {} });
+  check("a Division 1 player can enter the admin tournament", divisionEntry.status === 200 && divisionEntry.data.tournament.joined === true);
+  const divisionTwo = await register(port, "Division Two", 42);
+  await api(port, "/api/admin/place-player", { method: "POST", token: owner, body: { userId: divisionTwo.data.user.id, leagueId: 10 } });
+  const wrongDivision = await api(port, `/api/tournaments/${adminEventId}/signup`, { method: "POST", token: divisionTwo.data.token, body: {} });
+  check("a Division 2 player cannot enter a Division 1 tournament", wrongDivision.status === 400);
 
   const later = await api(port, "/api/admin/tournaments", {
     method: "POST",
@@ -287,6 +332,8 @@ try {
   }
   const tooSoon = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: playerTok, body: {} });
   check("players cannot generate a bracket", tooSoon.status === 403);
+  const adminOnOpen = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: admin.data.token, body: {} });
+  check("a division admin cannot run an open tournament", adminOnOpen.status === 403);
   const drawn = await api(port, `/api/admin/tournaments/${singlesId}/bracket`, { method: "POST", token: owner, body: {} });
   check("singles bracket generates", drawn.status === 200 && drawn.data.tournament.status === "brackets");
   const firstRound = drawn.data.tournament.bracket.rounds[0];
@@ -501,6 +548,188 @@ try {
   check("staff can remove a tournament", removed.status === 200);
   const gone = await api(port, `/api/tournaments/${chooseId}`);
   check("a removed tournament is gone", gone.status === 404);
+
+  const even = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Even Teams", format: "doubles", partnerMode: "even", startsAt: "2026-12-21T19:00", tz: "UTC" },
+  });
+  const evenId = even.data.tournament.id;
+  const evenField = [];
+  for (const [name, avg] of [
+    ["Rae High", 90],
+    ["Sue Mid", 70],
+    ["Ty Low", 40],
+    ["Uma Base", 20],
+  ]) {
+    const person = await register(port, name, avg);
+    evenField.push({ name, id: person.data.user.id, token: person.data.token });
+    await api(port, `/api/tournaments/${evenId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const evenDraw = await api(port, `/api/admin/tournaments/${evenId}/bracket`, { method: "POST", token: owner, body: {} });
+  const evenTeams = evenDraw.data.tournament.teams.map((team) => ({ avg: team.avg, ids: team.playerIds.slice().sort((a, b) => a - b).join("-") }));
+  check("even doubles makes two teams with the same average", evenDraw.status === 200 && evenTeams.length === 2 && evenTeams[0].avg === evenTeams[1].avg);
+  const rae = evenField.find((person) => person.name === "Rae High");
+  const uma = evenField.find((person) => person.name === "Uma Base");
+  const sue = evenField.find((person) => person.name === "Sue Mid");
+  const ty = evenField.find((person) => person.name === "Ty Low");
+  const swapped = await api(port, `/api/admin/tournaments/${evenId}/teams`, {
+    method: "POST",
+    token: owner,
+    body: { teams: [{ playerIds: [rae.id, sue.id] }, { playerIds: [ty.id, uma.id] }] },
+  });
+  const swappedIds = (swapped.data.tournament.teams || []).map((team) => team.playerIds.slice().sort((a, b) => a - b).join("-")).sort();
+  check(
+    "staff can edit teams and the bracket follows",
+    swapped.status === 200 && swappedIds.join("|") === [[rae.id, sue.id].sort((a, b) => a - b).join("-"), [ty.id, uma.id].sort((a, b) => a - b).join("-")].sort().join("|")
+  );
+  const evenFinal = swapped.data.tournament.bracket.rounds.at(-1).matches[0];
+  const locked = await api(port, `/api/admin/tournaments/${evenId}/matches/${evenFinal.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: evenFinal.teamAId, scoreA: 2, scoreB: 0 },
+  });
+  const editAfter = await api(port, `/api/admin/tournaments/${evenId}/teams`, {
+    method: "POST",
+    token: owner,
+    body: { teams: [{ playerIds: [rae.id, uma.id] }, { playerIds: [sue.id, ty.id] }] },
+  });
+  check("teams lock after a result is saved", locked.status === 200 && editAfter.status === 400);
+
+  const splitDraw = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: {
+      title: "Average Pools",
+      format: "doubles",
+      partnerMode: "even",
+      poolMode: "avg",
+      avgSplit: 60,
+      startsAt: "2026-12-22T19:00",
+      tz: "UTC",
+    },
+  });
+  const splitId = splitDraw.data.tournament.id;
+  for (const [name, avg] of [
+    ["Val 90", 90],
+    ["Wes 80", 80],
+    ["Xan 70", 70],
+    ["Yen 65", 65],
+    ["Zed 50", 50],
+    ["Amy 40", 40],
+    ["Bea 30", 30],
+    ["Cyd 20", 20],
+  ]) {
+    const person = await register(port, name, avg);
+    await api(port, `/api/tournaments/${splitId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const pooled = await api(port, `/api/admin/tournaments/${splitId}/bracket`, { method: "POST", token: owner, body: {} });
+  const poolNames = (pooled.data.tournament.draws || []).map((draw) => draw.name).sort();
+  const poolSeparated = (pooled.data.tournament.draws || []).every((draw) =>
+    draw.teams.every((team) => team.players.every((player) => (draw.poolId === "high" ? player.avg >= 60 : player.avg < 60)))
+  );
+  check("average pools get separate brackets around the chosen cutoff", pooled.status === 200 && poolNames.join("|") === "60+|60-" && poolSeparated);
+
+  const divisionCup = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: {
+      title: "Division Pools",
+      format: "singles",
+      poolMode: "division",
+      startsAt: "2026-12-23T19:00",
+      tz: "UTC",
+      pools: [
+        { name: "Divisions 1 & 2", leagueIds: [9, 10] },
+        { name: "Divisions 3, 4 & 5", leagueIds: [11, 12, 13] },
+      ],
+    },
+  });
+  const divisionId = divisionCup.data.tournament.id;
+  const divisionField = [];
+  for (const [name, avg, leagueId] of [
+    ["Ann One", 80, 9],
+    ["Bob Two", 70, 10],
+    ["Cal One", 60, 9],
+    ["Dee Three", 50, 11],
+    ["Eve Three", 40, 11],
+  ]) {
+    const person = await register(port, name, avg);
+    await api(port, "/api/admin/place-player", { method: "POST", token: owner, body: { userId: person.data.user.id, leagueId } });
+    divisionField.push({ name, id: person.data.user.id, token: person.data.token });
+    const up = await api(port, `/api/tournaments/${divisionId}/signup`, { method: "POST", token: person.data.token, body: {} });
+    check(`${name} enters the division pool`, up.status === 200);
+  }
+  const divisionDraw = await api(port, `/api/admin/tournaments/${divisionId}/bracket`, { method: "POST", token: owner, body: {} });
+  const byPool = new Map((divisionDraw.data.tournament.draws || []).map((draw) => [draw.name, draw.teams.flatMap((team) => team.players.map((player) => player.name))]));
+  check(
+    "division pools keep 1 and 2 apart from 3, 4, and 5",
+    divisionDraw.status === 200 &&
+      (byPool.get("Divisions 1 & 2") || []).slice().sort().join("|") === "Ann One|Bob Two|Cal One" &&
+      (byPool.get("Divisions 3, 4 & 5") || []).slice().sort().join("|") === "Dee Three|Eve Three"
+  );
+
+  const blanks = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Blank Cards", format: "doubles", partnerMode: "choose", startsAt: "2026-12-24T19:00", tz: "UTC" },
+  });
+  const blankId = blanks.data.tournament.id;
+  const blankField = [];
+  for (const [name, avg] of [
+    ["Fay Blank", 80],
+    ["Gil Blank", 30],
+    ["Hap Blank", 60],
+    ["Ivy Blank", 40],
+  ]) {
+    const person = await register(port, name, avg);
+    blankField.push({ name, id: person.data.user.id });
+    await api(port, `/api/tournaments/${blankId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const openCards = await api(port, `/api/tournaments/${blankId}`, { token: owner });
+  const cardSeats = (openCards.data.tournament.teamCards || []).map((card) => card.playerIds);
+  check(
+    "choose-your-partner starts each player on a card with a blank seat",
+    openCards.status === 200 && cardSeats.length === 4 && cardSeats.every((ids) => ids.filter(Boolean).length === 1)
+  );
+  const [fay, gil, hap, ivyBlank] = blankField;
+  const filled = await api(port, `/api/admin/tournaments/${blankId}/teams`, {
+    method: "POST",
+    token: owner,
+    body: { teams: [{ playerIds: [fay.id, gil.id] }, { playerIds: [hap.id, ivyBlank.id] }] },
+  });
+  check("staff can fill the blank seats", filled.status === 200 && filled.data.tournament.teamEdits === true);
+  const blankDraw = await api(port, `/api/admin/tournaments/${blankId}/bracket`, { method: "POST", token: owner, body: {} });
+  const blankPairs = (blankDraw.data.tournament.teams || []).map((team) => team.playerIds.slice().sort((a, b) => a - b).join("-")).sort();
+  check(
+    "filled blank cards become the teams",
+    blankDraw.status === 200 &&
+      blankDraw.data.tournament.unpaired.length === 0 &&
+      blankPairs.join("|") === [[fay.id, gil.id].sort((a, b) => a - b).join("-"), [hap.id, ivyBlank.id].sort((a, b) => a - b).join("-")].sort().join("|")
+  );
+
+  const cutoff = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Cutoff 70", format: "doubles", partnerMode: "random", avgSplit: 70, startsAt: "2026-12-25T19:00", tz: "UTC" },
+  });
+  const cutoffId = cutoff.data.tournament.id;
+  for (const [name, avg] of [
+    ["Jet 80", 80],
+    ["Kim 75", 75],
+    ["Lux 60", 60],
+    ["Max 40", 40],
+  ]) {
+    const person = await register(port, name, avg);
+    const up = await api(port, `/api/tournaments/${cutoffId}/signup`, { method: "POST", token: person.data.token, body: {} });
+    const entry = up.data.tournament.entries.find((item) => item.name === name);
+    check(`${name} uses the selected cutoff`, up.status === 200 && entry.band === (avg >= 70 ? "high" : "low"));
+  }
+  const cutoffDraw = await api(port, `/api/admin/tournaments/${cutoffId}/bracket`, { method: "POST", token: owner, body: {} });
+  check(
+    "random doubles honors the selected cutoff",
+    cutoffDraw.status === 200 && cutoffDraw.data.tournament.teams.every((team) => team.players.some((player) => player.avg >= 70) && team.players.some((player) => player.avg < 70))
+  );
 
   const detail = await api(port, `/api/tournaments/${mixedId}`, { token: owner });
   check("detail includes the bracket", detail.status === 200 && detail.data.tournament.bracket.rounds.length >= 1 && detail.data.tournament.canManage === true);

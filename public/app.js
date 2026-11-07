@@ -2366,6 +2366,7 @@ function staffActionLabel(action) {
     delete_tournament: "Removed tournament",
     tournament_bracket: "Generated bracket",
     tournament_result: "Recorded tournament result",
+    tournament_teams: "Edited tournament teams",
     add_region: "Added region",
     update_region: "Updated region",
     delete_region: "Removed region",
@@ -3255,8 +3256,10 @@ function pageFlash() {
   return `${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}${state.notice ? `<p class="mt-3 gold">${esc(state.notice)}</p>` : ""}`;
 }
 function tournamentFormatLabel(t) {
+  const split = t?.avgSplit ?? 50;
   if (t?.format === "doubles" && t?.partnerMode === "choose") return "Doubles · choose your partner";
-  if (t?.format === "doubles") return "Doubles · random 50+ with 50-";
+  if (t?.format === "doubles" && t?.partnerMode === "even") return "Doubles · even teams";
+  if (t?.format === "doubles") return `Doubles · random ${split}+ with ${split}-`;
   return "Singles";
 }
 function tournamentStatusLabel(status) {
@@ -3270,20 +3273,41 @@ function tournamentWhen(iso) {
 }
 function tournamentMeta(t) {
   const bits = [tournamentFormatLabel(t), tournamentWhen(t.startsAt)];
+  if (t.entryLabel && t.entryLabel !== "All players") bits.push(t.entryLabel);
+  if (t.poolMode === "avg") bits.push(`Pools split at ${t.avgSplit ?? 50}`);
+  if (t.poolMode === "division") bits.push("Division pools");
   if (t.bestOf) bits.push(`Best of ${t.bestOf}`);
   bits.push(t.capacity ? `${t.entryCount} / ${t.capacity} players` : `${t.entryCount} signed up`);
   if (t.joined) bits.push("You're in");
   if (t.championName) bits.push(`Winner: ${t.championName}`);
   return bits;
 }
+function tournamentLimitSentence(t) {
+  if (!t?.leagueIds?.length) return "";
+  const who = String(t.entryLabel || "selected divisions").replace(/ only$/, "");
+  return ` Only ${who} can enter.`;
+}
+function tournamentPoolSentence(t) {
+  if (t?.poolMode === "avg") {
+    const split = t.avgSplit ?? 50;
+    return ` Players at or above ${split} are one pool and everyone else is the other. Each pool has its own bracket.`;
+  }
+  if (t?.poolMode === "division") return " Each division pool has its own bracket.";
+  return "";
+}
 function tournamentRules(t) {
+  const extra = `${tournamentPoolSentence(t)}${tournamentLimitSentence(t)}`;
   if (t.format === "doubles" && t.partnerMode === "choose") {
-    return "Doubles. Sign up, then ask another signed-up player to be your partner. They have to accept. The bracket uses confirmed pairs only and is seeded by the pair's average.";
+    return `Doubles. Sign up, then ask another signed-up player to be your partner. They have to accept. Staff can fill a blank seat for anyone still without a partner. The bracket uses complete teams and is seeded by the team's average.${extra}`;
+  }
+  if (t.format === "doubles" && t.partnerMode === "even") {
+    return `Doubles. Teams pair the highest average with the lowest so the team averages stay as close as possible. If a group has an odd number of players, the middle average sits out. Staff can move players before a result is saved. Your average is saved when you sign up.${extra}`;
   }
   if (t.format === "doubles") {
-    return "Doubles. When the bracket is generated, each pair is one player with an average of 50 or higher and one player under 50, drawn at random. A 50.00 average counts as 50+. If one side has more players, the extras are left out. Your average is saved when you sign up.";
+    const split = t.avgSplit ?? 50;
+    return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Your average is saved when you sign up.${extra}`;
   }
-  return "Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.";
+  return `Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.${extra}`;
 }
 function bandPill(player) {
   if (!player?.band) return "";
@@ -3303,11 +3327,41 @@ function tournamentCard(t) {
     <p class="mt-2 text-sm text-muted">${tournamentMeta(t).map((bit) => esc(bit)).join(" · ")}</p>
   </a>`;
 }
-function tournamentPostForm() {
+function divisionChecks(leagues, attr, checked) {
+  if (!leagues.length) return `<p class="text-sm text-muted">No division is assigned to you yet.</p>`;
+  return leagues
+    .map(
+      (league) =>
+        `<label class="check-row"><input type="checkbox" ${attr} value="${league.id}"${checked ? " checked" : ""}> ${esc(league.name)}</label>`
+    )
+    .join("");
+}
+function poolBlock(name, leagues) {
+  return `<div data-pool class="space-y-2 rounded-lg border border-white/10 p-3">
+    <input data-pool-name value="${esc(name)}" maxlength="60" aria-label="${esc(name)} name">
+    <div class="space-y-1">${divisionChecks(leagues, "data-pool-league", false)}</div>
+    <button class="btn-ghost" type="button" data-act="remove-pool">REMOVE POOL</button>
+  </div>`;
+}
+function tournamentPostForm(ctx) {
+  const leagues = ctx?.manageLeagues || [];
+  const canOpen = Boolean(ctx?.canPostOpen);
+  const audience = canOpen
+    ? `<div class="space-y-2">
+        <p class="text-xs font-bold tracking-widest text-muted">WHO CAN ENTER</p>
+        <label class="check-row"><input type="radio" name="audience" value="open" checked> All players</label>
+        <label class="check-row"><input type="radio" name="audience" value="division"> Selected divisions only</label>
+        <div data-audience-divisions class="hidden space-y-1">${divisionChecks(leagues, "data-audience-league", false)}</div>
+      </div>`
+    : `<div data-audience-divisions class="space-y-1">
+        <p class="text-xs font-bold tracking-widest text-muted">YOUR DIVISION</p>
+        <p class="text-sm text-muted">This tournament is only for players in the divisions you admin.</p>
+        ${divisionChecks(leagues, "data-audience-league", true)}
+      </div>`;
   return panel(
     `<h2 class="text-lg font-bold">Post a tournament</h2>
     <p class="mt-1 text-sm text-muted">Players see this on the Tournaments tab and can sign up until you generate the bracket.</p>
-    <form class="mt-4 space-y-3" data-form="POSTTOURNAMENT">
+    <form class="mt-4 space-y-3" data-form="POSTTOURNAMENT" data-can-post-open="${canOpen ? "1" : "0"}">
       <input name="title" maxlength="80" placeholder="Title" required aria-label="Title">
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="block text-xs font-bold tracking-widest text-muted">FORMAT
@@ -3316,14 +3370,36 @@ function tournamentPostForm() {
             <option value="doubles">Doubles (2v2)</option>
           </select>
         </label>
-        <label class="block text-xs font-bold tracking-widest text-muted">DOUBLES PARTNERS
+        <label class="block text-xs font-bold tracking-widest text-muted" data-partner-wrap>DOUBLES PARTNERS
           <select name="partnerMode" aria-label="Doubles partners" class="mt-1 w-full">
-            <option value="random">Random: one 50+ with one 50-</option>
+            <option value="even">Even teams: highest average with lowest</option>
+            <option value="random" selected>Random: one side of the cutoff with the other</option>
             <option value="choose">Players choose their partner</option>
           </select>
         </label>
       </div>
-      <p class="text-xs text-muted">Partner choice is only used for doubles. 50+ means an average of 50.00 or higher.</p>
+      <label class="block text-xs font-bold tracking-widest text-muted">FIELD
+        <select name="poolMode" aria-label="Field pools" class="mt-1 w-full">
+          <option value="none">One field</option>
+          <option value="avg">Split into + and − average pools</option>
+          <option value="division">Split by division</option>
+        </select>
+      </label>
+      <div data-split-wrap class="hidden">
+        <label class="block text-xs font-bold tracking-widest text-muted">AVERAGE CUTOFF
+          <input name="avgSplit" inputmode="decimal" value="50" aria-label="Average cutoff" class="mt-1">
+        </label>
+        <p class="mt-1 text-xs text-muted" data-split-help>Random doubles pairs one player at or above this average with one player below it.</p>
+      </div>
+      ${audience}
+      <div data-pool-builder class="hidden space-y-3">
+        <p class="text-sm text-muted">Put divisions into pools. Division 1 and 2 can be one pool, and divisions 3, 4, and 5 another. A division can only sit in one pool. Each pool gets its own bracket.</p>
+        <div data-pool-builder-list class="space-y-3">
+          ${poolBlock("Pool 1", leagues)}
+          ${poolBlock("Pool 2", leagues)}
+        </div>
+        <button class="btn-ghost" type="button" data-act="add-pool">ADD POOL</button>
+      </div>
       <input name="startsAt" type="datetime-local" required aria-label="Start date and time">
       <div class="grid gap-3 sm:grid-cols-2">
         <input name="capacity" inputmode="numeric" placeholder="Player limit (optional)" aria-label="Player limit">
@@ -3335,9 +3411,64 @@ function tournamentPostForm() {
     "mt-6"
   );
 }
+function syncTournamentForm(form) {
+  if (!form) return;
+  const format = form.querySelector('[name="format"]')?.value || "singles";
+  const partner = form.querySelector('[name="partnerMode"]');
+  const pool = form.querySelector('[name="poolMode"]')?.value || "none";
+  const doubles = format === "doubles";
+  form.querySelector("[data-partner-wrap]")?.classList.toggle("hidden", !doubles);
+  const randomOption = partner?.querySelector('option[value="random"]');
+  if (randomOption) randomOption.disabled = pool === "avg";
+  if (pool === "avg" && partner?.value === "random") partner.value = "even";
+  const showSplit = pool === "avg" || (doubles && partner?.value === "random");
+  form.querySelector("[data-split-wrap]")?.classList.toggle("hidden", !showSplit);
+  const splitHelp = form.querySelector("[data-split-help]");
+  if (splitHelp) {
+    splitHelp.textContent =
+      pool === "avg"
+        ? "Players at or above this average are one pool. Everyone else is the other pool. Each pool gets its own bracket."
+        : "Random doubles pairs one player at or above this average with one player below it.";
+  }
+  form.querySelector("[data-pool-builder]")?.classList.toggle("hidden", pool !== "division");
+  const open = form.querySelector('[name="audience"]:checked')?.value === "open";
+  form.querySelector("[data-audience-divisions]")?.classList.toggle("hidden", open);
+  const restrict = !open && form.querySelector("[data-audience-league]");
+  const allowed = new Set([...form.querySelectorAll("[data-audience-league]:checked")].map((el) => el.value));
+  form.querySelectorAll("[data-pool-league]").forEach((box) => {
+    const blocked = Boolean(restrict) && !allowed.has(box.value);
+    box.disabled = blocked;
+    if (blocked) box.checked = false;
+  });
+}
+function tournamentPostPayload(form, fd) {
+  const canOpen = form.dataset.canPostOpen === "1";
+  const audience = canOpen ? form.querySelector('[name="audience"]:checked')?.value || "open" : "division";
+  const leagueIds =
+    audience === "division" ? [...form.querySelectorAll("[data-audience-league]:checked")].map((el) => Number(el.value)) : [];
+  if (audience === "division" && !leagueIds.length) throw new Error("Choose at least one division");
+  const poolMode = fd.poolMode || "none";
+  let pools = [];
+  if (poolMode === "division") {
+    const allowed = new Set(leagueIds);
+    pools = [...form.querySelectorAll("[data-pool]")].map((block) => ({
+      name: block.querySelector("[data-pool-name]")?.value || "",
+      leagueIds: [...block.querySelectorAll("[data-pool-league]:checked")]
+        .map((el) => Number(el.value))
+        .filter((id) => !allowed.size || allowed.has(id)),
+    }));
+  }
+  let partnerMode = fd.format === "doubles" ? fd.partnerMode : undefined;
+  if (poolMode === "avg" && partnerMode === "random") partnerMode = "even";
+  return { ...fd, tz: BROWSER_TZ, partnerMode, poolMode, leagueIds, pools };
+}
 function tournamentActions(t) {
   if (t.status !== "open") return t.joined ? `<p class="mt-4 text-sm">You're in this tournament.</p>` : "";
   if (!state.user) return `<p class="mt-4"><a href="/sign-in" class="btn-gold">SIGN IN TO ENTER</a></p>`;
+  if (t.eligible === false) {
+    const who = String(t.entryLabel || "selected divisions").replace(/ only$/, "");
+    return `<p class="mt-4 text-sm text-muted">This tournament is for ${esc(who)} players.</p>`;
+  }
   if (t.joined) return `<form class="mt-4" data-form="TOURNAMENTWITHDRAW" data-id="${t.id}"><button class="btn-ghost" type="submit">LEAVE TOURNAMENT</button></form>`;
   if (t.capacity != null && t.entryCount >= t.capacity) return `<p class="mt-4 text-sm text-muted">This tournament is full.</p>`;
   return `<form class="mt-4" data-form="TOURNAMENTSIGNUP" data-id="${t.id}"><button class="btn-gold" type="submit">SIGN UP</button></form>`;
@@ -3390,10 +3521,130 @@ function tournamentPartnerPanel(t) {
     "mt-6"
   );
 }
+function teamPlayersFrom(form) {
+  const node = form?.querySelector("[data-team-players]");
+  if (!node) return [];
+  const raw = node.tagName === "TEXTAREA" ? node.value : node.textContent;
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function teamOptionList(players, selected) {
+  const opts = (players || []).map((player) => {
+    const bits = [player.name, `avg ${player.avg}`];
+    if (player.divisionLabel && player.divisionLabel !== "No division") bits.push(player.divisionLabel);
+    if (player.poolName && player.poolId && player.poolId !== "all") bits.push(player.poolName);
+    const picked = Number(selected) === Number(player.userId) ? " selected" : "";
+    return `<option value="${player.userId}" data-pool="${esc(player.poolId || "all")}"${picked}>${esc(bits.join(" · "))}</option>`;
+  });
+  return `<option value="">Blank seat</option>${opts.join("")}`;
+}
+function syncTeamForm(form) {
+  if (!form) return;
+  const selects = [...form.querySelectorAll("[data-team-slot]")];
+  for (const card of form.querySelectorAll("[data-team-card]")) {
+    const slots = [...card.querySelectorAll("[data-team-slot]")];
+    const pools = slots
+      .map((select) => [...select.options].find((opt) => opt.value && opt.value === select.value)?.dataset.pool)
+      .filter(Boolean);
+    const pool = pools.find((id) => id && id !== "all") || "";
+    if (pool) {
+      for (const select of slots) {
+        if (!select.value) continue;
+        const option = [...select.options].find((opt) => opt.value === select.value);
+        if (option?.dataset.pool && option.dataset.pool !== pool) select.value = "";
+      }
+    }
+  }
+  const chosen = new Map();
+  for (const select of selects) {
+    if (select.value) chosen.set(select.value, select);
+  }
+  for (const card of form.querySelectorAll("[data-team-card]")) {
+    const slots = [...card.querySelectorAll("[data-team-slot]")];
+    const pool =
+      slots
+        .map((select) => [...select.options].find((opt) => opt.value && opt.value === select.value)?.dataset.pool)
+        .find((id) => id && id !== "all") || "";
+    for (const select of slots) {
+      for (const opt of select.options) {
+        if (!opt.value) {
+          opt.hidden = false;
+          opt.disabled = false;
+          continue;
+        }
+        const owner = chosen.get(opt.value);
+        const taken = Boolean(owner && owner !== select);
+        const wrongPool = Boolean(pool && opt.dataset.pool && opt.dataset.pool !== pool);
+        opt.hidden = taken || wrongPool;
+        opt.disabled = taken || wrongPool;
+      }
+    }
+    const filled = slots.filter((select) => select.value).length;
+    const label = card.querySelector("p");
+    if (label) label.textContent = filled === 2 ? "TEAM" : filled === 0 ? "BLANK TEAM" : "BLANK SEAT";
+  }
+}
+function addTeamCard(form) {
+  const board = form?.querySelector("[data-team-cards]");
+  if (!board) return;
+  board.querySelector("[data-team-empty]")?.remove();
+  const card = document.createElement("div");
+  card.className = "team-card";
+  card.setAttribute("data-team-card", "");
+  const options = teamOptionList(teamPlayersFrom(form), "");
+  card.innerHTML = `<p class="text-xs font-bold tracking-widest text-muted">BLANK TEAM</p>
+    <select data-team-slot aria-label="Player 1">${options}</select>
+    <select data-team-slot aria-label="Player 2">${options}</select>
+    <button class="btn-ghost" type="button" data-act="remove-team-card">REMOVE CARD</button>`;
+  board.appendChild(card);
+  syncTeamForm(form);
+}
+function tournamentTeamEditor(t) {
+  if (!t.canManage || t.format !== "doubles" || t.status === "complete" || t.teamsLocked) return "";
+  const players = t.teamPlayers || [];
+  const intro =
+    t.partnerMode === "choose"
+      ? "Confirmed partners are filled in. A player without a partner stays on a card with a blank seat. Choose a player for that seat, then save."
+      : "Make even teams to pair the highest average with the lowest, then move anyone you want. Save before you generate, or generate straight from the partner rule.";
+  const cards = (t.teamCards || [])
+    .map((card) => {
+      const ids = card.playerIds || [];
+      const openSeat = !ids[0] || !ids[1];
+      return `<div class="team-card" data-team-card>
+      <p class="text-xs font-bold tracking-widest text-muted">${openSeat ? "BLANK SEAT" : "TEAM"}</p>
+      <select data-team-slot aria-label="Player 1">${teamOptionList(players, ids[0])}</select>
+      <select data-team-slot aria-label="Player 2">${teamOptionList(players, ids[1])}</select>
+      <button class="btn-ghost" type="button" data-act="remove-team-card">REMOVE CARD</button>
+    </div>`;
+    })
+    .join("");
+  return panel(
+    `<h2 class="text-lg font-bold">Teams</h2>
+    <p class="mt-1 text-sm text-muted">${esc(intro)}</p>
+    ${t.teamEdits ? `<p class="mt-2 text-sm gold">These team edits are saved. Generating the bracket uses these cards.</p>` : ""}
+    <form class="mt-4 space-y-3" data-form="TOURNAMENTTEAMS" data-id="${t.id}">
+      <textarea hidden data-team-players>${esc(JSON.stringify(players || []))}</textarea>
+      <div class="team-board" data-team-cards>${cards || `<p class="text-sm text-muted" data-team-empty>No team cards yet. Add a blank team or make even teams.</p>`}</div>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn-ghost" type="button" data-act="add-team-card">ADD BLANK TEAM</button>
+        <button class="btn-gold" type="submit">SAVE TEAMS</button>
+      </div>
+    </form>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <form data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>
+      ${t.teamEdits && t.status === "open" ? `<form data-form="TOURNAMENTTEAMSCLEAR" data-id="${t.id}"><button class="btn-ghost" type="submit">CLEAR TEAM EDITS</button></form>` : ""}
+    </div>`,
+    "mt-6"
+  );
+}
 function tournamentStaffPanel(t) {
   if (!t.canManage) return "";
   const editing = Number(state.editingTournamentId) === Number(t.id);
-  const hasBracket = Boolean(t.bracket);
+  const hasBracket = Boolean(t.bracket) || (t.draws || []).length > 0;
   const generate =
     t.status === "complete"
       ? ""
@@ -3418,7 +3669,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Random doubles pairs one 50+ player with one player under 50. Chosen partners must already be confirmed.</p>
+    <p class="mt-1 text-sm text-muted">Generate a single-elimination bracket when the field is ready. Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Chosen partners can be filled in on a blank seat. Saved team edits are used when you generate. Regenerating clears those edits.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -3426,18 +3677,34 @@ function tournamentStaffPanel(t) {
     "mt-6"
   );
 }
+function staffPartnerName(t, entry) {
+  const mine = Number(entry.userId);
+  const card = (t.teamCards || []).find((item) => (item.playerIds || []).map(Number).includes(mine));
+  const otherId = card ? (card.playerIds || []).map(Number).find((id) => id && id !== mine) : null;
+  if (otherId) {
+    const person = (t.teamPlayers || t.entries || []).find((item) => Number(item.userId) === otherId);
+    if (person?.name) return person.name;
+  }
+  const team = (t.teams || []).find((item) => (item.playerIds || []).map(Number).includes(mine));
+  const other = (team?.players || []).find((item) => Number(item.userId) !== mine);
+  return other?.name || "";
+}
 function entrantPartner(t, entry) {
   if (t.format !== "doubles" || t.partnerMode !== "choose") return "";
   if (entry.confirmedPartnerUserId) return `with ${entry.partnerName}`;
   if (entry.partnerRequestUserId) return `asked ${entry.requestedPartnerName}`;
+  const staffName = staffPartnerName(t, entry);
+  if (staffName) return `paired with ${staffName}`;
   return "no partner yet";
 }
 function tournamentEntrants(t) {
+  const showBand = t.format === "doubles" && (t.partnerMode === "random" || t.poolMode === "avg");
   const rows = (t.entries || [])
     .map((entry) => {
-      const pill = t.format === "doubles" ? bandPill(entry) : "";
+      const pill = showBand ? bandPill(entry) : "";
+      const where = [t.poolMode && t.poolMode !== "none" ? entry.poolName : "", entry.divisionLabel || ""].filter(Boolean).join(" · ");
       return `<div class="split-row border-b border-white/10 py-2 text-sm">
-      <span class="min-w-0">${esc(entry.name)} ${pill} <span class="text-muted">avg ${esc(entry.avg)}</span></span>
+      <span class="min-w-0">${esc(entry.name)} ${pill} <span class="text-muted">avg ${esc(entry.avg)}${where ? ` · ${esc(where)}` : ""}</span></span>
       <span class="text-muted">${esc(entrantPartner(t, entry))}</span>
     </div>`;
     })
@@ -3449,8 +3716,12 @@ function tournamentUnpaired(t) {
   if (!list.length) return "";
   const reason =
     t.partnerMode === "choose"
-      ? "These players did not have a confirmed partner when the bracket was made."
-      : "These players were left out because the 50+ and 50- sides were uneven.";
+      ? "These players were not on a complete team when the bracket was made."
+      : t.partnerMode === "even"
+        ? "These players sat out so the remaining teams could be paired evenly."
+        : t.poolMode && t.poolMode !== "none"
+          ? "These players were left out of their pool."
+          : "These players were left out because the two sides of the average split were uneven.";
   const rows = list
     .map((entry) => `<div class="py-1 text-sm">${esc(entry.name)} ${t.format === "doubles" ? bandPill(entry) : ""} <span class="text-muted">avg ${esc(entry.avg)}</span></div>`)
     .join("");
@@ -3480,9 +3751,8 @@ function tournamentResultForm(t, match) {
     <button class="btn-gold" type="submit">${match.status === "complete" ? "UPDATE RESULT" : "SAVE RESULT"}</button>
   </form>`;
 }
-function tournamentBracket(t) {
-  if (!t.bracket) return "";
-  const rounds = (t.bracket.rounds || [])
+function bracketMarkup(t, bracket) {
+  return (bracket?.rounds || [])
     .map((round) => {
       const matches = (round.matches || []).filter((match) => match.status !== "empty");
       if (!matches.length) return "";
@@ -3492,21 +3762,42 @@ function tournamentBracket(t) {
     </div>`;
     })
     .join("");
-  const winner = t.championName ? `<p class="mb-4 text-lg font-bold gold">Winner: ${esc(t.championName)}</p>` : "";
+}
+function bracketSection(t, draw) {
+  const rounds = bracketMarkup(t, draw.bracket);
+  if (!rounds) return "";
+  const winner = draw.championName ? `<p class="mb-4 text-lg font-bold gold">Winner: ${esc(draw.championName)}</p>` : "";
+  const title = draw.name ? `Bracket · ${draw.name}` : "Bracket";
   return `<section class="mt-6">
-    <h2 class="text-lg font-bold">Bracket</h2>
+    <h2 class="text-lg font-bold">${esc(title)}</h2>
     <p class="mt-1 text-sm text-muted">Single elimination. Scroll sideways on a phone.</p>
     ${winner}
     <div class="bracket mt-4">${rounds}</div>
   </section>`;
 }
+function tournamentBracket(t) {
+  if ((t.draws || []).length) return t.draws.map((draw) => bracketSection(t, draw)).join("");
+  if (!t.bracket) return "";
+  return bracketSection(t, { name: "", championName: t.championName, bracket: t.bracket });
+}
 function tournamentBands(t) {
-  if (t.format !== "doubles" || t.partnerMode === "choose" || !t.bandCounts) return "";
-  return `<p class="mt-2 text-sm text-muted">Signed up: ${t.bandCounts.high} in 50+ · ${t.bandCounts.low} in 50-.</p>`;
+  if (t.poolMode === "avg" || t.poolMode === "division") {
+    const rows = (t.poolCounts || []).map((pool) => `${pool.count} in ${pool.name}`).join(" · ");
+    return rows ? `<p class="mt-2 text-sm text-muted">Signed up: ${esc(rows)}. Each pool has its own bracket.</p>` : "";
+  }
+  if (t.format !== "doubles" || t.partnerMode !== "random" || !t.bandCounts) return "";
+  const split = t.avgSplit ?? 50;
+  return `<p class="mt-2 text-sm text-muted">Signed up: ${t.bandCounts.high} in ${split}+ · ${t.bandCounts.low} in ${split}-.</p>`;
+}
+function tournamentPoolList(t) {
+  if (t.poolMode !== "division" || !(t.pools || []).length) return "";
+  const rows = t.pools.map((pool) => `${pool.name}: ${(pool.divisionNames || []).join(", ")}`).join(" · ");
+  return `<p class="mt-2 text-sm text-muted">${esc(rows)}</p>`;
 }
 function tournamentPoolNote(t) {
-  if (!t.viewer || t.format !== "doubles" || t.partnerMode === "choose") return "";
-  return `<p class="mt-2 text-sm">Your profile average is ${esc(t.viewer.avg)} (${esc(t.viewer.bandLabel)}). The pool is locked in when you sign up.</p>`;
+  if (!t.viewer || t.format !== "doubles" || t.partnerMode !== "random") return "";
+  const split = t.avgSplit ?? 50;
+  return `<p class="mt-2 text-sm">Your profile average is ${esc(t.viewer.avg)} (${esc(t.viewer.bandLabel)}). ${esc(split)}+ is an average of ${esc(split)} or higher. The side is locked in when you sign up.</p>`;
 }
 async function pageTournaments() {
   const d = await api("/api/tournaments");
@@ -3514,9 +3805,9 @@ async function pageTournaments() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">Tournaments</h1>
-      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and admins post the event, then generate the bracket. Doubles can pair a 50+ player with a player under 50 at random, or let players choose their own partner.</p>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and head admins can post an open event or limit it to chosen divisions. A division admin posts for their own players only. Doubles can build even teams, draw random mixed pairs around a cutoff, or let players choose a partner. Signups can be split into separate brackets by average or by division.</p>
       ${pageFlash()}
-      ${d.canManage ? tournamentPostForm() : ""}
+      ${d.canManage ? tournamentPostForm(d) : ""}
       <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
     </div>`,
     { arena: true }
@@ -3538,10 +3829,12 @@ async function pageTournament(id) {
       ${t.description ? `<div class="mt-4 text-sm leading-relaxed">${multilineText(t.description)}</div>` : ""}
       <p class="mt-4 text-sm text-muted">${esc(tournamentRules(t))}</p>
       ${tournamentBands(t)}
+      ${tournamentPoolList(t)}
       ${tournamentPoolNote(t)}
       ${tournamentActions(t)}
       ${tournamentPartnerPanel(t)}
       ${tournamentStaffPanel(t)}
+      ${tournamentTeamEditor(t)}
       ${tournamentEntrants(t)}
       ${tournamentUnpaired(t)}
       ${tournamentBracket(t)}
@@ -3702,6 +3995,8 @@ async function render() {
     document.querySelectorAll(".match-chat-log").forEach((el) => {
       el.scrollTop = el.scrollHeight;
     });
+    document.querySelectorAll('form[data-form="POSTTOURNAMENT"]').forEach(syncTournamentForm);
+    document.querySelectorAll('form[data-form="TOURNAMENTTEAMS"]').forEach(syncTeamForm);
     startChatWatch();
   } catch (err) {
     app.innerHTML = layout(`<div class="px-4 py-20 text-center sm:px-6"><p class="gold">${esc(err.message)}</p></div>`, { arena: true });
@@ -3841,6 +4136,56 @@ document.addEventListener("click", async (e) => {
     }
     state.deskFolds = { ...(state.deskFolds || {}), "fixture-notices": true };
     render();
+    return;
+  }
+  const addTeam = e.target.closest("[data-act=add-team-card]");
+  if (addTeam) {
+    e.preventDefault();
+    addTeamCard(addTeam.closest("form"));
+    return;
+  }
+  const removeTeam = e.target.closest("[data-act=remove-team-card]");
+  if (removeTeam) {
+    e.preventDefault();
+    const form = removeTeam.closest("form");
+    removeTeam.closest("[data-team-card]")?.remove();
+    const board = form?.querySelector("[data-team-cards]");
+    if (board && !board.querySelector("[data-team-card]")) {
+      board.innerHTML = `<p class="text-sm text-muted" data-team-empty>No team cards yet. Add a blank team or make even teams.</p>`;
+    }
+    syncTeamForm(form);
+    return;
+  }
+  const addPool = e.target.closest("[data-act=add-pool]");
+  if (addPool) {
+    e.preventDefault();
+    const form = addPool.closest("form");
+    const list = form?.querySelector("[data-pool-builder-list]");
+    const sample = list?.querySelector("[data-pool]");
+    if (!list || !sample) return;
+    const next = sample.cloneNode(true);
+    const count = list.querySelectorAll("[data-pool]").length + 1;
+    const name = next.querySelector("[data-pool-name]");
+    if (name) {
+      name.value = `Pool ${count}`;
+      name.setAttribute("aria-label", `Pool ${count} name`);
+    }
+    next.querySelectorAll("[data-pool-league]").forEach((box) => {
+      box.checked = false;
+    });
+    list.appendChild(next);
+    syncTournamentForm(form);
+    return;
+  }
+  const removePool = e.target.closest("[data-act=remove-pool]");
+  if (removePool) {
+    e.preventDefault();
+    const form = removePool.closest("form");
+    if ((form?.querySelectorAll("[data-pool]") || []).length <= 2) {
+      window.alert("Keep at least two pools.");
+      return;
+    }
+    removePool.closest("[data-pool]")?.remove();
     return;
   }
   const editTournament = e.target.closest("[data-act=edit-tournament]");
@@ -3985,6 +4330,18 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const postField = e.target.closest('form[data-form="POSTTOURNAMENT"] input, form[data-form="POSTTOURNAMENT"] select');
+  if (postField) {
+    const form = postField.closest("form");
+    if (postField.matches("[data-pool-league]") && postField.checked) {
+      form.querySelectorAll("[data-pool-league]").forEach((other) => {
+        if (other !== postField && other.value === postField.value) other.checked = false;
+      });
+    }
+    syncTournamentForm(form);
+  }
+  const teamSlot = e.target.closest("[data-team-slot]");
+  if (teamSlot) syncTeamForm(teamSlot.closest("form"));
   const fixtureWeek = e.target.closest("[data-act=fixture-week]");
   if (fixtureWeek) {
     const params = new URLSearchParams({ tab: "fixtures" });
@@ -4546,7 +4903,7 @@ document.addEventListener("submit", async (e) => {
       state.notice = "Announcement deleted.";
       render();
     } else if (kind === "POSTTOURNAMENT") {
-      const posted = await api("/api/admin/tournaments", { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
+      const posted = await api("/api/admin/tournaments", { method: "POST", body: JSON.stringify(tournamentPostPayload(form, fd)) });
       go(`/tournaments/${posted.tournament.id}`, "Tournament posted. Players can sign up from this page.");
     } else if (kind === "EDITTOURNAMENT") {
       await api(`/api/admin/tournaments/${form.dataset.id}/update`, { method: "POST", body: JSON.stringify({ ...fd, tz: BROWSER_TZ }) });
@@ -4590,8 +4947,33 @@ document.addEventListener("submit", async (e) => {
       state.error = "";
       state.notice = "Partner cleared.";
       render();
+    } else if (kind === "TOURNAMENTTEAMS" || kind === "TOURNAMENTTEAMSCLEAR") {
+      const teams =
+        kind === "TOURNAMENTTEAMSCLEAR"
+          ? []
+          : [...form.querySelectorAll("[data-team-card]")].map((card) => ({
+              playerIds: [...card.querySelectorAll("[data-team-slot]")].map((select) => select.value).filter(Boolean),
+            }));
+      await api(`/api/admin/tournaments/${form.dataset.id}/teams`, { method: "POST", body: JSON.stringify({ teams }) });
+      state.error = "";
+      state.notice = kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : "Teams saved.";
+      render();
+    } else if (kind === "TOURNAMENTBALANCE") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/teams/balance`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "Even teams saved. The highest averages are paired with the lowest. Generate the bracket when the cards look right.";
+      render();
     } else if (kind === "TOURNAMENTBRACKET") {
-      if (fd.replace === "1" && !window.confirm("Replace the current bracket? Recorded results cannot be kept.")) return;
+      if (fd.replace === "1" && !window.confirm("Replace the current bracket and clear team edits? This is blocked once a result is saved.")) return;
+      if (fd.replace !== "1") {
+        const teamForm = document.querySelector(`form[data-form="TOURNAMENTTEAMS"][data-id="${form.dataset.id}"]`);
+        if (teamForm?.querySelector("[data-team-card]")) {
+          const teams = [...teamForm.querySelectorAll("[data-team-card]")].map((card) => ({
+            playerIds: [...card.querySelectorAll("[data-team-slot]")].map((select) => select.value).filter(Boolean),
+          }));
+          await api(`/api/admin/tournaments/${form.dataset.id}/teams`, { method: "POST", body: JSON.stringify({ teams }) });
+        }
+      }
       const drawn = await api(`/api/admin/tournaments/${form.dataset.id}/bracket`, {
         method: "POST",
         body: JSON.stringify({ replace: fd.replace === "1" }),
