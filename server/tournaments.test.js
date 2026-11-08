@@ -5,16 +5,22 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { nextWheelRotation, wheelPlan, wheelStopRotation, wheelSvg } from "../public/tournamentWheel.js";
 import {
   avgBand,
+  balanceTournamentTeams,
   buildSingleElim,
   createTournament,
+  generateTournamentBracket,
   pairEven,
   pairRandomMixed,
   parseStartsAt,
+  publicTournament,
+  recordTournamentResult,
   seedPositions,
   signupTournament,
   updateTournament,
+  withdrawTournament,
 } from "./tournaments.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -112,9 +118,92 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=84") && html.includes("styles.css?v=84"));
+check("cache bust covers the new tab", html.includes("app.js?v=85") && html.includes("styles.css?v=85"));
 check("staff can build even teams and fill blank seats", appJs.includes("MAKE EVEN TEAMS") && appJs.includes("ADD BLANK TEAM") && appJs.includes("Blank seat"));
 check("staff can split a tournament into pools", appJs.includes('name="poolMode"') && appJs.includes("Split by division"));
+check(
+  "the signup wheel spins and the bracket takes its place",
+  appJs.includes("data-tournament-wheel") &&
+    appJs.includes("mountTournamentWheel") &&
+    appJs.includes("function tournamentStage") &&
+    appJs.includes("return tournamentWheel(t)") &&
+    css.includes(".wheel-rotor")
+);
+check("admins record a win or a loss", appJs.includes('name="winnerTeamId"') && appJs.includes("${team.name} wins") && !appJs.includes('placeholder="Legs"'));
+
+function mod360(n) {
+  return ((n % 360) + 360) % 360;
+}
+check(
+  "the wheel centers a slice under the pointer",
+  Math.abs(mod360(wheelStopRotation(0, 4)) - mod360(-45)) < 0.001 && Math.abs(mod360(wheelStopRotation(1, 4)) - mod360(-135)) < 0.001
+);
+const spunAngle = nextWheelRotation(-45, 1, 4, 4);
+check(
+  "the wheel keeps spinning forward",
+  spunAngle > -45 && Math.abs(mod360(spunAngle) - mod360(wheelStopRotation(1, 4))) < 0.001
+);
+check("a fresh draw starts on the first name", wheelPlan(1_000_000, 1_000_000, 4, 1000).phase === "spin" && wheelPlan(1_000_000, 1_000_000, 4, 1000).donePairs === 0);
+check("two landings finish a team", wheelPlan(1_002_000, 1_000_000, 4, 1000).index === 2 && wheelPlan(1_002_000, 1_000_000, 4, 1000).donePairs === 1);
+check("a finished draw has every pair", wheelPlan(1_004_000, 1_000_000, 4, 1000).phase === "done" && wheelPlan(1_004_000, 1_000_000, 4, 1000).donePairs === 2);
+
+function cup(title, specs) {
+  const db = {
+    users: specs.map(([name, avg], index) => ({ id: index + 1, name, avg })),
+    tournaments: [],
+  };
+  const created = createTournament(db, { id: 1 }, { title, format: "doubles", partnerMode: "even", startsAt: "2026-12-01T19:00", tz: "UTC" });
+  for (const user of db.users) signupTournament(db, created.tournament.id, user);
+  return { db, id: created.tournament.id };
+}
+const wheelCup = cup("Wheel Cup", [
+  ["Ada Ace", 90],
+  ["Bea Bolt", 80],
+  ["Cal Cue", 70],
+  ["Dee Dart", 60],
+  ["Eve Edge", 50],
+  ["Fay Flight", 40],
+  ["Gil Ghost", 30],
+  ["Hap Hold", 20],
+]);
+const spunTeams = balanceTournamentTeams(wheelCup.db, wheelCup.id, { rng: identityRng });
+const reveal = spunTeams.tournament.wheelReveal;
+const pairKey = (pair) => pair.map(Number).slice().sort((a, b) => a - b).join("-");
+check(
+  "even teams land on the highest average with the lowest",
+  spunTeams.status === 200 && reveal.order.join(",") === "1,8,2,7,3,6,4,5" && reveal.pairs.map(pairKey).sort().join("|") === "1-8|2-7|3-6|4-5"
+);
+const guestWheel = publicTournament(wheelCup.db, spunTeams.tournament, null, { detail: true });
+const svg = wheelSvg(guestWheel.wheel.players);
+check(
+  "players can see every signed-up name on the wheel",
+  guestWheel.wheel.players.length === 8 && guestWheel.wheel.reveal.order.length === 8 && wheelCup.db.users.every((user) => svg.includes(user.name))
+);
+check("wheel text escapes names", wheelSvg([{ userId: 1, name: "A & B <C>" }]).includes("A &amp; B &lt;C&gt;"));
+const drawnWheel = generateTournamentBracket(wheelCup.db, wheelCup.id);
+const semi = drawnWheel.tournament.bracket.rounds[0].matches.find((match) => match.status === "pending");
+const won = recordTournamentResult(wheelCup.db, wheelCup.id, semi.id, { winnerTeamId: semi.teamAId });
+const finalMatch = drawnWheel.tournament.bracket.rounds.at(-1).matches[0];
+const advanced = finalMatch.teamAId === semi.teamAId || finalMatch.teamBId === semi.teamAId;
+check(
+  "a win with no score moves that side on",
+  won.status === 200 && semi.status === "complete" && semi.scoreA == null && semi.scoreB == null && advanced
+);
+const afterBracket = publicTournament(wheelCup.db, drawnWheel.tournament, null, { detail: true });
+check("a generated bracket replaces the wheel", afterBracket.wheel == null && afterBracket.bracket.rounds.length === 2);
+
+const oddCup = cup("Odd Cup", [
+  ["High Hand", 90],
+  ["Mid Hand", 50],
+  ["Low Hand", 20],
+]);
+const oddTeams = balanceTournamentTeams(oddCup.db, oddCup.id, { rng: identityRng });
+check(
+  "an odd field sits the middle average out of the spin",
+  oddTeams.status === 200 && oddTeams.tournament.wheelReveal.order.join(",") === "1,3" && oddTeams.tournament.wheelReveal.satOut[0].userId === 2
+);
+const leaving = withdrawTournament(oddCup.db, oddCup.id, oddCup.db.users[0]);
+check("a drawn player leaving clears the spin", leaving.status === 200 && leaving.tournament.wheelReveal == null);
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;
@@ -733,6 +822,66 @@ try {
 
   const detail = await api(port, `/api/tournaments/${mixedId}`, { token: owner });
   check("detail includes the bracket", detail.status === 200 && detail.data.tournament.bracket.rounds.length >= 1 && detail.data.tournament.canManage === true);
+
+  const wheelNight = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Wheel Night", format: "doubles", partnerMode: "even", startsAt: "2026-12-26T19:00", tz: "UTC" },
+  });
+  const wheelId = wheelNight.data.tournament.id;
+  const wheelField = [];
+  for (const [name, avg] of [
+    ["Nell 90", 90],
+    ["Omar 70", 70],
+    ["Pia 40", 40],
+    ["Quin 20", 20],
+  ]) {
+    const person = await register(port, name, avg);
+    wheelField.push({ name, id: person.data.user.id, token: person.data.token });
+    await api(port, `/api/tournaments/${wheelId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const guestWheelPage = await api(port, `/api/tournaments/${wheelId}`);
+  check(
+    "guests see the signup wheel before the draw",
+    guestWheelPage.status === 200 && guestWheelPage.data.tournament.wheel.players.length === 4 && guestWheelPage.data.tournament.wheel.reveal == null
+  );
+  const spunHttp = await api(port, `/api/admin/tournaments/${wheelId}/teams/balance`, { method: "POST", token: owner, body: {} });
+  const httpPairs = (spunHttp.data.tournament.wheel?.reveal?.pairs || [])
+    .map((pair) => pair.map(Number).slice().sort((a, b) => a - b).join("-"))
+    .sort();
+  const wheelNell = wheelField.find((person) => person.name === "Nell 90");
+  const wheelOmar = wheelField.find((person) => person.name === "Omar 70");
+  const wheelPia = wheelField.find((person) => person.name === "Pia 40");
+  const wheelQuin = wheelField.find((person) => person.name === "Quin 20");
+  const expectedPairs = [
+    [wheelNell.id, wheelQuin.id].sort((a, b) => a - b).join("-"),
+    [wheelOmar.id, wheelPia.id].sort((a, b) => a - b).join("-"),
+  ].sort();
+  check(
+    "make even teams publishes a spin for players",
+    spunHttp.status === 200 && spunHttp.data.tournament.wheel.reveal.order.length === 4 && httpPairs.join("|") === expectedPairs.join("|")
+  );
+  const playerWheel = await api(port, `/api/tournaments/${wheelId}`, { token: wheelNell.token });
+  check(
+    "a signed-up player sees every name on the wheel",
+    playerWheel.status === 200 && playerWheel.data.tournament.wheel.players.map((player) => player.name).sort().join("|") === "Nell 90|Omar 70|Pia 40|Quin 20"
+  );
+  const wheelBracket = await api(port, `/api/admin/tournaments/${wheelId}/bracket`, { method: "POST", token: owner, body: {} });
+  const wheelFinal = wheelBracket.data.tournament.bracket?.rounds?.at(-1)?.matches?.[0];
+  const wheelWin = await api(port, `/api/admin/tournaments/${wheelId}/matches/${wheelFinal?.id}`, {
+    method: "POST",
+    token: owner,
+    body: { winnerTeamId: wheelFinal?.teamAId },
+  });
+  check(
+    "generating the bracket removes the wheel and a win needs no score",
+    wheelBracket.status === 200 &&
+      wheelBracket.data.tournament.wheel == null &&
+      wheelWin.status === 200 &&
+      wheelWin.data.tournament.status === "complete" &&
+      wheelWin.data.tournament.bracket.rounds.at(-1).matches[0].scoreA == null &&
+      wheelWin.data.tournament.bracket.rounds.at(-1).matches[0].winnerTeamId === wheelFinal.teamAId
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
