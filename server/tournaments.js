@@ -1315,6 +1315,94 @@ function presentWheel(entryViews, tournament) {
   };
 }
 
+function thirdPlaceCandidateIds(tournament) {
+  const ids = new Set();
+  const add = (value) => {
+    const id = Number(value);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  };
+  for (const entry of tournament?.entries || []) add(entry?.userId);
+  const teams = [...(tournament?.teams || []), ...(tournament?.manualTeams || [])];
+  for (const draw of tournament?.draws || []) teams.push(...(draw?.teams || []));
+  for (const team of teams) for (const id of team?.playerIds || []) add(id);
+  return ids;
+}
+
+function thirdPlaceChoice(db, userId) {
+  const user = findUser(db, userId);
+  if (!user) return null;
+  const name = bracketPlayerName(user);
+  const nick = String(user.nickname || "").trim();
+  const nickname = nick && nick.toLowerCase() !== name.toLowerCase() ? nick.slice(0, 80) : "";
+  return { userId: Number(user.id), name, nickname };
+}
+
+function presentThirdPlace(db, tournament) {
+  const saved = tournament?.thirdPlace;
+  if (!saved || !Array.isArray(saved.playerIds)) return null;
+  const players = [];
+  for (const raw of saved.playerIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const choice = thirdPlaceChoice(db, id);
+    if (!choice || players.some((player) => player.userId === choice.userId)) continue;
+    players.push(choice);
+    if (players.length === 2) break;
+  }
+  if (players.length !== 2) return null;
+  return {
+    playerIds: players.map((player) => player.userId),
+    poolId: String(saved.poolId || ""),
+    players,
+  };
+}
+
+function thirdPlaceChoices(db, tournament) {
+  return [...thirdPlaceCandidateIds(tournament)]
+    .map((id) => thirdPlaceChoice(db, id))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+}
+
+function thirdPlacePoolOptions(tournament) {
+  const draws = drawList(tournament);
+  if (draws.length < 2) return [];
+  return draws.map((draw) => ({ id: String(draw.poolId || "all"), name: String(draw.name || "Bracket") }));
+}
+
+export function setTournamentThirdPlace(db, id, body) {
+  const tournament = findTournament(db, id);
+  if (!tournament) return fail(404, "Tournament not found");
+  if (body?.clear === true || body?.clear === "1" || body?.clear === 1) {
+    delete tournament.thirdPlace;
+    return { status: 200, tournament };
+  }
+  const raw = Array.isArray(body?.playerIds) ? body.playerIds : [body?.playerA, body?.playerB];
+  const ids = [];
+  for (const value of raw) {
+    const playerId = Number(value);
+    if (!Number.isFinite(playerId) || playerId <= 0 || ids.includes(playerId)) continue;
+    ids.push(playerId);
+  }
+  if (ids.length !== 2) return fail(400, "Pick two different players for 3rd place");
+  const allowed = thirdPlaceCandidateIds(tournament);
+  if (!allowed.has(ids[0]) || !allowed.has(ids[1]) || !findUser(db, ids[0]) || !findUser(db, ids[1])) {
+    return fail(400, "3rd place must be two players who signed up or were placed in this tournament");
+  }
+  const draws = drawList(tournament);
+  let poolId = String(body?.poolId || "").trim();
+  if (draws.length > 1) {
+    const known = new Set(draws.map((draw) => String(draw.poolId || "all")));
+    if (!known.has(poolId)) return fail(400, "Choose which bracket this 3rd place is for");
+  } else if (draws.length === 1) {
+    poolId = String(draws[0].poolId || "all");
+  } else if (!poolId) {
+    poolId = "all";
+  }
+  tournament.thirdPlace = { playerIds: ids, poolId };
+  return { status: 200, tournament };
+}
+
 export function publicTournament(db, tournament, viewer, { detail = false, canManage = false } = {}) {
   const entries = Array.isArray(tournament.entries) ? tournament.entries : [];
   const meId = viewer ? Number(viewer.id) : null;
@@ -1414,6 +1502,9 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
     teamCards: editable ? editorCards(db, tournament) : [],
     teamPlayers: editable ? teamPlayerOptions(db, tournament) : [],
     wheel: presentWheel(entryViews, tournament),
+    thirdPlace: presentThirdPlace(db, tournament),
+    thirdPlaceChoices: canManage ? thirdPlaceChoices(db, tournament) : [],
+    thirdPlacePools: canManage ? thirdPlacePoolOptions(tournament) : [],
   };
 }
 

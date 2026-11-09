@@ -2,8 +2,9 @@
 // A bracket's final winner is 1st. The other finalist is 2nd when that final
 // was played. 3rd is the only player who lost in the round that feeds the
 // final. Two semifinal losers are not ranked, because this site has no
-// third-place match. The main page features the most recently completed
-// tournament that has a winner.
+// third-place match, unless the tournament stores an explicit 3rd-place pair.
+// That pair shares the one 3rd step and is preferred over the semifinal rule.
+// The main page features the most recently completed tournament that has a winner.
 
 export function placesFromBracket(bracket) {
   const rounds = Array.isArray(bracket?.rounds) ? bracket.rounds : [];
@@ -93,6 +94,33 @@ function playersFor(db, team) {
   return ids.map((id) => podiumPlayer((db.users || []).find((user) => Number(user.id) === id) || null, id));
 }
 
+function playersFromIds(db, ids) {
+  return ids.map((id) => podiumPlayer((db.users || []).find((user) => Number(user.id) === Number(id)) || null, id));
+}
+
+// Staff can name two players who share 3rd. A stored pair wins over the
+// semifinal inference. One board uses it when the tournament has a single
+// draw, or when the saved pool matches that draw.
+function explicitThirdIds(tournament, draw) {
+  const saved = tournament?.thirdPlace;
+  if (!saved || typeof saved !== "object" || !Array.isArray(saved.playerIds)) return null;
+  const ids = [];
+  for (const raw of saved.playerIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0 || ids.includes(id)) continue;
+    ids.push(id);
+    if (ids.length === 2) break;
+  }
+  if (ids.length !== 2) return null;
+  const draws = drawList(tournament);
+  if (draws.length > 1) {
+    const poolId = String(saved.poolId || "");
+    const drawPool = String(draw?.poolId || "all");
+    if (!poolId || poolId !== drawPool) return null;
+  }
+  return ids;
+}
+
 function placePayload(place, teamId, db, teams, note) {
   if (!teamId) return { place, players: [], note: note || "" };
   const team = teams.find((item) => String(item.id) === String(teamId));
@@ -105,10 +133,14 @@ function boardFor(db, tournament, draw) {
   const picked = placesFromBracket(draw?.bracket);
   if (!picked?.first) return null;
   const teams = teamsOf(draw, tournament);
+  const explicitIds = explicitThirdIds(tournament, draw);
+  const third = explicitIds
+    ? { place: 3, players: playersFromIds(db, explicitIds), note: "" }
+    : placePayload(3, picked.third, db, teams, picked.thirdNote);
   const places = [
     placePayload(1, picked.first, db, teams, ""),
     placePayload(2, picked.second, db, teams, ""),
-    placePayload(3, picked.third, db, teams, picked.thirdNote),
+    third,
   ];
   if (!places[0].players.length) return null;
   return {

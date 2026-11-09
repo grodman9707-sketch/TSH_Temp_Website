@@ -63,6 +63,7 @@ import {
   recordTournamentResult,
   requestPartner,
   saveTournamentTeams,
+  setTournamentThirdPlace,
   signupTournament,
   updateTournament,
   withdrawTournament,
@@ -4911,6 +4912,18 @@ async function handleApi(req, res, url) {
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "tournament_bracket",
         summary: `Generated brackets for “${tournamentTitle(result.tournament)}”.${extra}`,
+      });
+    }
+    const thirdPlaceMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/third-place$/);
+    if (method === "POST" && thirdPlaceMatch) {
+      if (denyTournamentManager(res, db, user, thirdPlaceMatch[1])) return;
+      const result = setTournamentThirdPlace(db, thirdPlaceMatch[1], body);
+      const named = Array.isArray(result.tournament?.thirdPlace?.playerIds) && result.tournament.thirdPlace.playerIds.length === 2;
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_third",
+        summary: named
+          ? `Named the 3rd-place pair in “${tournamentTitle(result.tournament)}”`
+          : `Cleared 3rd place in “${tournamentTitle(result.tournament)}”`,
       });
     }
     const tournamentResultMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/matches\/([A-Za-z0-9-]+)$/);
