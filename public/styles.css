@@ -74,6 +74,42 @@ video, canvas, svg {
 .staff-card {
   text-align: left;
 }
+.division-player-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+.division-player {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(12, 16, 26, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.division-player-name {
+  color: #e8b425;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+.division-player-name:hover {
+  color: #fff;
+}
+.division-player-nick {
+  margin: 0.15rem 0 0;
+  color: #999;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+@media (min-width: 640px) {
+  .division-player-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .admin-team-title {
   margin-top: 3rem;
   text-align: center;

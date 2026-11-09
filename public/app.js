@@ -1123,6 +1123,7 @@ function layout(inner, { arena = false, home = false } = {}) {
   const links = [
     ["/", "Home"],
     ["/regionals", "Regionals"],
+    ["/players", "Players"],
     ["/tournaments", "Tournaments"],
     ["/announcements", "News"],
     ["/rules", "Rules"],
@@ -1612,6 +1613,47 @@ async function pageLeague(slug, id) {
               )
               .join("")}</tbody></table>${(d.standings || []).some((row) => row.injured) ? `<p class="mt-2 text-xs text-muted">* is an injured player and is not given a place. Admin shows how many of those spots still need to be filled.</p>` : ""}</div>`
       }
+    </div>`,
+    { arena: true }
+  );
+}
+
+function divisionPlayerCard(player) {
+  const nick = String(player?.nickname || "").trim();
+  const real = String(player?.name || "").trim();
+  const label = real || nick || "Player";
+  const showNick = Boolean(nick) && nick.toLowerCase() !== label.toLowerCase();
+  return `<article class="division-player">
+    ${avatarImg({ id: player.id, name: real || nick, nickname: nick, hasAvatar: player.hasAvatar, avatarUrl: player.avatarUrl || "" }, 48)}
+    <div class="min-w-0">
+      <a class="division-player-name" href="/player/${Number(player.id)}">${esc(label)}</a>
+      ${showNick ? `<p class="division-player-nick">${esc(nick)}</p>` : ""}
+    </div>
+  </article>`;
+}
+async function pagePlayers() {
+  const d = await api("/api/players");
+  const divisions = Array.isArray(d.divisions) ? d.divisions : [];
+  const blocks = divisions
+    .map((division) => {
+      const players = Array.isArray(division.players) ? division.players : [];
+      const cards = players.map(divisionPlayerCard).join("");
+      return `<section class="mt-6">
+        <h2 class="text-lg font-bold">${esc(division.title || division.name || "Division")}</h2>
+        ${
+          cards
+            ? `<div class="division-player-grid mt-3">${cards}</div>`
+            : `<p class="mt-2 text-sm text-muted">No players placed in this division yet.</p>`
+        }
+      </section>`;
+    })
+    .join("");
+  return layout(
+    `<div class="mx-auto max-w-5xl px-4 py-10">
+      <p class="page-kicker text-xs font-semibold gold">TSH DARTS LEAGUE</p>
+      <h1 class="page-title mt-2 font-extrabold">Players</h1>
+      <p class="mt-2 text-sm text-muted">Everyone placed in a division. Select a name to open their profile.</p>
+      ${blocks || `<p class="mt-6 text-sm text-muted">No divisions yet.</p>`}
     </div>`,
     { arena: true }
   );
@@ -3905,6 +3947,7 @@ function matchRoute(path) {
   if (q === "/rules") return ["rules"];
   if (q === "/about" || q === "/contact") return ["about"];
   if (q === "/announcements") return ["news"];
+  if (q === "/players") return ["players"];
   if (q === "/tournaments") return ["tournaments"];
   m = q.match(/^\/tournaments\/(\d+)$/);
   if (m) return ["tournament", m[1]];
@@ -4183,6 +4226,7 @@ async function render() {
       rules: pageRules,
       about: () => pageAbout(),
       news: pageNews,
+      players: pagePlayers,
       tournaments: pageTournaments,
       tournament: () => pageTournament(route[1]),
       admin: pageAdmin,

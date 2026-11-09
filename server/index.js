@@ -610,6 +610,41 @@ function divisionName(league) {
   const m = raw.match(/^League\s+(\d+)$/i);
   return m ? `Division ${m[1]}` : raw;
 }
+function divisionPlayerCard(user) {
+  const name = String(user?.name || "").trim();
+  const nickname = String(user?.nickname || "").trim();
+  return {
+    id: user.id,
+    name,
+    nickname,
+    hasAvatar: Boolean(user.avatarFile),
+    avatarUrl: user.avatarFile ? `/api/users/${user.id}/avatar?v=${encodeURIComponent(user.avatarUpdatedAt || "1")}` : "",
+  };
+}
+function divisionRosters(db) {
+  return (db.leagues || [])
+    .slice()
+    .sort(compareLeagueOrder)
+    .map((league) => {
+      const regional = (db.regionals || []).find((item) => item.id === league.regionalId) || null;
+      const players = (db.users || [])
+        .filter((user) => inLeague(user, league.id))
+        .map(divisionPlayerCard)
+        .sort((a, b) => {
+          const left = a.name || a.nickname || "Player";
+          const right = b.name || b.nickname || "Player";
+          return left.localeCompare(right) || a.id - b.id;
+        });
+      return {
+        id: league.id,
+        name: divisionName(league),
+        title: leagueTitle(db, league),
+        regionalSlug: regional?.slug || "",
+        href: regional ? `/regionals/${regional.slug}/leagues/${league.id}` : "",
+        players,
+      };
+    });
+}
 const INTERNATIONAL_DIVISION_LADDER = ["Division 1", "Division 2", "Division 3", "Division 4", "Division 5", "Division 6"];
 const INTERNATIONAL_REGIONAL_ID = 3;
 const SIGNUP_REGIONALS_SOON_ERROR = "Regional leagues are coming soon. Sign up for the International League.";
@@ -2915,6 +2950,10 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (method === "GET" && p === "/api/players") {
+    return json(res, 200, { ok: true, divisions: divisionRosters(db) });
+  }
+
   const playerMatch = p.match(/^\/api\/player\/(\d+)$/);
   if (method === "GET" && playerMatch) {
     const found = db.users.find((u) => u.id === Number(playerMatch[1]));
@@ -3067,7 +3106,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, token, user: publicUser(found, db) }, { "Set-Cookie": sessionCookie(token, { remember: true, req }) });
   }
 
-  if (!user && p.startsWith("/api/") && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
+  if (!user && p.startsWith("/api/") && p !== "/api/players" && !p.startsWith("/api/auth") && !["/api/content", "/api/stats", "/api/regionals", "/api/announcements", "/api/ticker", "/api/staff-profiles", "/api/rules", "/api/about"].some((x) => p === x || p.startsWith("/api/regionals/") || p.startsWith("/api/leagues/") || p.startsWith("/api/player/"))) {
     if (["/api/my-fixtures", "/api/auth/me", "/api/auth/logout", "/api/admin", "/api/fixtures", "/api/account"].some((x) => p === x || p.startsWith(x))) {
       return json(res, 401, { ok: false, error: "Login required" });
     }
