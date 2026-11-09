@@ -67,6 +67,7 @@ import {
   updateTournament,
   withdrawTournament,
 } from "./tournaments.js";
+import { homePodium } from "./podium.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -2863,6 +2864,7 @@ async function handleApi(req, res, url) {
     });
   }
   if (method === "GET" && p === "/api/stats") return json(res, 200, { ...stats(db), highlights: publicLeagueHighlights(db) });
+  if (method === "GET" && p === "/api/podium") return json(res, 200, { ok: true, ...homePodium(db) });
   if (method === "GET" && p === "/api/regionals") {
     const regionals = sortedRegionals(db).map((r) => ({ ...r, leagues: leaguesForRegional(db, r) }));
     return json(res, 200, { ok: true, regionals });

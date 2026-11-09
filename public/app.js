@@ -63,6 +63,7 @@ const state = {
   wheelSpinning: null,
   tournamentDirty: false,
   tournamentPoll: null,
+  podiumEventId: null,
 };
 
 function token() {
@@ -1323,6 +1324,89 @@ function homeStatCard(value, label, name) {
     : "";
   return `<div class="home-stat glass rounded-xl px-3 py-6 sm:px-4 sm:py-8"><div class="home-stat-value text-3xl font-extrabold gold sm:text-4xl">${esc(value)}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${esc(label)}</div>${nameHtml}</div>`;
 }
+function podiumWhen(event) {
+  if (event?.finishedAt) return `Finished ${fmtInstant(event.finishedAt)} ${tzAbbr(event.finishedAt, BROWSER_TZ)}`.trim();
+  const start = event?.startsAt ? `${fmtInstant(event.startsAt)} ${tzAbbr(event.startsAt, BROWSER_TZ)}`.trim() : "";
+  if (event?.status === "complete") return start ? `Scheduled ${start}` : "Finished";
+  return start ? `In progress · ${start}` : "In progress";
+}
+function podiumPlaceWord(place) {
+  if (place === 1) return "1st";
+  if (place === 2) return "2nd";
+  return "3rd";
+}
+function podiumPeople(players, size) {
+  if (!players?.length) {
+    const font = Math.max(12, Math.round(size * 0.4));
+    return `<div class="podium-people"><div class="podium-avatars"><span class="avatar avatar-fallback" style="width:${size}px;height:${size}px;font-size:${font}px" aria-hidden="true">?</span></div><div class="podium-names"><p class="podium-name">TBD</p></div></div>`;
+  }
+  const list = players;
+  const avatars = list
+    .map((player) => {
+      const img = avatarImg({ id: player.userId, name: player.name, nickname: "", hasAvatar: player.hasAvatar, avatarUrl: player.avatarUrl }, size);
+      return player.userId ? `<a class="podium-avatar-link" href="/player/${player.userId}">${img}</a>` : img;
+    })
+    .join("");
+  const names = list
+    .map((player) => {
+      const name = player.userId ? `<a href="/player/${player.userId}">${esc(player.name)}</a>` : esc(player.name);
+      const nick = player.nickname ? `<span class="podium-nick">${esc(player.nickname)}</span>` : "";
+      return `<p class="podium-name">${name}${nick}</p>`;
+    })
+    .join("");
+  return `<div class="podium-people"><div class="podium-avatars">${avatars}</div><div class="podium-names">${names}</div></div>`;
+}
+function podiumSlot(place, data) {
+  const players = data?.players || [];
+  const who = players.length ? players.map((player) => player.name).join(" and ") : "TBD";
+  const size = place === 1 ? 92 : 64;
+  const note = data?.note ? `<p class="podium-note">${esc(data.note)}</p>` : "";
+  return `<article class="podium-slot podium-place-${place}" role="listitem" aria-label="${esc(podiumPlaceWord(place))} place, ${esc(who)}">
+    ${podiumPeople(players, size)}
+    ${note}
+    <div class="podium-block" aria-hidden="true"><span>${podiumPlaceWord(place)}</span></div>
+  </article>`;
+}
+function podiumBoard(board) {
+  const byPlace = new Map((board?.places || []).map((place) => [place.place, place]));
+  const slots = [2, 1, 3].map((place) => podiumSlot(place, byPlace.get(place))).join("");
+  const pool = board?.poolName ? `<h3 class="podium-pool">${esc(board.poolName)}</h3>` : "";
+  return `<div class="podium-board">${pool}<div class="podium" role="list">${slots}</div></div>`;
+}
+function podiumSwitch(events, activeId) {
+  if (!events || events.length < 2) return "";
+  const buttons = events
+    .map((event) => {
+      const on = Number(event.id) === Number(activeId);
+      return `<button type="button" class="podium-switch-btn${on ? " is-on" : ""}" role="tab" aria-selected="${on ? "true" : "false"}" data-act="podium-pick" data-id="${Number(event.id)}">${esc(event.title)}</button>`;
+    })
+    .join("");
+  return `<div class="podium-switch" role="tablist" aria-label="Recent tournaments">${buttons}</div>`;
+}
+function homePodium(payload) {
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (!events.length) {
+    return `<section class="home-podium px-4 py-12 sm:px-6" id="tournament-winners">
+      <div class="mx-auto max-w-3xl">
+        <div class="glass rounded-xl px-5 py-10 text-center">
+          <p class="page-kicker text-xs font-semibold gold">TOURNAMENT WINNERS</p>
+          <p class="mt-3 text-sm text-muted">Winners will appear here when a tournament finishes</p>
+        </div>
+      </div>
+    </section>`;
+  }
+  const selected = events.find((event) => Number(event.id) === Number(state.podiumEventId)) || events[0];
+  return `<section class="home-podium px-4 py-12 sm:px-6 sm:py-16" id="tournament-winners">
+    <div class="mx-auto max-w-5xl text-center">
+      <p class="podium-congrats">Congratulations</p>
+      <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
+      <p class="podium-when">${esc(podiumWhen(selected))}</p>
+      ${podiumSwitch(events, selected.id)}
+      ${(selected.boards || []).map(podiumBoard).join("")}
+      <p class="mt-6"><a class="text-sm font-bold gold" href="/tournaments/${Number(selected.id)}">View bracket</a></p>
+    </div>
+  </section>`;
+}
 function homeHighlights(highlights) {
   if (!highlights?.paragraphs?.length) return "";
   const body = highlights.paragraphs
@@ -1343,11 +1427,12 @@ function homeHighlights(highlights) {
   </section>`;
 }
 async function pageHome() {
-  const [stats, content, regionals, tickerData] = await Promise.all([
+  const [stats, content, regionals, tickerData, podiumData] = await Promise.all([
     api("/api/stats"),
     api("/api/content"),
     api("/api/regionals"),
     api("/api/ticker").catch(() => ({ items: [] })),
+    api("/api/podium").catch(() => ({ events: [] })),
   ]);
   let ticker = Array.isArray(tickerData.items) ? tickerData.items : [];
   if (!ticker.length) ticker = [{ div: "PDC", text: "Upcoming live darts dates will appear here", live: false }];
@@ -1384,6 +1469,7 @@ async function pageHome() {
         </div>
       </div>
     </section>
+    ${homePodium(podiumData)}
     ${homeHighlights(stats.highlights)}
     ${homeNewsSection}
     <section class="bg-background px-4 py-12 sm:px-6 sm:py-20">
@@ -4272,6 +4358,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", async (e) => {
+  const podiumPick = e.target.closest("[data-act=podium-pick]");
+  if (podiumPick) {
+    e.preventDefault();
+    state.podiumEventId = Number(podiumPick.dataset.id);
+    render();
+    return;
+  }
   const pushEnable = e.target.closest("[data-act=push-enable]");
   if (pushEnable) {
     e.preventDefault();
