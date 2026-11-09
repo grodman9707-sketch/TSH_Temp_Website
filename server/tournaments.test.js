@@ -9,6 +9,7 @@ import { nextWheelRotation, wheelPlan, wheelStopRotation, wheelSvg } from "../pu
 import {
   avgBand,
   balanceTournamentTeams,
+  bracketPlayerName,
   buildSingleElim,
   createTournament,
   generateTournamentBracket,
@@ -191,6 +192,106 @@ check(
 );
 const afterBracket = publicTournament(wheelCup.db, drawnWheel.tournament, null, { detail: true });
 check("a generated bracket replaces the wheel", afterBracket.wheel == null && afterBracket.bracket.rounds.length === 2);
+
+check("a real name is the bracket label", bracketPlayerName({ name: "Gordon Rodman", nickname: "Viking" }) === "Gordon Rodman");
+check("a blank real name falls back to the nickname", bracketPlayerName({ name: "  ", nickname: "OnlyNick" }) === "OnlyNick");
+check("a missing player is not a blank slot", bracketPlayerName(null) === "Removed player");
+
+const namedDb = {
+  users: [
+    { id: 1, name: "Gordon Rodman", nickname: "Viking", avg: 80, leagueIds: [9] },
+    { id: 2, name: "Jason Jackson", nickname: "", avg: 55, leagueIds: [9] },
+    { id: 3, name: "   ", nickname: "OnlyNick", avg: 40, leagueIds: [10] },
+    { id: 4, name: "Dee Dart", nickname: "Darts", avg: 30, leagueIds: [11] },
+  ],
+  leagues: [
+    { id: 9, name: "Division 1", sortOrder: 0 },
+    { id: 10, name: "Division 2", sortOrder: 1 },
+    { id: 11, name: "Division 3", sortOrder: 2 },
+  ],
+  tournaments: [],
+};
+const namedSingles = createTournament(namedDb, { id: 1 }, { title: "Real Names", format: "singles", startsAt: "2026-12-01T19:00", tz: "UTC" });
+for (const user of namedDb.users) signupTournament(namedDb, namedSingles.tournament.id, user);
+const namedDraw = generateTournamentBracket(namedDb, namedSingles.tournament.id);
+const namedView = publicTournament(namedDb, namedDraw.tournament, null, { detail: true });
+const slotNames = namedView.bracket.rounds.flatMap((round) =>
+  round.matches.flatMap((match) => [match.teamA?.name, match.teamB?.name].filter(Boolean))
+);
+check(
+  "singles bracket slots use the real name",
+  slotNames.includes("Gordon Rodman") && slotNames.includes("Jason Jackson") && slotNames.includes("Dee Dart") && slotNames.includes("OnlyNick")
+);
+check(
+  "singles bracket slots skip a nickname when the real name exists",
+  !slotNames.some((label) => label === "Viking" || label === "Darts" || label.includes("Viking") || label.includes("Darts"))
+);
+check(
+  "the signup list still shows nicknames",
+  namedView.entries.find((entry) => entry.userId === 1)?.name === "Viking" &&
+    namedView.entries.find((entry) => entry.userId === 2)?.name === "Jason Jackson"
+);
+
+const namedDoubles = createTournament(namedDb, { id: 1 }, {
+  title: "Real Name Doubles",
+  format: "doubles",
+  partnerMode: "even",
+  startsAt: "2026-12-02T19:00",
+  tz: "UTC",
+});
+for (const user of namedDb.users) signupTournament(namedDb, namedDoubles.tournament.id, user);
+const doublesDraw = generateTournamentBracket(namedDb, namedDoubles.tournament.id);
+const doublesView = publicTournament(namedDb, doublesDraw.tournament, null, { detail: true });
+const pairLabels = (doublesView.teams || []).map((team) => team.name);
+check(
+  "doubles bracket slots use each player's real name",
+  doublesDraw.status === 200 &&
+    pairLabels.length === 2 &&
+    pairLabels.every((label) => !label.includes("Viking") && !label.includes("Darts")) &&
+    pairLabels.some((label) => label.includes("Gordon Rodman")) &&
+    pairLabels.some((label) => label.includes("OnlyNick"))
+);
+
+const pooled = createTournament(namedDb, { id: 1 }, {
+  title: "Division Names",
+  format: "singles",
+  poolMode: "division",
+  startsAt: "2026-12-03T19:00",
+  tz: "UTC",
+  pools: [
+    { name: "Divisions 1 & 2", leagueIds: [9, 10] },
+    { name: "Division 3", leagueIds: [11] },
+  ],
+});
+for (const user of namedDb.users) signupTournament(namedDb, pooled.tournament.id, user);
+const poolDraw = generateTournamentBracket(namedDb, pooled.tournament.id);
+const poolView = publicTournament(namedDb, poolDraw.tournament, null, { detail: true });
+const poolSlots = (poolView.draws || []).flatMap((draw) =>
+  (draw.bracket?.rounds || []).flatMap((round) => round.matches.flatMap((match) => [match.teamA?.name, match.teamB?.name].filter(Boolean)))
+);
+check(
+  "division pool brackets use the real name",
+  poolDraw.status === 200 &&
+    poolSlots.includes("Gordon Rodman") &&
+    poolSlots.includes("OnlyNick") &&
+    !poolSlots.some((label) => label === "Viking" || label === "Darts")
+);
+
+let crowned = namedView;
+for (let step = 0; step < 6 && crowned.status !== "complete"; step += 1) {
+  const pending = crowned.bracket.rounds
+    .flatMap((round) => round.matches)
+    .find((match) => match.status === "pending" && match.teamA && match.teamB);
+  if (!pending) break;
+  const gordonSide = pending.teamA?.name === "Gordon Rodman" ? pending.teamAId : pending.teamB?.name === "Gordon Rodman" ? pending.teamBId : null;
+  const saved = recordTournamentResult(namedDb, namedSingles.tournament.id, pending.id, { winnerTeamId: gordonSide || pending.teamAId });
+  if (saved.status !== 200) break;
+  crowned = publicTournament(namedDb, saved.tournament, null, { detail: true });
+}
+check(
+  "the bracket winner line uses the real name",
+  crowned.championName === "Gordon Rodman" && !String(crowned.championName).includes("Viking")
+);
 
 const oddCup = cup("Odd Cup", [
   ["High Hand", 90],
