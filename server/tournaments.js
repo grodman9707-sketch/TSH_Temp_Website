@@ -94,6 +94,17 @@ function playerView(user) {
   };
 }
 
+// Bracket slots use the account name (the name entered at signup).
+// Nickname stays on the signup list and the draw wheel. A blank account
+// name falls back to the nickname so a slot is never empty.
+export function bracketPlayerName(user) {
+  const legal = String(user?.name || "").trim();
+  const nick = String(user?.nickname || "").trim();
+  if (legal) return legal.slice(0, 80);
+  if (nick) return nick.slice(0, 80);
+  return user ? "Player" : "Removed player";
+}
+
 function entryAvg(db, entry) {
   if (entry && entry.avg != null && entry.avg !== "") return roundAvg(entry.avg);
   return playerView(findUser(db, entry?.userId)).avg;
@@ -1129,7 +1140,7 @@ export function recordTournamentResult(db, id, matchId, body) {
 
 function teamName(db, team) {
   return (team?.playerIds || [])
-    .map((id) => playerView(findUser(db, id)).name)
+    .map((id) => bracketPlayerName(findUser(db, id)))
     .filter(Boolean)
     .join(" & ");
 }
@@ -1137,10 +1148,16 @@ function teamName(db, team) {
 function presentTeam(db, tournament, team) {
   if (!team) return null;
   const players = (team.playerIds || []).map((id) => {
+    const user = findUser(db, id);
     const entry = (tournament.entries || []).find((item) => Number(item.userId) === Number(id));
-    if (!entry) return playerView(findUser(db, id));
-    const view = entrantView(db, entry, tournament);
-    return { userId: view.userId, name: view.name, avg: view.avg, band: view.band, bandLabel: view.bandLabel };
+    const view = entry ? entrantView(db, entry, tournament) : playerView(user);
+    return {
+      userId: view.userId,
+      name: bracketPlayerName(user),
+      avg: view.avg,
+      band: view.band,
+      bandLabel: view.bandLabel,
+    };
   });
   return {
     id: team.id,
