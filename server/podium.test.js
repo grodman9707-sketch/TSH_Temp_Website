@@ -271,6 +271,21 @@ const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
 check("the home page has a congratulations podium and an empty state", appJs.includes('class="podium-congrats">Congratulations') && appJs.includes("Winners will appear here when a tournament finishes") && appJs.includes("podium-place-"));
 check("1st is the taller centre step and narrow screens put 1st first", css.includes(".podium-place-1 .podium-block") && css.includes("height: 8.5rem") && css.includes("height: 5.75rem") && css.includes("height: 4.25rem") && css.includes("order: -1"));
+const emptyPodium = appJs.slice(appJs.indexOf('id="tournament-winners"'), appJs.indexOf("Winners will appear here when a tournament finishes"));
+check(
+  "a finished podium uses a large banner and celebration that stays off when motion is reduced",
+  emptyPodium.length > 40 &&
+    !emptyPodium.includes("data-podium-confetti") &&
+    !emptyPodium.includes("podium-congrats") &&
+    appJs.includes("data-podium-confetti") &&
+    appJs.includes('class="podium-congrats">Congratulations') &&
+    appJs.includes('"(prefers-reduced-motion: reduce)"') &&
+    css.includes(".podium-hero") &&
+    css.includes(".podium-confetti") &&
+    css.includes("pointer-events: none") &&
+    css.includes("5.25rem") &&
+    css.includes("prefers-reduced-motion: reduce")
+);
 
 async function waitHealth(port, child) {
   const deadline = Date.now() + 15000;
