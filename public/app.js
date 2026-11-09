@@ -1509,6 +1509,80 @@ function mountPodiumConfetti() {
     motion?.removeEventListener?.("change", onMotion);
   };
 }
+function podiumCongratsBanner() {
+  return `<div class="podium-scroll">
+      <svg class="podium-scroll-art" viewBox="0 68 1000 310" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="tshRibbon" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#fff3c4"/>
+            <stop offset="0.2" stop-color="#f4d36a"/>
+            <stop offset="0.48" stop-color="#e8b425"/>
+            <stop offset="0.76" stop-color="#c49212"/>
+            <stop offset="1" stop-color="#8a6a12"/>
+          </linearGradient>
+          <linearGradient id="tshLip" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#7a5c12"/>
+            <stop offset="1" stop-color="#3f2e08"/>
+          </linearGradient>
+          <linearGradient id="tshRoll" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#3f2e08"/>
+            <stop offset="0.14" stop-color="#f8e7a8"/>
+            <stop offset="0.32" stop-color="#e8b425"/>
+            <stop offset="0.5" stop-color="#7a5c10"/>
+            <stop offset="0.68" stop-color="#f6d56a"/>
+            <stop offset="0.84" stop-color="#a97812"/>
+            <stop offset="1" stop-color="#3a2a06"/>
+          </linearGradient>
+          <radialGradient id="tshKnob" cx="0.35" cy="0.3" r="0.75">
+            <stop offset="0" stop-color="#fff8dc"/>
+            <stop offset="0.45" stop-color="#e8b425"/>
+            <stop offset="1" stop-color="#5c4308"/>
+          </radialGradient>
+          <clipPath id="tshClip">
+            <path d="M100 114 C280 98 420 88 500 84 C580 88 720 98 900 114 L900 276 C720 260 580 250 500 246 C420 250 280 260 100 276 Z"/>
+          </clipPath>
+        </defs>
+        <path d="M100 276 C280 260 420 250 500 246 C580 250 720 260 900 276 L900 296 C720 280 580 270 500 266 C420 270 280 280 100 296 Z" fill="url(#tshLip)"/>
+        <path d="M100 114 C280 98 420 88 500 84 C580 88 720 98 900 114 L900 276 C720 260 580 250 500 246 C420 250 280 260 100 276 Z" fill="url(#tshRibbon)" stroke="#4a3508" stroke-width="8" stroke-linejoin="round"/>
+        <path d="M128 132 C292 114 418 104 500 100 C582 104 708 114 872 132 L872 256 C708 242 582 232 500 228 C418 232 292 242 128 256 Z" fill="none" stroke="#5c4308" stroke-width="1.6"/>
+        <path d="M168 126 C310 108 410 100 500 98 C590 100 690 108 832 126" fill="none" stroke="#fff6cc" stroke-width="2.4" stroke-linecap="round" opacity="0.75"/>
+        <ellipse cx="430" cy="118" rx="120" ry="14" fill="#fff8dc" opacity="0.16" clip-path="url(#tshClip)"/>
+        <g fill="none" stroke="#4a3308" stroke-linecap="round" stroke-width="2">
+          <path d="M438 106 C458 98 476 98 492 106"/>
+          <path d="M562 106 C542 98 524 98 508 106"/>
+          <path d="M442 228 C462 238 478 238 494 228"/>
+          <path d="M558 228 C538 238 522 238 506 228"/>
+        </g>
+        <path d="M500 96 L505 106 L500 116 L495 106 Z" fill="#4a3308"/>
+        <path d="M500 100 L503 106 L500 112 L497 106 Z" fill="#fff6cc"/>
+        <path d="M500 220 L505 230 L500 240 L495 230 Z" fill="#5c4308"/>
+        <path d="M500 224 L503 230 L500 236 L497 230 Z" fill="#fff1c2"/>
+        <g>
+          <rect x="16" y="104" width="108" height="236" rx="54" fill="url(#tshRoll)"/>
+          <ellipse cx="70" cy="132" rx="40" ry="12" fill="#5c4308" opacity="0.28"/>
+          <path d="M42 128 C32 170 32 250 44 312" fill="none" stroke="#fff6cc" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+          <path d="M108 140 C120 180 120 260 106 314" fill="none" stroke="#3a2806" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M100 136 C114 178 114 262 98 316" fill="none" stroke="#fff3c4" stroke-width="1.7" stroke-linecap="round" opacity="0.75"/>
+          <circle cx="70" cy="96" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
+          <circle cx="64" cy="90" r="4" fill="#fff8dc" opacity="0.9"/>
+          <circle cx="70" cy="348" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
+          <circle cx="64" cy="342" r="4" fill="#fff8dc" opacity="0.85"/>
+        </g>
+        <g>
+          <rect x="876" y="104" width="108" height="236" rx="54" fill="url(#tshRoll)"/>
+          <ellipse cx="930" cy="132" rx="40" ry="12" fill="#5c4308" opacity="0.28"/>
+          <path d="M958 128 C968 170 968 250 956 312" fill="none" stroke="#fff6cc" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+          <path d="M892 140 C880 180 880 260 894 314" fill="none" stroke="#3a2806" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M900 136 C886 178 886 262 902 316" fill="none" stroke="#fff3c4" stroke-width="1.7" stroke-linecap="round" opacity="0.75"/>
+          <circle cx="930" cy="96" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
+          <circle cx="924" cy="90" r="4" fill="#fff8dc" opacity="0.9"/>
+          <circle cx="930" cy="348" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
+          <circle cx="924" cy="342" r="4" fill="#fff8dc" opacity="0.85"/>
+        </g>
+      </svg>
+      <p class="podium-congrats">Congratulations!</p>
+    </div>`;
+}
 function homePodium(payload) {
   const events = Array.isArray(payload?.events) ? payload.events : [];
   if (!events.length) {
@@ -1530,7 +1604,7 @@ function homePodium(payload) {
     <div class="mx-auto max-w-5xl text-center">
       <div class="podium-hero">
         ${fx}
-        <p class="podium-congrats">Congratulations</p>
+        ${podiumCongratsBanner()}
       </div>
       <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
       <p class="podium-when">${esc(podiumWhen(selected))}</p>
