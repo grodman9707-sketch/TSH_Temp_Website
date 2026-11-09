@@ -1383,6 +1383,132 @@ function podiumSwitch(events, activeId) {
     .join("");
   return `<div class="podium-switch" role="tablist" aria-label="Recent tournaments">${buttons}</div>`;
 }
+let podiumConfettiStop = null;
+function stopPodiumConfetti() {
+  if (typeof podiumConfettiStop === "function") podiumConfettiStop();
+  podiumConfettiStop = null;
+}
+function mountPodiumConfetti() {
+  stopPodiumConfetti();
+  const canvas = document.querySelector("[data-podium-confetti]");
+  if (!canvas) return;
+  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  if (motion?.matches) return;
+  const ctx = canvas.getContext("2d");
+  const host = canvas.parentElement;
+  if (!ctx || !host) return;
+  const colors = ["#e8b425", "#f6d56a", "#fff6cc", "#d08a4c", "#f3f6fb", "#ffffff", "#c9a227"];
+  const bits = [];
+  const sparks = [];
+  let width = 0;
+  let height = 0;
+  let dpr = 1;
+  let raf = 0;
+  let alive = true;
+  let tickCount = 0;
+  const fit = () => {
+    const rect = host.getBoundingClientRect();
+    const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const nextW = Math.max(1, rect.width);
+    const nextH = Math.max(1, rect.height);
+    if (canvas.width && nextW === width && nextH === height && nextDpr === dpr) return;
+    width = nextW;
+    height = nextH;
+    dpr = nextDpr;
+    canvas.width = Math.max(1, Math.floor(width * dpr));
+    canvas.height = Math.max(1, Math.floor(height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  const makeBit = (anywhere) => ({
+    x: Math.random() * width,
+    y: anywhere ? Math.random() * height : -10 - Math.random() * 36,
+    w: 6 + Math.random() * 8,
+    h: 3 + Math.random() * 5,
+    vy: 0.55 + Math.random() * 1.35,
+    vx: -0.55 + Math.random() * 1.1,
+    rot: Math.random() * Math.PI,
+    vr: -0.08 + Math.random() * 0.16,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    round: Math.random() < 0.35,
+  });
+  const burst = (x, y) => {
+    const count = 18 + Math.floor(Math.random() * 8);
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+      const speed = 1.15 + Math.random() * 2.3;
+      sparks.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 0.35,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.016,
+        size: 2 + Math.random() * 2.5,
+        color: colors[i % colors.length],
+      });
+    }
+  };
+  const onMotion = () => {
+    if (motion?.matches) stopPodiumConfetti();
+  };
+  motion?.addEventListener?.("change", onMotion);
+  const tick = () => {
+    if (!alive) return;
+    fit();
+    const target = Math.max(26, Math.min(60, Math.round(width / 18)));
+    while (bits.length < target) bits.push(makeBit(bits.length < target * 0.7));
+    ctx.clearRect(0, 0, width, height);
+    for (const bit of bits) {
+      bit.x += bit.vx + Math.sin(bit.y * 0.04) * 0.25;
+      bit.y += bit.vy;
+      bit.rot += bit.vr;
+      if (bit.y > height + 12) {
+        bit.y = -14;
+        bit.x = Math.random() * width;
+      }
+      if (bit.x < -18) bit.x = width + 6;
+      if (bit.x > width + 18) bit.x = -6;
+      ctx.save();
+      ctx.translate(bit.x, bit.y);
+      ctx.rotate(bit.rot);
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = bit.color;
+      if (bit.round) {
+        ctx.beginPath();
+        ctx.arc(0, 0, bit.w * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(-bit.w / 2, -bit.h / 2, bit.w, bit.h);
+      }
+      ctx.restore();
+    }
+    tickCount += 1;
+    if (tickCount % 75 === 16) burst(width * (0.08 + Math.random() * 0.22), height * (0.06 + Math.random() * 0.22));
+    if (tickCount % 75 === 52) burst(width * (0.7 + Math.random() * 0.22), height * (0.05 + Math.random() * 0.24));
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const spark = sparks[i];
+      spark.x += spark.vx;
+      spark.y += spark.vy;
+      spark.vy += 0.028;
+      spark.life -= spark.decay;
+      if (spark.life <= 0) {
+        sparks.splice(i, 1);
+        continue;
+      }
+      ctx.globalAlpha = Math.max(0, spark.life);
+      ctx.fillStyle = spark.color;
+      ctx.fillRect(spark.x, spark.y, spark.size, spark.size);
+    }
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  podiumConfettiStop = () => {
+    alive = false;
+    if (raf) cancelAnimationFrame(raf);
+    motion?.removeEventListener?.("change", onMotion);
+  };
+}
 function homePodium(payload) {
   const events = Array.isArray(payload?.events) ? payload.events : [];
   if (!events.length) {
@@ -1396,9 +1522,16 @@ function homePodium(payload) {
     </section>`;
   }
   const selected = events.find((event) => Number(event.id) === Number(state.podiumEventId)) || events[0];
-  return `<section class="home-podium px-4 py-12 sm:px-6 sm:py-16" id="tournament-winners">
+  const celebrate = selected.status === "complete" || Boolean(selected.finishedAt);
+  const fx = celebrate
+    ? `<div class="podium-fx" aria-hidden="true"><canvas class="podium-confetti" data-podium-confetti></canvas></div>`
+    : "";
+  return `<section class="home-podium px-2 py-12 sm:px-6 sm:py-16" id="tournament-winners">
     <div class="mx-auto max-w-5xl text-center">
-      <p class="podium-congrats">Congratulations</p>
+      <div class="podium-hero">
+        ${fx}
+        <p class="podium-congrats">Congratulations</p>
+      </div>
       <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
       <p class="podium-when">${esc(podiumWhen(selected))}</p>
       ${podiumSwitch(events, selected.id)}
@@ -4279,6 +4412,7 @@ async function render() {
   stopChatWatch();
   stopTournamentWatch();
   clearWheelTimers();
+  stopPodiumConfetti();
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
@@ -4335,6 +4469,7 @@ async function render() {
     document.querySelectorAll('form[data-form="POSTTOURNAMENT"]').forEach(syncTournamentForm);
     document.querySelectorAll('form[data-form="TOURNAMENTTEAMS"]').forEach(syncTeamForm);
     mountTournamentWheel();
+    mountPodiumConfetti();
     startTournamentWatch();
     startChatWatch();
   } catch (err) {
