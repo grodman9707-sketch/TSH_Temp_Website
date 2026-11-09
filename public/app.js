@@ -3908,6 +3908,60 @@ function tournamentTeamEditor(t) {
     "mt-6"
   );
 }
+function thirdPlaceOption(player, selected) {
+  const nick = player.nickname ? ` (${player.nickname})` : "";
+  const picked = Number(selected) === Number(player.userId) ? " selected" : "";
+  return `<option value="${player.userId}"${picked}>${esc(player.name)}${esc(nick)}</option>`;
+}
+function tournamentThirdPlaceForm(t) {
+  if (!t.canManage) return "";
+  const choices = t.thirdPlaceChoices || [];
+  const saved = t.thirdPlace || null;
+  const savedIds = saved?.playerIds || [];
+  const pools = t.thirdPlacePools || [];
+  const intro =
+    "No third-place match is required. Choose the two players who finished 3rd together. Both names share the one 3rd step on the home winners podium. This is not 3rd and 4th.";
+  if (choices.length < 2) {
+    return `<div class="mt-5 border-t border-white/10 pt-4">
+      <h3 class="text-base font-bold">3rd place pair</h3>
+      <p class="mt-1 text-sm text-muted">${esc(intro)} You can name them once two players have signed up or been placed.</p>
+    </div>`;
+  }
+  const firstId = savedIds[0] || choices[0]?.userId;
+  const secondId = savedIds[1] || choices.find((player) => Number(player.userId) !== Number(firstId))?.userId;
+  const poolKnown = pools.some((pool) => String(pool.id) === String(saved?.poolId || ""));
+  const poolField = pools.length
+    ? `<label class="block text-xs font-bold tracking-widest text-muted">BRACKET
+        <select name="poolId" class="mt-1" aria-label="Bracket for 3rd place" required>
+          ${poolKnown ? "" : `<option value="" disabled selected>Choose a bracket</option>`}
+          ${pools
+            .map((pool) => `<option value="${esc(pool.id)}"${String(saved?.poolId || "") === String(pool.id) ? " selected" : ""}>${esc(pool.name)}</option>`)
+            .join("")}
+        </select>
+      </label>`
+    : "";
+  const savedLine = saved?.players?.length
+    ? `<p class="mt-2 text-sm gold">Saved 3rd: ${esc(saved.players.map((player) => player.name).join(" and "))}.</p>`
+    : "";
+  return `<div class="mt-5 border-t border-white/10 pt-4">
+    <h3 class="text-base font-bold">3rd place pair</h3>
+    <p class="mt-1 text-sm text-muted">${esc(intro)}</p>
+    ${savedLine}
+    <form class="mt-3 space-y-3" data-form="TOURNAMENTTHIRD" data-id="${t.id}">
+      ${poolField}
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="block text-xs font-bold tracking-widest text-muted">FIRST PLAYER
+          <select name="playerA" class="mt-1" aria-label="First 3rd-place player" required>${choices.map((player) => thirdPlaceOption(player, firstId)).join("")}</select>
+        </label>
+        <label class="block text-xs font-bold tracking-widest text-muted">SECOND PLAYER
+          <select name="playerB" class="mt-1" aria-label="Second 3rd-place player" required>${choices.map((player) => thirdPlaceOption(player, secondId)).join("")}</select>
+        </label>
+      </div>
+      <button class="btn-gold" type="submit">SAVE 3RD PLACE</button>
+    </form>
+    ${saved ? `<form class="mt-2" data-form="TOURNAMENTTHIRDCLEAR" data-id="${t.id}"><button class="btn-ghost" type="submit">CLEAR 3RD PLACE</button></form>` : ""}
+  </div>`;
+}
 function tournamentStaffPanel(t) {
   if (!t.canManage) return "";
   const editing = Number(state.editingTournamentId) === Number(t.id);
@@ -3940,7 +3994,8 @@ function tournamentStaffPanel(t) {
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
-    ${edit}`,
+    ${edit}
+    ${tournamentThirdPlaceForm(t)}`,
     "mt-6"
   );
 }
@@ -4055,6 +4110,7 @@ function tournamentWatchKey(t) {
   pushBracket(t?.bracket);
   for (const draw of t?.draws || []) pushBracket(draw.bracket);
   bits.push((t?.entries || []).map((entry) => entry.userId).join("."));
+  bits.push((t?.thirdPlace?.playerIds || []).join("."));
   return bits.join("|");
 }
 function tournamentWheel(t) {
@@ -5475,6 +5531,18 @@ document.addEventListener("submit", async (e) => {
       await api(`/api/admin/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify(fd) });
       state.error = "";
       state.notice = "Result saved.";
+      render();
+    } else if (kind === "TOURNAMENTTHIRD") {
+      const body = { playerIds: [fd.playerA, fd.playerB] };
+      if (fd.poolId) body.poolId = fd.poolId;
+      await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify(body) });
+      state.error = "";
+      state.notice = "3rd place saved. Both players share the 3rd step on the home podium.";
+      render();
+    } else if (kind === "TOURNAMENTTHIRDCLEAR") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify({ clear: true }) });
+      state.error = "";
+      state.notice = "3rd place cleared. The podium follows the bracket again.";
       render();
     }
   } catch (err) {

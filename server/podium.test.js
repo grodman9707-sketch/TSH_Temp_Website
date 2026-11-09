@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { homePodium, placesFromBracket } from "./podium.js";
-import { createTournament, generateTournamentBracket, recordTournamentResult, signupTournament } from "./tournaments.js";
+import { createTournament, generateTournamentBracket, recordTournamentResult, setTournamentThirdPlace, signupTournament } from "./tournaments.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -267,9 +267,182 @@ check(
     autumnPlaces[2].note === ""
 );
 
+const joint = homePodium({
+  users: [
+    { id: 1, name: "Nina North", nickname: "Nines" },
+    { id: 2, name: "Pat Pine", nickname: "" },
+    { id: 11, name: "Allan Sargent", nickname: "Al", avatarFile: "allan.png", avatarUpdatedAt: "3", email: "allan@secret.test" },
+    { id: 12, name: "Steve Wren", nickname: "Steve Wren", email: "steve@secret.test" },
+  ],
+  tournaments: [
+    {
+      id: 15,
+      title: "Played Open",
+      status: "complete",
+      completedAt: "2026-11-08T21:00:00.000Z",
+      teams: [
+        { id: "t1", playerIds: [1] },
+        { id: "t2", playerIds: [2] },
+        { id: "t3", playerIds: [11] },
+        { id: "t4", playerIds: [12] },
+      ],
+      bracket: {
+        rounds: [
+          {
+            matches: [
+              { status: "complete", teamAId: "t1", teamBId: "t3", winnerTeamId: "t1" },
+              { status: "complete", teamAId: "t2", teamBId: "t4", winnerTeamId: "t2" },
+            ],
+          },
+          { matches: [{ status: "complete", teamAId: "t1", teamBId: "t2", winnerTeamId: "t1" }] },
+        ],
+      },
+      thirdPlace: { playerIds: [11, 12] },
+    },
+  ],
+});
+const jointPlaces = joint.events[0]?.boards[0].places || [];
+const jointThird = jointPlaces.find((item) => item.place === 3);
+check(
+  "an explicit 3rd-place pair is one step",
+  joint.events[0]?.title === "Played Open" &&
+    jointPlaces.length === 3 &&
+    jointPlaces.filter((item) => item.place === 3).length === 1 &&
+    jointThird?.players?.map((player) => player.name).join(" & ") === "Allan Sargent & Steve Wren" &&
+    jointThird.note === ""
+);
+check(
+  "the pair keeps real names, a distinct nickname, and an avatar",
+  jointThird?.players?.[0].nickname === "Al" &&
+    jointThird.players[0].hasAvatar === true &&
+    jointThird.players[0].avatarUrl === "/api/users/11/avatar?v=3" &&
+    jointThird.players[1].name === "Steve Wren" &&
+    jointThird.players[1].nickname === ""
+);
+check("explicit 3rd does not change the final", jointPlaces[0].players[0].name === "Nina North" && jointPlaces[1].players[0].name === "Pat Pine");
+check("explicit 3rd payload does not include emails", !JSON.stringify(joint).includes("secret.test"));
+
+const pooledThird = homePodium({
+  users: [
+    { id: 1, name: "High Hopper" },
+    { id: 3, name: "Low Lark" },
+    { id: 4, name: "Low Lynx" },
+    { id: 11, name: "Allan Sargent" },
+    { id: 12, name: "Steve Wren" },
+  ],
+  tournaments: [
+    {
+      id: 8,
+      title: "Split Bronze",
+      status: "complete",
+      completedAt: "2026-11-02T20:00:00.000Z",
+      thirdPlace: { playerIds: [11, 12], poolId: "low" },
+      draws: [
+        {
+          poolId: "high",
+          name: "50+",
+          teams: [{ id: "high-t1", playerIds: [1] }],
+          bracket: finalBye("high-t1"),
+        },
+        {
+          poolId: "low",
+          name: "50-",
+          teams: [
+            { id: "low-t1", playerIds: [3] },
+            { id: "low-t2", playerIds: [4] },
+            { id: "low-t3", playerIds: [11] },
+            { id: "low-t4", playerIds: [12] },
+          ],
+          bracket: {
+            rounds: [
+              {
+                matches: [
+                  { status: "complete", teamAId: "low-t1", teamBId: "low-t3", winnerTeamId: "low-t1" },
+                  { status: "complete", teamAId: "low-t2", teamBId: "low-t4", winnerTeamId: "low-t2" },
+                ],
+              },
+              { matches: [{ status: "complete", teamAId: "low-t1", teamBId: "low-t2", winnerTeamId: "low-t1" }] },
+            ],
+          },
+        },
+      ],
+    },
+  ],
+});
+const pooledBoards = pooledThird.events[0]?.boards || [];
+const highThird = pooledBoards.find((board) => board.poolName === "50+")?.places?.find((item) => item.place === 3);
+const lowThird = pooledBoards.find((board) => board.poolName === "50-")?.places?.find((item) => item.place === 3);
+check(
+  "an explicit pair applies only to the saved bracket",
+  lowThird?.players?.map((player) => player.name).join(" & ") === "Allan Sargent & Steve Wren" &&
+    lowThird.note === "" &&
+    highThird?.players?.length === 0 &&
+    highThird.note === ""
+);
+
+const bronzeDb = {
+  users: [
+    { id: 11, name: "Allan Sargent", nickname: "Al" },
+    { id: 12, name: "Steve Wren", nickname: "" },
+    { id: 9, name: "Outsider Owen", nickname: "" },
+  ],
+  tournaments: [
+    {
+      id: 4,
+      title: "Friday Cup",
+      status: "complete",
+      completedAt: "2026-11-06T21:00:00.000Z",
+      entries: [{ userId: 11 }],
+      teams: [
+        { id: "t1", playerIds: [11] },
+        { id: "t2", playerIds: [12] },
+      ],
+      bracket: playedFinal("t1", "t2"),
+    },
+  ],
+};
+check("a player outside the tournament cannot be named 3rd", setTournamentThirdPlace(bronzeDb, 4, { playerIds: [11, 9] }).status === 400);
+check("3rd place needs two different players", setTournamentThirdPlace(bronzeDb, 4, { playerIds: [11, 11] }).status === 400);
+const storedPair = setTournamentThirdPlace(bronzeDb, 4, { playerIds: [12, 11] });
+const storedStep = homePodium(bronzeDb).events[0]?.boards[0].places.find((item) => item.place === 3);
+check(
+  "a placed player and a signed-up player can be stored as one 3rd step",
+  storedPair.status === 200 &&
+    storedPair.tournament.thirdPlace.playerIds.join(",") === "12,11" &&
+    storedStep?.players?.map((player) => player.name).join(" & ") === "Steve Wren & Allan Sargent" &&
+    homePodium(bronzeDb).events[0].boards[0].places.length === 3
+);
+const clearedPair = setTournamentThirdPlace(bronzeDb, 4, { clear: true });
+const clearedStep = homePodium(bronzeDb).events[0]?.boards[0].places.find((item) => item.place === 3);
+check("clearing the pair restores the bracket rule", clearedPair.status === 200 && bronzeDb.tournaments[0].thirdPlace == null && clearedStep?.players?.length === 0);
+const splitSave = {
+  users: bronzeDb.users,
+  tournaments: [
+    {
+      id: 6,
+      title: "Two Brackets",
+      status: "complete",
+      entries: [{ userId: 11 }, { userId: 12 }],
+      draws: [
+        { poolId: "high", name: "50+", teams: [{ id: "h", playerIds: [11] }], bracket: finalBye("h") },
+        { poolId: "low", name: "50-", teams: [{ id: "a", playerIds: [11] }, { id: "b", playerIds: [12] }], bracket: playedFinal("a", "b") },
+      ],
+    },
+  ],
+};
+check("a split tournament needs the bracket for the pair", setTournamentThirdPlace(splitSave, 6, { playerIds: [11, 12] }).status === 400);
+check(
+  "the pair can be saved on one bracket",
+  setTournamentThirdPlace(splitSave, 6, { playerIds: [11, 12], poolId: "low" }).tournament?.thirdPlace?.poolId === "low"
+);
+
 const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
 check("the home page has a congratulations podium and an empty state", appJs.includes('class="podium-congrats">Congratulations') && appJs.includes("Winners will appear here when a tournament finishes") && appJs.includes("podium-place-"));
+check(
+  "staff can name a 3rd-place pair without playing a third-place match",
+  appJs.includes("3rd place pair") && appJs.includes("No third-place match is required") && appJs.includes('data-form="TOURNAMENTTHIRD"')
+);
 check("1st is the taller centre step and narrow screens put 1st first", css.includes(".podium-place-1 .podium-block") && css.includes("height: 8.5rem") && css.includes("height: 5.75rem") && css.includes("height: 4.25rem") && css.includes("order: -1"));
 const emptyPodium = appJs.slice(appJs.indexOf('id="tournament-winners"'), appJs.indexOf("Winners will appear here when a tournament finishes"));
 check(
@@ -406,6 +579,52 @@ try {
       place(3).players[0].nickname === "Bolt"
   );
   check("api podium does not leak emails", !JSON.stringify(podium.data).includes("@"));
+  const beaId = place(3)?.players?.[0]?.userId;
+  const calId = place(2)?.players?.[0]?.userId;
+  const outsider = await api(port, `/api/admin/tournaments/${id}/third-place`, {
+    method: "POST",
+    token: ownerTok,
+    body: { playerIds: [beaId, 999999] },
+  });
+  check("staff cannot name a player who is not in the tournament", outsider.status === 400);
+  const guest = await api(port, `/api/admin/tournaments/${id}/third-place`, {
+    method: "POST",
+    body: { playerIds: [beaId, calId] },
+  });
+  check("guests cannot set 3rd place", guest.status === 401);
+  const savedThird = await api(port, `/api/admin/tournaments/${id}/third-place`, {
+    method: "POST",
+    token: ownerTok,
+    body: { playerIds: [beaId, calId] },
+  });
+  const savedNames = (savedThird.data.tournament?.thirdPlace?.players || []).map((player) => player.name).join(" & ");
+  check("staff can save a 3rd-place pair", savedThird.status === 200 && savedNames === "Bea Birch & Cal Crowe");
+  const jointPodium = await api(port, "/api/podium");
+  const jointPlacesApi = jointPodium.data.events?.[0]?.boards?.[0]?.places || [];
+  const jointThirdApi = jointPlacesApi.find((item) => item.place === 3);
+  check(
+    "the public podium shows that pair on one 3rd step",
+    jointPodium.status === 200 &&
+      jointPlacesApi.length === 3 &&
+      jointPlacesApi.filter((item) => item.place === 3).length === 1 &&
+      jointThirdApi?.players?.map((player) => player.name).join(" & ") === "Bea Birch & Cal Crowe" &&
+      jointThirdApi.note === "" &&
+      jointPlacesApi.find((item) => item.place === 1)?.players?.[0]?.name === "Ada Archer"
+  );
+  const clearedThird = await api(port, `/api/admin/tournaments/${id}/third-place`, {
+    method: "POST",
+    token: ownerTok,
+    body: { clear: true },
+  });
+  const restored = await api(port, "/api/podium");
+  const restoredThird = restored.data.events?.[0]?.boards?.[0]?.places?.find((item) => item.place === 3);
+  check(
+    "clearing the pair restores the semifinal 3rd",
+    clearedThird.status === 200 &&
+      !clearedThird.data.tournament?.thirdPlace &&
+      restoredThird?.players?.length === 1 &&
+      restoredThird.players[0].name === "Bea Birch"
+  );
 } catch (err) {
   failures++;
   console.error("  FAIL - suite error:", err.message);
