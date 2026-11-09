@@ -361,14 +361,14 @@ try {
   check("bracket is up", drawn.status === 200 && drawn.data.tournament?.status === "brackets");
   const firstRound = drawn.data.tournament.bracket.rounds[0];
   const playable = firstRound.matches.find((match) => match.status === "pending");
-  const chipId = playable.teamA?.name === "Chip" ? playable.teamAId : playable.teamBId;
+  const chipId = playable.teamA?.name === "Cal Crowe" ? playable.teamAId : playable.teamBId;
   const semiWin = await api(port, `/api/admin/tournaments/${id}/matches/${playable.id}`, {
     method: "POST",
     token: ownerTok,
     body: { winnerTeamId: chipId, scoreA: playable.teamAId === chipId ? 3 : 1, scoreB: playable.teamAId === chipId ? 1 : 3 },
   });
   const final = semiWin.data.tournament.bracket.rounds.at(-1).matches[0];
-  const aceId = final.teamA?.name === "Ace" ? final.teamAId : final.teamBId;
+  const aceId = final.teamA?.name === "Ada Archer" ? final.teamAId : final.teamBId;
   const finalWin = await api(port, `/api/admin/tournaments/${id}/matches/${final.id}`, {
     method: "POST",
     token: ownerTok,
