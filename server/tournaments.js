@@ -939,7 +939,13 @@ function composeBracket(db, tournament, rng) {
 
 function refreshStatus(tournament) {
   const draws = drawList(tournament);
-  tournament.status = draws.length && draws.every((draw) => championTeamId(draw.bracket)) ? "complete" : "brackets";
+  const complete = Boolean(draws.length && draws.every((draw) => championTeamId(draw.bracket)));
+  tournament.status = complete ? "complete" : "brackets";
+  if (complete) {
+    if (!tournament.completedAt) tournament.completedAt = new Date().toISOString();
+  } else {
+    delete tournament.completedAt;
+  }
 }
 
 function applyBracket(tournament, composed) {
