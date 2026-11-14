@@ -5,6 +5,9 @@
 // third-place match, unless the tournament stores an explicit 3rd-place pair.
 // That pair shares the one 3rd step and is preferred over the semifinal rule.
 // The main page features the most recently completed tournament that has a winner.
+// A finished tournament stays on the main page for 3 days after it is completed.
+
+export const PODIUM_HOME_MS = 3 * 24 * 60 * 60 * 1000;
 
 export function placesFromBracket(bracket) {
   const rounds = Array.isArray(bracket?.rounds) ? bracket.rounds : [];
@@ -155,6 +158,13 @@ function timeOf(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function podiumStillPosted(tournament, now) {
+  if ((tournament?.status || "") !== "complete") return true;
+  const finished = timeOf(tournament?.completedAt);
+  if (finished == null) return true;
+  return now - finished < PODIUM_HOME_MS;
+}
+
 function compareTournaments(a, b) {
   const aDone = a.status === "complete" ? 1 : 0;
   const bDone = b.status === "complete" ? 1 : 0;
@@ -187,8 +197,11 @@ function eventFor(db, tournament) {
   };
 }
 
-export function homePodium(db) {
+export function homePodium(db, now = Date.now()) {
+  const clock = Number(now);
+  const at = Number.isFinite(clock) ? clock : Date.now();
   const events = (Array.isArray(db?.tournaments) ? db.tournaments : [])
+    .filter((tournament) => podiumStillPosted(tournament, at))
     .slice()
     .sort(compareTournaments)
     .map((tournament) => eventFor(db, tournament))

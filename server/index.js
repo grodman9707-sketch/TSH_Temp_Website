@@ -56,6 +56,7 @@ import {
   createTournament,
   declinePartner,
   deleteTournament,
+  drawTournamentPartners,
   findTournament,
   generateTournamentBracket,
   listTournaments,
@@ -65,6 +66,8 @@ import {
   saveTournamentTeams,
   setTournamentThirdPlace,
   signupTournament,
+  tournamentNewsCopy,
+  tournamentTabBubble,
   updateTournament,
   withdrawTournament,
 } from "./tournaments.js";
@@ -2753,6 +2756,23 @@ function tournamentTitle(tournament) {
   return String(tournament?.title || "Tournament").slice(0, 80);
 }
 
+function addAnnouncement(db, user, fields) {
+  if (!Array.isArray(db.announcements)) db.announcements = [];
+  const item = {
+    id: Math.max(0, ...db.announcements.map((a) => Number(a.id) || 0)) + 1,
+    title: String(fields.title || "").trim(),
+    body: String(fields.body ?? ""),
+    createdAt: new Date().toISOString(),
+    postedById: user?.id ?? null,
+  };
+  if (fields.tournamentId != null) item.tournamentId = Number(fields.tournamentId);
+  db.announcements.unshift(item);
+  recordStaff(db, user, "post_news", {
+    summary: `Posted news “${item.title.slice(0, 80)}”`,
+  });
+  return item;
+}
+
 function canManageTournament(user, tournament) {
   if (!isStaff(user)) return false;
   if (canOverride(user)) return true;
@@ -2807,6 +2827,7 @@ function handleTournamentRoutes(res, db, user, method, p, body) {
       canPostOpen: Boolean(user && canOverride(user)),
       manageLeagues: manageLeagueOptions(db, user),
       tournaments: listTournaments(db, user, (tournament) => canManageTournament(user, tournament)),
+      bubble: tournamentTabBubble(db.tournaments),
     });
     return true;
   }
@@ -4844,23 +4865,17 @@ async function handleApi(req, res, url) {
       const title = String(body.title || "").trim();
       const text = String(body.body ?? "");
       if (!title || !text.trim()) return json(res, 400, { ok: false, error: "Title and body are required" });
-      const item = {
-        id: Math.max(0, ...db.announcements.map((a) => a.id)) + 1,
-        title,
-        body: text,
-        createdAt: new Date().toISOString(),
-        postedById: user.id,
-      };
-      db.announcements.unshift(item);
-      recordStaff(db, user, "post_news", {
-        summary: `Posted news “${title.slice(0, 80)}”`,
-      });
+      const item = addAnnouncement(db, user, { title, body: text });
       writeDb(db);
       return json(res, 200, { ok: true, announcement: item });
     }
     if (method === "POST" && p === "/api/admin/tournaments") {
       const access = canOverride(user) ? { override: true } : { override: false, leagueIds: adminLeagueIds(user) };
       const result = createTournament(db, user, body, access);
+      if (!result.error && result.tournament) {
+        const copy = tournamentNewsCopy(db, result.tournament, body?.tz);
+        addAnnouncement(db, user, { ...copy, tournamentId: result.tournament.id });
+      }
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "post_tournament",
         summary: `Posted tournament “${tournamentTitle(result.tournament)}”`,
@@ -4883,6 +4898,15 @@ async function handleApi(req, res, url) {
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "delete_tournament",
         summary: `Removed tournament “${tournamentTitle(result.tournament)}”`,
+      });
+    }
+    const drawMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/teams\/draw$/);
+    if (method === "POST" && drawMatch) {
+      if (denyTournamentManager(res, db, user, drawMatch[1])) return;
+      const result = drawTournamentPartners(db, drawMatch[1]);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_teams",
+        summary: `Drew partners for “${tournamentTitle(result.tournament)}”`,
       });
     }
     const balanceMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/teams\/balance$/);

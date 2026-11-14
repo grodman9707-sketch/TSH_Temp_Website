@@ -5,7 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { homePodium, placesFromBracket } from "./podium.js";
+import { PODIUM_HOME_MS, homePodium, placesFromBracket } from "./podium.js";
 import { createTournament, generateTournamentBracket, recordTournamentResult, setTournamentThirdPlace, signupTournament } from "./tournaments.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -99,7 +99,7 @@ const names = homePodium({
       },
     },
   ],
-});
+}, Date.parse("2026-11-02T20:00:00.000Z"));
 const pairs = names.events[0];
 const firstPlayers = pairs?.boards[0].places[0].players;
 const secondPlayers = pairs?.boards[0].places[1].players;
@@ -112,7 +112,7 @@ check("runner-up keeps a distinct nickname", secondPlayers?.[1].name === "Quinn 
 check("a removed player still fills the 3rd step", thirdPlayers?.[0].name === "Removed player");
 check("podium payload does not include emails", !JSON.stringify(names).includes("secret.test"));
 
-const split = homePodium({
+const splitDb = {
   users: [
     { id: 1, name: "High Hopper", nickname: "" },
     { id: 3, name: "Low Lark", nickname: "" },
@@ -123,7 +123,7 @@ const split = homePodium({
       id: 3,
       title: "Older Cup",
       status: "complete",
-      completedAt: "2026-08-01T12:00:00.000Z",
+      completedAt: "2026-11-01T20:00:00.000Z",
       startsAt: "2026-08-01T18:00:00.000Z",
       teams: [
         { id: "t1", playerIds: [1] },
@@ -183,11 +183,20 @@ const split = homePodium({
       entries: [],
     },
   ],
-});
+};
+const splitNow = Date.parse("2026-11-03T20:00:00.000Z");
+const split = homePodium(splitDb, splitNow);
 check("the most recently finished tournament is first", split.events[0]?.title === "Split Open" && split.events[0].finishedAt === "2026-11-02T20:00:00.000Z");
 check("an older finished tournament stays in the list", split.events[1]?.title === "Older Cup");
 check("an in-progress event with one winner is listed after finished events", split.events[2]?.title === "Still Going" && split.events[2].boards.length === 1 && split.events[2].boards[0].poolName === "Pool A");
 check("signup with no winner is left off the podium", split.events.every((event) => event.title !== "Signup Only"));
+const aged = homePodium(splitDb, Date.parse("2026-11-06T21:00:00.000Z"));
+check(
+  "winners leave the home page after 3 days",
+  PODIUM_HOME_MS === 3 * 24 * 60 * 60 * 1000 &&
+    aged.events.every((event) => event.title !== "Split Open" && event.title !== "Older Cup") &&
+    aged.events.some((event) => event.title === "Still Going")
+);
 const boards = split.events[0].boards;
 check(
   "each finished pool keeps its own podium",
@@ -245,9 +254,9 @@ winterCup = memory.tournaments.find((item) => item.id === winter.tournament.id);
 const winterFinal = winterCup.bracket.rounds.at(-1).matches[0];
 recordTournamentResult(memory, winterCup.id, winterFinal.id, { winnerTeamId: winterFinal.teamAId, scoreA: 4, scoreB: 2 });
 winterCup = memory.tournaments.find((item) => item.id === winter.tournament.id);
-cup.completedAt = "2020-01-01T00:00:00.000Z";
+cup.completedAt = "2029-12-30T12:00:00.000Z";
 winterCup.completedAt = "2030-01-01T00:00:00.000Z";
-const played = homePodium(memory);
+const played = homePodium(memory, Date.parse("2030-01-01T12:00:00.000Z"));
 const featured = played.events[0];
 const namesOf = (place) => (featured.boards[0].places.find((item) => item.place === place)?.players || []).map((player) => player.name);
 check("a played 4-player final records a finish time", Boolean(winterCup.completedAt) && winterCup.status === "complete");
@@ -300,7 +309,7 @@ const joint = homePodium({
       thirdPlace: { playerIds: [11, 12] },
     },
   ],
-});
+}, Date.parse("2026-11-09T21:00:00.000Z"));
 const jointPlaces = joint.events[0]?.boards[0].places || [];
 const jointThird = jointPlaces.find((item) => item.place === 3);
 check(
@@ -368,7 +377,7 @@ const pooledThird = homePodium({
       ],
     },
   ],
-});
+}, Date.parse("2026-11-03T20:00:00.000Z"));
 const pooledBoards = pooledThird.events[0]?.boards || [];
 const highThird = pooledBoards.find((board) => board.poolName === "50+")?.places?.find((item) => item.place === 3);
 const lowThird = pooledBoards.find((board) => board.poolName === "50-")?.places?.find((item) => item.place === 3);
@@ -401,19 +410,20 @@ const bronzeDb = {
     },
   ],
 };
+const bronzeNow = Date.parse("2026-11-07T21:00:00.000Z");
 check("a player outside the tournament cannot be named 3rd", setTournamentThirdPlace(bronzeDb, 4, { playerIds: [11, 9] }).status === 400);
 check("3rd place needs two different players", setTournamentThirdPlace(bronzeDb, 4, { playerIds: [11, 11] }).status === 400);
 const storedPair = setTournamentThirdPlace(bronzeDb, 4, { playerIds: [12, 11] });
-const storedStep = homePodium(bronzeDb).events[0]?.boards[0].places.find((item) => item.place === 3);
+const storedStep = homePodium(bronzeDb, bronzeNow).events[0]?.boards[0].places.find((item) => item.place === 3);
 check(
   "a placed player and a signed-up player can be stored as one 3rd step",
   storedPair.status === 200 &&
     storedPair.tournament.thirdPlace.playerIds.join(",") === "12,11" &&
     storedStep?.players?.map((player) => player.name).join(" & ") === "Steve Wren & Allan Sargent" &&
-    homePodium(bronzeDb).events[0].boards[0].places.length === 3
+    homePodium(bronzeDb, bronzeNow).events[0].boards[0].places.length === 3
 );
 const clearedPair = setTournamentThirdPlace(bronzeDb, 4, { clear: true });
-const clearedStep = homePodium(bronzeDb).events[0]?.boards[0].places.find((item) => item.place === 3);
+const clearedStep = homePodium(bronzeDb, bronzeNow).events[0]?.boards[0].places.find((item) => item.place === 3);
 check("clearing the pair restores the bracket rule", clearedPair.status === 200 && bronzeDb.tournaments[0].thirdPlace == null && clearedStep?.players?.length === 0);
 const splitSave = {
   users: bronzeDb.users,
