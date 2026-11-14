@@ -2,6 +2,8 @@
 // A random doubles draw pairs one player at or above the cutoff with one below it.
 // The cutoff defaults to 50. Even teams pair the highest average with the lowest.
 // Signup can also be split into separate brackets by that cutoff or by division.
+// The name wheel is optional. It draws random doubles partners, or an open
+// singles field as Luck of the Draw. Older posts with no choice still show it.
 
 import { wheelStepMs } from "../public/tournamentWheel.js";
 import { isValidTimeZone, wallStringToUtc } from "./timezones.js";
@@ -9,6 +11,7 @@ import { isValidTimeZone, wallStringToUtc } from "./timezones.js";
 export const AVG_SPLIT = 50;
 export const TITLE_MAX = 80;
 export const DESCRIPTION_MAX = 2000;
+export const TOURNAMENT_BUBBLE_LEAD_MS = 60 * 60 * 1000;
 
 export function avgBand(avg, split = AVG_SPLIT) {
   const n = Number(avg);
@@ -613,6 +616,76 @@ function audiencePhrase(db, tournament) {
   return joinNames(ids.map((id) => divisionName(findLeague(db, id))));
 }
 
+export function readNameWheel(body) {
+  if (!body || !Object.prototype.hasOwnProperty.call(body, "nameWheel")) return undefined;
+  const value = body.nameWheel;
+  if (value === false || value === 0 || value === "0" || value === "false" || value === "off" || value === "no" || value === "") return false;
+  return true;
+}
+
+export function usesNameWheel(tournament) {
+  return tournament?.nameWheel !== false;
+}
+
+function luckOfTheDraw(tournament) {
+  return tournament?.format === "singles" && tournament?.nameWheel === true;
+}
+
+export function tournamentTabBubble(tournaments, now = Date.now()) {
+  const clock = Number(now);
+  const at = Number.isFinite(clock) ? clock : Date.now();
+  let count = 0;
+  for (const tournament of Array.isArray(tournaments) ? tournaments : []) {
+    const start = Date.parse(tournament?.startsAt || "");
+    if (!Number.isFinite(start)) continue;
+    if (at + TOURNAMENT_BUBBLE_LEAD_MS < start) count += 1;
+  }
+  return count;
+}
+
+function newsFormatLine(tournament) {
+  const split = splitText(tournament?.avgSplit ?? AVG_SPLIT);
+  if (tournament?.format === "doubles" && tournament?.partnerMode === "choose") return "Doubles. Players choose a partner.";
+  if (tournament?.format === "doubles" && tournament?.partnerMode === "even") return "Doubles. Highest average is paired with the lowest.";
+  if (tournament?.format === "doubles") return `Doubles. Random partners pair ${split}+ with ${split}-.`;
+  if (tournament?.nameWheel === true) return "Singles. Luck of the Draw.";
+  return "Singles. Seeded by average.";
+}
+
+export function tournamentNewsCopy(db, tournament, timeZone) {
+  const zone = isValidTimeZone(timeZone) ? timeZone : "UTC";
+  const start = new Date(tournament?.startsAt || "");
+  const when = Number.isNaN(start.getTime())
+    ? "Date to be announced"
+    : new Intl.DateTimeFormat("en-GB", {
+        timeZone: zone,
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+        timeZoneName: "short",
+      }).format(start);
+  const who = audiencePhrase(db, tournament);
+  const lines = [
+    `${tournament?.title || "Tournament"} is open for signup.`,
+    "",
+    `**When:** ${when}`,
+    `**Format:** ${newsFormatLine(tournament)}`,
+    `**Who can enter:** ${who === "all players" ? "All players" : who}`,
+  ];
+  if (usesNameWheel(tournament)) lines.push("**Name wheel:** on");
+  const description = String(tournament?.description || "").trim();
+  if (description) lines.push("", description);
+  lines.push("", "Sign up on the Tournaments tab.");
+  return {
+    title: `New tournament: ${String(tournament?.title || "Tournament")}`.slice(0, 120),
+    body: lines.join("\n"),
+  };
+}
+
 export function createTournament(db, user, body, access = { override: true }) {
   const parsed = readTournamentFields(body, { timeZone: body?.tz });
   if (parsed.error) return fail(400, parsed.error);
@@ -639,6 +712,8 @@ export function createTournament(db, user, body, access = { override: true }) {
     draws: null,
     generatedAt: null,
   };
+  const wheelFlag = readNameWheel(body);
+  if (wheelFlag === true || wheelFlag === false) tournament.nameWheel = wheelFlag;
   list.unshift(tournament);
   return { status: 200, tournament };
 }
@@ -890,8 +965,10 @@ function unitsFor(tournament, players, rng) {
   return autoUnits(tournament, players, rng);
 }
 
-function unitsToTeams(units, poolId, pooled) {
-  const sorted = units.slice().sort((a, b) => b.avg - a.avg || a.playerIds[0] - b.playerIds[0]);
+function unitsToTeams(units, poolId, pooled, rng = Math.random, randomSeeds = false) {
+  const sorted = randomSeeds
+    ? shuffle(units.slice(), rng)
+    : units.slice().sort((a, b) => b.avg - a.avg || a.playerIds[0] - b.playerIds[0]);
   return sorted.map((unit, index) => ({
     id: pooled ? `${poolId}-t${index + 1}` : `t${index + 1}`,
     seed: index + 1,
@@ -907,7 +984,7 @@ function composeBracket(db, tournament, rng) {
   if (!pooled) {
     const built = unitsFor(tournament, players, rng);
     if (built.short) return { error: built.short };
-    const teams = unitsToTeams(built.units, "all", false);
+    const teams = unitsToTeams(built.units, "all", false, rng, luckOfTheDraw(tournament));
     const bracket = buildSingleElim(teams);
     if (bracket.error) return { error: bracket.error };
     return { teams, bracket, draws: null, unpaired: built.unpaired.filter(Boolean) };
@@ -924,7 +1001,7 @@ function composeBracket(db, tournament, rng) {
       unpaired.push(...group);
       continue;
     }
-    const teams = unitsToTeams(built.units, pool.id, true);
+    const teams = unitsToTeams(built.units, pool.id, true, rng, luckOfTheDraw(tournament));
     const bracket = buildSingleElim(teams, { idPrefix: `${pool.id}-` });
     if (bracket.error) return { error: bracket.error };
     draws.push({ poolId: pool.id, name: pool.name, teams, bracket });
@@ -1087,7 +1164,38 @@ export function balanceTournamentTeams(db, id, options = {}) {
   if (!teams.length) return fail(400, "Need at least two players in a pool to make an even team");
   const saved = saveTournamentTeams(db, id, { teams });
   if (saved.error || !saved.tournament) return saved;
-  saved.tournament.wheelReveal = buildWheelReveal(db, saved.tournament, rng);
+  if (usesNameWheel(saved.tournament)) saved.tournament.wheelReveal = buildWheelReveal(db, saved.tournament, rng);
+  else saved.tournament.wheelReveal = null;
+  return saved;
+}
+
+export function drawTournamentPartners(db, id, options = {}) {
+  const rng = typeof options.rng === "function" ? options.rng : Math.random;
+  const tournament = findTournament(db, id);
+  if (!tournament) return fail(404, "Tournament not found");
+  if (tournament.format !== "doubles" || tournament.partnerMode !== "random") {
+    return fail(400, "The name wheel draws random doubles partners");
+  }
+  if (tournament.status === "complete") return fail(400, "This tournament is finished");
+  if (tournamentHasResults(tournament)) return fail(400, "A match already has a result, so the teams cannot be changed");
+  const players = playersFromEntries(db, tournament);
+  const split = cutoffOf(tournament);
+  const pooled = (tournament.poolMode || "none") !== "none";
+  const groups = pooled
+    ? poolDefs(tournament).map((pool) => ({ players: players.filter((player) => player.poolId === pool.id) }))
+    : [{ players }];
+  const teams = [];
+  let short = "";
+  for (const group of groups) {
+    const drawn = pairRandomMixed(group.players, rng, split);
+    if (drawn.pairs.length < 2) short = mixedShort(split, drawn.pairs);
+    for (const pair of drawn.pairs) teams.push({ playerIds: [Number(pair[0].userId), Number(pair[1].userId)] });
+  }
+  if (teams.length < 2) return fail(400, short || mixedShort(split, []));
+  const saved = saveTournamentTeams(db, id, { teams });
+  if (saved.error || !saved.tournament) return saved;
+  if (usesNameWheel(saved.tournament)) saved.tournament.wheelReveal = buildWheelReveal(db, saved.tournament, rng);
+  else saved.tournament.wheelReveal = null;
   return saved;
 }
 
@@ -1292,6 +1400,7 @@ function statusRank(status) {
 }
 
 function presentWheel(entryViews, tournament) {
+  if (!usesNameWheel(tournament)) return null;
   if (drawList(tournament).length) return null;
   const live = entryViews
     .map((entry) => ({ userId: Number(entry.userId), name: entry.name }))
@@ -1413,6 +1522,7 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
     title: tournament.title,
     format: tournament.format,
     partnerMode: tournament.partnerMode || null,
+    nameWheel: tournament.nameWheel === true ? true : tournament.nameWheel === false ? false : null,
     status: tournament.status,
     startsAt: tournament.startsAt,
     description: tournament.description || "",

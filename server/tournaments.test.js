@@ -12,11 +12,15 @@ import {
   bracketPlayerName,
   buildSingleElim,
   createTournament,
+  drawTournamentPartners,
   generateTournamentBracket,
   pairEven,
   pairRandomMixed,
   parseStartsAt,
   publicTournament,
+  TOURNAMENT_BUBBLE_LEAD_MS,
+  tournamentNewsCopy,
+  tournamentTabBubble,
   recordTournamentResult,
   seedPositions,
   signupTournament,
@@ -119,7 +123,7 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=90") && html.includes("styles.css?v=90"));
+check("cache bust covers the new tab", html.includes("app.js?v=91") && html.includes("styles.css?v=91"));
 check("staff can build even teams and fill blank seats", appJs.includes("MAKE EVEN TEAMS") && appJs.includes("ADD BLANK TEAM") && appJs.includes("Blank seat"));
 check("staff can split a tournament into pools", appJs.includes('name="poolMode"') && appJs.includes("Split by division"));
 check(
@@ -147,6 +151,110 @@ check(
 check("a fresh draw starts on the first name", wheelPlan(1_000_000, 1_000_000, 4, 1000).phase === "spin" && wheelPlan(1_000_000, 1_000_000, 4, 1000).donePairs === 0);
 check("two landings finish a team", wheelPlan(1_002_000, 1_000_000, 4, 1000).index === 2 && wheelPlan(1_002_000, 1_000_000, 4, 1000).donePairs === 1);
 check("a finished draw has every pair", wheelPlan(1_004_000, 1_000_000, 4, 1000).phase === "done" && wheelPlan(1_004_000, 1_000_000, 4, 1000).donePairs === 2);
+check("the name wheel is optional", appJs.includes('name="nameWheel"') && appJs.includes("Luck of the Draw") && appJs.includes("data-wheel-wrap") && appJs.includes("DRAW ON THE WHEEL"));
+check("the tournaments tab can show a count bubble", appJs.includes("tournamentBubble") && appJs.includes("new tournament"));
+
+const bubbleNow = Date.parse("2026-11-14T15:00:00.000Z");
+const bubbleHour = 60 * 60 * 1000;
+check("the tournaments bubble lead is one hour", TOURNAMENT_BUBBLE_LEAD_MS === bubbleHour);
+check(
+  "the bubble counts a tournament until one hour before the start",
+  tournamentTabBubble(
+    [
+      { startsAt: new Date(bubbleNow + 2 * bubbleHour).toISOString() },
+      { startsAt: new Date(bubbleNow + bubbleHour).toISOString() },
+      { startsAt: new Date(bubbleNow + bubbleHour - 1).toISOString() },
+      { startsAt: new Date(bubbleNow - bubbleHour).toISOString() },
+    ],
+    bubbleNow
+  ) === 1
+);
+
+const quietDb = {
+  users: [
+    { id: 1, name: "Ada", avg: 80 },
+    { id: 2, name: "Bea", avg: 40 },
+    { id: 3, name: "Cal", avg: 70 },
+    { id: 4, name: "Dee", avg: 20 },
+  ],
+  tournaments: [],
+};
+const quiet = createTournament(quietDb, { id: 1 }, {
+  title: "Quiet Cup",
+  format: "doubles",
+  partnerMode: "even",
+  nameWheel: false,
+  startsAt: "2026-12-01T19:00",
+  tz: "UTC",
+});
+for (const user of quietDb.users) signupTournament(quietDb, quiet.tournament.id, user);
+const quietTeams = balanceTournamentTeams(quietDb, quiet.tournament.id, { rng: identityRng });
+const quietView = publicTournament(quietDb, quietTeams.tournament, null, { detail: true });
+check(
+  "turning the name wheel off hides it and skips the spin",
+  quiet.tournament.nameWheel === false && quietTeams.tournament.wheelReveal == null && quietView.wheel == null && quietView.nameWheel === false
+);
+
+const lotdDb = {
+  users: [
+    { id: 1, name: "Low", avg: 20 },
+    { id: 2, name: "High", avg: 90 },
+    { id: 3, name: "Mid", avg: 50 },
+    { id: 4, name: "Upper", avg: 70 },
+  ],
+  tournaments: [],
+};
+const lotd = createTournament(lotdDb, { id: 1 }, { title: "Open Draw", format: "singles", nameWheel: true, startsAt: "2026-12-01T19:00", tz: "UTC" });
+for (const user of lotdDb.users) signupTournament(lotdDb, lotd.tournament.id, user);
+const lotdDraw = generateTournamentBracket(lotdDb, lotd.tournament.id, { rng: identityRng });
+check(
+  "luck of the draw does not seed the highest average first",
+  lotdDraw.status === 200 && lotdDraw.tournament.teams.find((team) => team.seed === 1)?.playerIds?.[0] === 1
+);
+const seedDb = { users: lotdDb.users.map((user) => ({ ...user })), tournaments: [] };
+const seeded = createTournament(seedDb, { id: 1 }, { title: "Seeded", format: "singles", nameWheel: false, startsAt: "2026-12-01T19:00", tz: "UTC" });
+for (const user of seedDb.users) signupTournament(seedDb, seeded.tournament.id, user);
+const seedDraw = generateTournamentBracket(seedDb, seeded.tournament.id);
+check(
+  "a singles bracket without the wheel still seeds the highest average first",
+  seedDraw.tournament.teams.find((team) => team.seed === 1)?.playerIds?.[0] === 2
+);
+
+const mixDb = {
+  users: [
+    { id: 1, name: "High A", avg: 80 },
+    { id: 2, name: "High B", avg: 90 },
+    { id: 3, name: "Low A", avg: 40 },
+    { id: 4, name: "Low B", avg: 30 },
+  ],
+  tournaments: [],
+};
+const mix = createTournament(mixDb, { id: 1 }, {
+  title: "Mixed Wheel",
+  format: "doubles",
+  partnerMode: "random",
+  nameWheel: true,
+  startsAt: "2026-12-01T19:00",
+  tz: "UTC",
+  description: "Bring your darts",
+});
+for (const user of mixDb.users) signupTournament(mixDb, mix.tournament.id, user);
+const drawnPartners = drawTournamentPartners(mixDb, mix.tournament.id, { rng: identityRng });
+const mixedPairs = (drawnPartners.tournament?.wheelReveal?.pairs || []).map((pair) => pair.map(Number).sort((a, b) => a - b).join("-")).sort();
+check(
+  "drawing partners spins the name wheel",
+  drawnPartners.status === 200 && mixedPairs.join("|") === "1-3|2-4" && drawnPartners.tournament.wheelReveal.order.length === 4
+);
+const newsCopy = tournamentNewsCopy(mixDb, mix.tournament, "UTC");
+check(
+  "a new tournament has news copy",
+  newsCopy.title === "New tournament: Mixed Wheel" &&
+    newsCopy.body.includes("Bring your darts") &&
+    newsCopy.body.includes("1 Dec 2026") &&
+    newsCopy.body.includes("19:00") &&
+    newsCopy.body.includes("Sign up on the Tournaments tab") &&
+    newsCopy.body.includes("Name wheel")
+);
 
 function cup(title, specs) {
   const db = {
@@ -372,7 +480,7 @@ try {
   await waitHealth(port, child);
 
   const guestList = await api(port, "/api/tournaments");
-  check("guests can open the tournament list", guestList.status === 200 && guestList.data.ok && guestList.data.tournaments.length === 0);
+  check("guests can open the tournament list", guestList.status === 200 && guestList.data.ok && guestList.data.tournaments.length === 0 && guestList.data.bubble === 0);
   check("guests cannot manage tournaments", guestList.data.canManage === false);
   const guestPost = await api(port, "/api/admin/tournaments", {
     method: "POST",
@@ -982,6 +1090,59 @@ try {
       wheelWin.data.tournament.status === "complete" &&
       wheelWin.data.tournament.bracket.rounds.at(-1).matches[0].scoreA == null &&
       wheelWin.data.tournament.bracket.rounds.at(-1).matches[0].winnerTeamId === wheelFinal.teamAId
+  );
+
+  const bubbleBefore = (await api(port, "/api/tournaments")).data.bubble;
+  const imminent = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: {
+      title: "Imminent Cup",
+      format: "singles",
+      nameWheel: false,
+      startsAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
+      tz: "UTC",
+    },
+  });
+  const afterImminent = await api(port, "/api/tournaments");
+  check(
+    "a start inside the last hour does not add a tournaments bubble",
+    imminent.status === 200 && afterImminent.data.bubble === bubbleBefore
+  );
+  const ahead = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: {
+      title: "Bubble Cup",
+      format: "doubles",
+      partnerMode: "random",
+      nameWheel: true,
+      startsAt: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+      tz: "UTC",
+      description: "Open draw",
+    },
+  });
+  const afterAhead = await api(port, "/api/tournaments");
+  check("a tournament more than an hour away adds a bubble", ahead.status === 200 && afterAhead.data.bubble === bubbleBefore + 1);
+  const quietPage = await api(port, `/api/tournaments/${imminent.data.tournament.id}`);
+  check(
+    "a tournament can be posted without a name wheel",
+    quietPage.status === 200 && quietPage.data.tournament.nameWheel === false && quietPage.data.tournament.wheel == null
+  );
+  const wheelPage = await api(port, `/api/tournaments/${ahead.data.tournament.id}`);
+  check(
+    "an opted-in name wheel is on the tournament",
+    wheelPage.status === 200 && wheelPage.data.tournament.nameWheel === true && Array.isArray(wheelPage.data.tournament.wheel?.players)
+  );
+  const news = await api(port, "/api/announcements");
+  const postedNews = (news.data.announcements || []).find((item) => item.title === "New tournament: Bubble Cup");
+  check(
+    "creating a tournament posts it to news",
+    news.status === 200 &&
+      Boolean(postedNews) &&
+      postedNews.body.includes("Open draw") &&
+      postedNews.body.includes("Sign up on the Tournaments tab") &&
+      postedNews.tournamentId === ahead.data.tournament.id
   );
 } catch (err) {
   failures++;

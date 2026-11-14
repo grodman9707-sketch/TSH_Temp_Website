@@ -64,6 +64,7 @@ const state = {
   tournamentDirty: false,
   tournamentPoll: null,
   podiumEventId: null,
+  tournamentBubble: 0,
 };
 
 function token() {
@@ -1147,14 +1148,18 @@ function layout(inner, { arena = false, home = false } = {}) {
             .map(([href, label]) => {
               if (href === "/regionals") return navRegionalsBlock();
               const glow = href === "/announcements" && state.newsGlow;
+              const bubble = href === "/tournaments" ? Number(state.tournamentBubble) || 0 : 0;
               const tone = glow ? "nav-news-glow" : navActive(href) ? "gold" : "text-white/80 hover:text-primary";
               const unread = href === "/my-matches" ? chatUnreadTotal() : 0;
-              const text = unread ? `${label} <span class="nav-unread">${unread > 9 ? "9+" : unread}</span>` : label;
+              const badge = unread || bubble;
+              const text = badge ? `${label} <span class="nav-unread">${badge > 9 ? "9+" : badge}</span>` : label;
               const extra = unread
                 ? ` aria-label="${esc(label)} — ${unread} new arrange message${unread === 1 ? "" : "s"}"`
-                : glow
-                  ? ` aria-label="${esc(label)} — new announcement"`
-                  : "";
+                : bubble
+                  ? ` aria-label="${esc(label)} — ${bubble} new tournament${bubble === 1 ? "" : "s"}"`
+                  : glow
+                    ? ` aria-label="${esc(label)} — new announcement"`
+                    : "";
               return `<a href="${href}" class="block px-5 py-3 text-sm font-semibold tracking-widest uppercase ${tone}"${extra}>${text}</a>`;
             })
             .join("")}
@@ -1296,6 +1301,15 @@ function newsCard(item, { canDelete = false, compact = false } = {}) {
       <div class="news-body mt-2">${formatAnnouncementBody(item.body)}</div>
       ${deleteBtn}`
   );
+}
+
+async function loadTournamentBubble() {
+  try {
+    const d = await api("/api/tournaments");
+    state.tournamentBubble = Number(d.bubble) || 0;
+  } catch {
+    state.tournamentBubble = Number(state.tournamentBubble) || 0;
+  }
 }
 
 async function loadNewsMeta() {
@@ -1591,6 +1605,7 @@ function homePodium(payload) {
         <div class="glass rounded-xl px-5 py-10 text-center">
           <p class="page-kicker text-xs font-semibold gold">TOURNAMENT WINNERS</p>
           <p class="mt-3 text-sm text-muted">Winners will appear here when a tournament finishes</p>
+          <p class="mt-2 text-sm text-muted">They stay on this page for 3 days.</p>
         </div>
       </div>
     </section>`;
@@ -1608,6 +1623,7 @@ function homePodium(payload) {
       </div>
       <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
       <p class="podium-when">${esc(podiumWhen(selected))}</p>
+      <p class="mt-2 text-sm text-muted">Winners stay on this page for 3 days.</p>
       ${podiumSwitch(events, selected.id)}
       ${(selected.boards || []).map(podiumBoard).join("")}
       <p class="mt-6"><a class="text-sm font-bold gold" href="/tournaments/${Number(selected.id)}">View bracket</a></p>
@@ -3601,6 +3617,7 @@ function tournamentFormatLabel(t) {
   if (t?.format === "doubles" && t?.partnerMode === "choose") return "Doubles · choose your partner";
   if (t?.format === "doubles" && t?.partnerMode === "even") return "Doubles · even teams";
   if (t?.format === "doubles") return `Doubles · random ${split}+ with ${split}-`;
+  if (t?.nameWheel === true) return "Singles · Luck of the Draw";
   return "Singles";
 }
 function tournamentStatusLabel(status) {
@@ -3638,6 +3655,9 @@ function tournamentPoolSentence(t) {
 }
 function tournamentRules(t) {
   const extra = `${tournamentPoolSentence(t)}${tournamentLimitSentence(t)}`;
+  if (t.format !== "doubles" && t.nameWheel === true) {
+    return `Singles, Luck of the Draw. Every signed-up name goes on the wheel, and the bracket is drawn at random instead of seeded by average.${extra}`;
+  }
   if (t.format === "doubles" && t.partnerMode === "choose") {
     return `Doubles. Sign up, then ask another signed-up player to be your partner. They have to accept. Staff can fill a blank seat for anyone still without a partner. The bracket uses complete teams and is seeded by the team's average.${extra}`;
   }
@@ -3646,7 +3666,8 @@ function tournamentRules(t) {
   }
   if (t.format === "doubles") {
     const split = t.avgSplit ?? 50;
-    return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Your average is saved when you sign up.${extra}`;
+    const wheel = t.nameWheel !== false ? " The name wheel draws those partners." : "";
+    return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Your average is saved when you sign up.${wheel}${extra}`;
   }
   return `Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.${extra}`;
 }
@@ -3746,6 +3767,10 @@ function tournamentPostForm(ctx) {
         <input name="capacity" inputmode="numeric" placeholder="Player limit (optional)" aria-label="Player limit">
         <input name="bestOf" inputmode="numeric" placeholder="Best of (optional)" aria-label="Best of">
       </div>
+      <div data-wheel-wrap>
+        <label class="check-row"><input type="checkbox" name="nameWheel"> Name wheel</label>
+        <p class="mt-1 text-xs text-muted" data-wheel-help>Turn this on for an open-average Luck of the Draw. A singles bracket is drawn at random instead of seeded by average.</p>
+      </div>
       <textarea name="description" rows="4" placeholder="Where to meet, format notes, anything players should know" aria-label="Description"></textarea>
       <button class="btn-gold" type="submit">POST TOURNAMENT</button>
     </form>`,
@@ -3772,6 +3797,21 @@ function syncTournamentForm(form) {
         : "Random doubles pairs one player at or above this average with one player below it.";
   }
   form.querySelector("[data-pool-builder]")?.classList.toggle("hidden", pool !== "division");
+  const randomDoubles = doubles && (partner?.value || "") === "random";
+  const showWheel = randomDoubles || pool === "none";
+  form.querySelector("[data-wheel-wrap]")?.classList.toggle("hidden", !showWheel);
+  const wheelBox = form.querySelector('[name="nameWheel"]');
+  const wheelMode = showWheel ? (randomDoubles ? "random" : "open") : "off";
+  if (form.dataset.wheelMode !== wheelMode) {
+    form.dataset.wheelMode = wheelMode;
+    if (wheelBox) wheelBox.checked = randomDoubles;
+  }
+  const wheelHelp = form.querySelector("[data-wheel-help]");
+  if (wheelHelp) {
+    wheelHelp.textContent = randomDoubles
+      ? "The wheel draws random doubles partners, one from each side of the average cutoff."
+      : "Turn this on for an open-average Luck of the Draw. A singles bracket is drawn at random instead of seeded by average. Doubles on one field can use the wheel too.";
+  }
   const open = form.querySelector('[name="audience"]:checked')?.value === "open";
   form.querySelector("[data-audience-divisions]")?.classList.toggle("hidden", open);
   const restrict = !open && form.querySelector("[data-audience-league]");
@@ -3801,7 +3841,9 @@ function tournamentPostPayload(form, fd) {
   }
   let partnerMode = fd.format === "doubles" ? fd.partnerMode : undefined;
   if (poolMode === "avg" && partnerMode === "random") partnerMode = "even";
-  return { ...fd, tz: BROWSER_TZ, partnerMode, poolMode, leagueIds, pools };
+  const wheelHidden = form.querySelector("[data-wheel-wrap]")?.classList.contains("hidden");
+  const nameWheel = wheelHidden ? false : Boolean(form.querySelector('[name="nameWheel"]')?.checked);
+  return { ...fd, tz: BROWSER_TZ, partnerMode, poolMode, leagueIds, pools, nameWheel };
 }
 function tournamentActions(t) {
   if (t.status !== "open") return t.joined ? `<p class="mt-4 text-sm">You're in this tournament.</p>` : "";
@@ -3950,7 +3992,13 @@ function tournamentTeamEditor(t) {
   const intro =
     t.partnerMode === "choose"
       ? "Confirmed partners are filled in. A player without a partner stays on a card with a blank seat. Choose a player for that seat, then save."
-      : "Make even teams to spin the wheel. It lands on each player, pairing the highest average with the lowest. Move anyone you want, then generate the bracket.";
+      : t.partnerMode === "random"
+        ? t.nameWheel !== false
+          ? "Draw partners to spin the name wheel. Each pair is one player from each side of the cutoff. Move anyone you want, then generate the bracket."
+          : "Random partners are paired when you generate the bracket, one from each side of the cutoff. You can still fill the cards yourself before that."
+        : t.nameWheel !== false
+          ? "Make even teams to spin the wheel. It lands on each player, pairing the highest average with the lowest. Move anyone you want, then generate the bracket."
+          : "Make even teams to pair the highest average with the lowest. Move anyone you want, then generate the bracket.";
   const cards = (t.teamCards || [])
     .map((card) => {
       const ids = card.playerIds || [];
@@ -3976,6 +4024,7 @@ function tournamentTeamEditor(t) {
       </div>
     </form>
     <div class="mt-3 flex flex-wrap gap-2">
+      ${t.partnerMode === "random" && t.nameWheel !== false ? `<form data-form="TOURNAMENTDRAW" data-id="${t.id}"><button class="btn-gold" type="submit">DRAW ON THE WHEEL</button></form>` : ""}
       <form data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>
       ${t.teamEdits && t.status === "open" ? `<form data-form="TOURNAMENTTEAMSCLEAR" data-id="${t.id}"><button class="btn-ghost" type="submit">CLEAR TEAM EDITS</button></form>` : ""}
     </div>`,
@@ -4064,7 +4113,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">The draw wheel stays up until you generate the bracket. That replaces the wheel and starts the tournament. Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
+    <p class="mt-1 text-sm text-muted">${t.nameWheel !== false ? "The name wheel stays up until you generate the bracket. That replaces the wheel and starts the tournament." : "Generate the bracket when signup is done. That starts the tournament."} Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -4194,11 +4243,19 @@ function tournamentWheel(t) {
   const names = players.map((player) => `<li>${esc(player.name)}</li>`).join("");
   const canSpin = t.canManage && t.format === "doubles" && t.status !== "complete" && !t.teamsLocked;
   const blurb =
-    t.format === "doubles"
-      ? "Every player who signed up is on the wheel. Make even teams and it spins, landing on each player in the draw."
-      : "Every player who signed up is on the wheel. The bracket replaces it when the tournament starts.";
+    t.format === "doubles" && t.partnerMode === "random"
+      ? "Every player who signed up is on the wheel. Draw partners and it spins, landing on each player in a mixed pair."
+      : t.format === "doubles"
+        ? "Every player who signed up is on the wheel. Make even teams and it spins, landing on each player in the draw."
+        : "Every player who signed up is on the wheel. The bracket replaces it when the tournament starts.";
+  const spin =
+    canSpin && t.partnerMode === "random"
+      ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTDRAW" data-id="${t.id}"><button class="btn-gold" type="submit">DRAW ON THE WHEEL</button></form>`
+      : canSpin && t.partnerMode !== "choose"
+        ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>`
+        : "";
   return panel(
-    `<h2 class="text-lg font-bold">Draw wheel</h2>
+    `<h2 class="text-lg font-bold">Name wheel</h2>
     <p class="mt-1 text-sm text-muted">${esc(blurb)}</p>
     <div class="wheel-stage" data-tournament-wheel>
       <div class="wheel-pointer" aria-hidden="true"></div>
@@ -4207,14 +4264,15 @@ function tournamentWheel(t) {
     <p class="wheel-live" data-wheel-live aria-live="polite">${players.length ? "Every signed-up player is on the wheel." : "No one has signed up yet."}</p>
     <ol class="wheel-drawn" data-wheel-teams></ol>
     ${names ? `<ul class="wheel-names">${names}</ul>` : ""}
-    ${canSpin ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>` : ""}
+    ${spin}
     <div hidden data-wheel-state>${esc(JSON.stringify(payload))}</div>`,
     "mt-6"
   );
 }
 function tournamentStage(t) {
   if ((t.draws || []).length || t.bracket) return tournamentBracket(t);
-  return tournamentWheel(t);
+  if (t.nameWheel !== false) return tournamentWheel(t);
+  return "";
 }
 function tournamentBands(t) {
   if (t.poolMode === "avg" || t.poolMode === "division") {
@@ -4241,7 +4299,7 @@ async function pageTournaments() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">Tournaments</h1>
-      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and head admins can post an open event or limit it to chosen divisions. A division admin posts for their own players only. Doubles can build even teams, draw random mixed pairs around a cutoff, or let players choose a partner. Signups can be split into separate brackets by average or by division.</p>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and head admins can post an open event or limit it to chosen divisions. A division admin posts for their own players only. Doubles can build even teams, draw random mixed pairs around a cutoff, or let players choose a partner. Signups can be split into separate brackets by average or by division. The name wheel is optional: use it for random doubles partners or an open-average Luck of the Draw.</p>
       ${pageFlash()}
       ${d.canManage ? tournamentPostForm(d) : ""}
       <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
@@ -4560,6 +4618,7 @@ async function render() {
     }
     await loadNavTree();
     await loadNewsMeta();
+    await loadTournamentBubble();
     await loadChatNotices();
     const map = {
       home: pageHome,
@@ -5569,13 +5628,20 @@ document.addEventListener("submit", async (e) => {
       state.error = "";
       state.notice = kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : "Teams saved.";
       render();
-    } else if (kind === "TOURNAMENTBALANCE") {
+    } else if (kind === "TOURNAMENTBALANCE" || kind === "TOURNAMENTDRAW") {
       state.wheelHold = true;
       try {
-        const balanced = await api(`/api/admin/tournaments/${form.dataset.id}/teams/balance`, { method: "POST", body: "{}" });
+        const path = kind === "TOURNAMENTDRAW" ? "draw" : "balance";
+        const balanced = await api(`/api/admin/tournaments/${form.dataset.id}/teams/${path}`, { method: "POST", body: "{}" });
         state.wheelForcePlay = balanced.tournament?.wheel?.reveal?.id || null;
         state.error = "";
-        state.notice = "The wheel is spinning. It stops on each player. Highest averages are paired with the lowest.";
+        state.notice = balanced.tournament?.wheel?.reveal
+          ? kind === "TOURNAMENTDRAW"
+            ? "The wheel is spinning. It draws one player from each side of the cutoff."
+            : "The wheel is spinning. It stops on each player. Highest averages are paired with the lowest."
+          : kind === "TOURNAMENTDRAW"
+            ? "Partners drawn."
+            : "Even teams saved.";
         await render();
       } finally {
         state.wheelHold = false;
