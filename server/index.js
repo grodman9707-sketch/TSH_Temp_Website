@@ -623,6 +623,13 @@ function divisionPlayerCard(user) {
     avatarUrl: user.avatarFile ? `/api/users/${user.id}/avatar?v=${encodeURIComponent(user.avatarUpdatedAt || "1")}` : "",
   };
 }
+function publicPlayerProfile(user) {
+  return {
+    ...divisionPlayerCard(user),
+    avg: Number(user?.avg) || 0,
+    injuredLeagueIds: injuredLeagueIds(user),
+  };
+}
 function divisionRosters(db) {
   return (db.leagues || [])
     .slice()
@@ -2962,11 +2969,8 @@ async function handleApi(req, res, url) {
     const found = db.users.find((u) => u.id === Number(playerMatch[1]));
     if (!found) return json(res, 404, { ok: false, error: "Not found" });
     const playerFixtures = db.fixtures.filter((f) => f.homeId === found.id || f.awayId === found.id);
-    const player = publicUser(found, db);
-    if (!user || Number(user.id) !== Number(found.id)) {
-      player.phone = "";
-      player.phoneVerifiedAt = null;
-    }
+    const ownProfile = user && Number(user.id) === Number(found.id);
+    const player = ownProfile ? publicUser(found, db) : publicPlayerProfile(found);
     return json(res, 200, {
       ok: true,
       player,

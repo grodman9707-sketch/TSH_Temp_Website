@@ -169,6 +169,17 @@ try {
     "the name link target is the public profile",
     profile.status === 200 && profile.data.player?.name === "Gordon Example" && profile.data.player?.nickname === "Viking"
   );
+  check(
+    "the guest profile response hides private account fields",
+    profile.status === 200 &&
+      !("email" in profile.data.player) &&
+      !("username" in profile.data.player) &&
+      !("phone" in profile.data.player) &&
+      !("phoneVerifiedAt" in profile.data.player) &&
+      !("dartcounterName" in profile.data.player) &&
+      !("notifyPrefs" in profile.data.player) &&
+      !("pendingLeagueRequests" in profile.data.player)
+  );
 
   const stored = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8"));
   const blank = stored.users.find((user) => user.id === placedId);
