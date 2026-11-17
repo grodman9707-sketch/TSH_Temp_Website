@@ -15,7 +15,7 @@ import { leagueHighlights } from "./leagueHighlights.js";
 import { fixturePublishMeta, fixtureReleaseAt, isFixtureReleased, releasedFixtures } from "./fixtureRelease.js";
 import { awardByeWin, awardDueByeWins, clearByeAward } from "./byeAward.js";
 import { appendStaffLog, staffLogPayload } from "./staffLog.js";
-import { runDueNotifications, sendEmail, deliverNotification, alertsConfigStatus, matchChatDeliveries } from "./notifications.js";
+import { runDueNotifications, sendEmail, deliverNotification, alertsConfigStatus, matchChatDeliveries, statsActionDeliveries, statsAlertsFor } from "./notifications.js";
 import { sendSms } from "./sms.js";
 import { normalizeE164, issuePhoneVerification, verifyPhoneCode, clearPhone, blankAlertPrefs } from "./phone.js";
 import { parsePushSubscription, upsertPushSubscription, removePushSubscription, pushClientConfig, sendWebPush } from "./webpush.js";
@@ -3465,6 +3465,9 @@ async function handleApi(req, res, url) {
   }
   if (method === "GET" && p === "/api/my-fixtures") {
     if (!user) return json(res, 401, { ok: false, error: "Login required" });
+    if (url.searchParams.get("alerts") === "1") {
+      return json(res, 200, { ok: true, alerts: statsAlertsFor(db, user) });
+    }
     const mine = db.fixtures.filter((f) => f.homeId === user.id || f.awayId === user.id);
     return json(res, 200, {
       ok: true,
@@ -3566,7 +3569,9 @@ async function handleApi(req, res, url) {
     fixture.opponentVerifiedAt = null;
     fixture.statsDisputeNote = "";
     fixture.resubmitRequest = null;
+    const confirmMail = statsActionMessages(db, fixture, "confirm");
     writeDb(db);
+    dispatchNotifications(confirmMail);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
 
@@ -3695,7 +3700,9 @@ async function handleApi(req, res, url) {
     }
     fixture.statsDisputeNote = String(body.note || "").trim().slice(0, 400);
     clearResultSubmission(fixture);
+    const disputeMail = statsActionMessages(db, fixture, "resubmit_disputed");
     writeDb(db);
+    dispatchNotifications(disputeMail);
     return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
   }
 
@@ -4537,7 +4544,9 @@ async function handleApi(req, res, url) {
         fixtureId: fixture.id,
         leagueId: fixture.leagueId,
       });
+      const declineMail = statsActionMessages(db, fixture, "resubmit_declined");
       writeDb(db);
+      dispatchNotifications(declineMail);
       return json(res, 200, { ok: true, fixture: withNames(db, fixture) });
     }
     const confirmMatch = p.match(/^\/api\/admin\/fixtures\/(\d+)\/result$/);
@@ -5042,6 +5051,37 @@ function dropPushSubscriptions(userId, endpoints) {
     u.pushSubscriptions = next;
     writeDb(fresh);
   }).catch((err) => console.error("Push subscription cleanup failed:", err));
+}
+
+function statsActionMessages(db, fixture, kind) {
+  const home = (db.users || []).find((item) => Number(item.id) === Number(fixture.homeId));
+  const away = (db.users || []).find((item) => Number(item.id) === Number(fixture.awayId));
+  const league = (db.leagues || []).find((item) => Number(item.id) === Number(fixture.leagueId));
+  const leagueName = league ? leagueTitle(db, league) : "your league";
+  const note =
+    kind === "confirm"
+      ? ""
+      : kind === "resubmit_declined"
+        ? String(fixture.resubmitRequest?.note || "")
+        : String(fixture.statsDisputeNote || "");
+  const targets =
+    kind === "confirm"
+      ? [Number(home?.id) === Number(fixture.resultSubmittedBy) ? away : home].filter(Boolean)
+      : [home, away].filter(Boolean);
+  const deliveries = [];
+  for (const person of targets) {
+    const opponent = Number(person.id) === Number(home?.id) ? away : home;
+    deliveries.push(
+      ...statsActionDeliveries(person, {
+        kind,
+        fixture,
+        leagueName,
+        opponentName: String(opponent?.nickname || opponent?.name || "your opponent"),
+        note,
+      })
+    );
+  }
+  return deliveries;
 }
 
 function dispatchNotifications(messages) {

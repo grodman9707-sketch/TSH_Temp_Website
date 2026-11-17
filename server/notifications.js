@@ -95,6 +95,95 @@ export function matchChatEmail(to, fromUser, fixture, leagueName, preview) {
     `<p>— TSH Darts League</p>`;
   return { channel: "email", to: to.email, subject, html, userId: to.id, type: "match_chat", fixtureId: fixture.id };
 }
+function personName(user) {
+  return String(user?.nickname || user?.name || "Player");
+}
+
+// Players who still need to confirm submitted stats, or resubmit stats that
+// were sent back because they were incorrect. The list stays until they do it.
+export function statsAlertsFor(db, user) {
+  if (!user) return [];
+  const users = new Map((db.users || []).map((item) => [Number(item.id), item]));
+  const leagues = new Map((db.leagues || []).map((item) => [Number(item.id), item]));
+  const me = Number(user.id);
+  const alerts = [];
+  for (const fixture of db.fixtures || []) {
+    if (fixture.bye || fixture.status === "bye") continue;
+    if (!isFixtureReleased(fixture)) continue;
+    const homeId = Number(fixture.homeId);
+    const awayId = Number(fixture.awayId);
+    if (me !== homeId && me !== awayId) continue;
+    const opponent = users.get(me === homeId ? awayId : homeId);
+    const base = {
+      fixtureId: fixture.id,
+      week: fixture.week,
+      leagueName: leagues.get(Number(fixture.leagueId))?.name || "your league",
+      opponentName: personName(opponent),
+      homeName: personName(users.get(homeId)),
+      awayName: personName(users.get(awayId)),
+    };
+    if (fixture.status === "pending_verify" && Number(fixture.resultSubmittedBy) !== me) {
+      alerts.push({ ...base, kind: "confirm", source: "submitted", note: "" });
+      continue;
+    }
+    if (fixture.status === "scheduled" && fixture.resubmitRequest) {
+      alerts.push({
+        ...base,
+        kind: "resubmit",
+        source: "declined",
+        note: String(fixture.resubmitRequest.note || ""),
+      });
+      continue;
+    }
+    const dispute = String(fixture.statsDisputeNote || "").trim();
+    if (fixture.status === "scheduled" && dispute) {
+      alerts.push({ ...base, kind: "resubmit", source: "disputed", note: dispute });
+    }
+  }
+  return alerts;
+}
+
+export function statsActionDeliveries(to, { kind, fixture, leagueName, opponentName, note }) {
+  const opp = String(opponentName || "your opponent");
+  const league = String(leagueName || "your league");
+  const week = fixture?.week ?? "";
+  const confirm = kind === "confirm";
+  const declined = kind === "resubmit_declined";
+  const subject = confirm
+    ? `Confirm the stats for your TSH match vs ${opp}`
+    : `Resubmit the stats for your TSH match vs ${opp}`;
+  const why = confirm
+    ? `<b>${esc(opp)}</b> submitted the screenshots and stats for your match in <b>${esc(league)}</b> (Week ${esc(week)}). Open <b>My Matches</b> and confirm they match the screenshots, or send them back if the numbers are wrong.`
+    : declined
+      ? `An admin declined the stats for your match against <b>${esc(opp)}</b> in <b>${esc(league)}</b> (Week ${esc(week)}) because they were incorrect. Submit the screenshots and stats again.`
+      : `The stats for your match against <b>${esc(opp)}</b> in <b>${esc(league)}</b> (Week ${esc(week)}) were sent back because they were incorrect. Submit the screenshots and stats again.`;
+  const detail = String(note || "").trim();
+  const html =
+    `<p>Hi ${esc(displayName(to))},</p>` +
+    `<p>${why}</p>` +
+    (detail ? `<p>${esc(detail)}</p>` : "") +
+    `<p>— TSH Darts League</p>`;
+  const type = confirm ? "confirm_stats" : "resubmit_stats";
+  const text = confirm
+    ? `TSH: ${opp} submitted stats for your Week ${week} match in ${league}. Open My Matches to confirm them or send them back.`
+    : `TSH: The stats for your Week ${week} match vs ${opp} were incorrect. Open My Matches and submit them again.`;
+  const outbox = [];
+  enqueueChannels(outbox, to, {
+    type,
+    fixtureId: fixture?.id,
+    email: { channel: "email", to: to?.email, subject, html, userId: to?.id, type, fixtureId: fixture?.id },
+    text,
+    push: {
+      title: confirm ? "Confirm match stats" : "Resubmit match stats",
+      body: confirm
+        ? `${opp} submitted stats for Week ${week}. Confirm them or send them back.`
+        : `Week ${week} vs ${opp} needs the stats submitted again.`,
+      url: `/my-matches?fixture=${fixture?.id}`,
+    },
+  });
+  return outbox;
+}
+
 export function matchChatDeliveries(to, fromUser, fixture, leagueName, preview) {
   const fromName = displayName(fromUser);
   const snippet = String(preview || "").trim();
