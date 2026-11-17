@@ -2,8 +2,10 @@
 // A random doubles draw pairs one player at or above the cutoff with one below it.
 // The cutoff defaults to 50. Even teams pair the highest average with the lowest.
 // Signup can also be split into separate brackets by that cutoff or by division.
-// The name wheel is optional. It draws random doubles partners, or an open
-// singles field as Luck of the Draw. Older posts with no choice still show it.
+// The name wheel is optional. Random doubles gives each side of the cutoff
+// its own wheel, and those wheels spin in order to draw one player from each
+// side. An open singles field uses one wheel as Luck of the Draw. Older posts
+// with no choice still show a wheel.
 
 import { wheelStepMs } from "../public/tournamentWheel.js";
 import { isValidTimeZone, wallStringToUtc } from "./timezones.js";
@@ -1109,12 +1111,102 @@ function scrubWheelReveal(tournament, userId) {
   const reveal = tournament.wheelReveal;
   if (!reveal) return;
   const id = Number(userId);
-  if ((reveal.order || []).map(Number).includes(id)) {
+  const drawn = (reveal.order || []).map(Number).includes(id) || (reveal.spins || []).some((spin) => Number(spin.userId) === id);
+  if (drawn) {
     tournament.wheelReveal = null;
     return;
   }
   reveal.satOut = (reveal.satOut || []).filter((person) => Number(person.userId) !== id);
   reveal.players = (reveal.players || []).filter((person) => Number(person.userId) !== id);
+  if (Array.isArray(reveal.wheels)) {
+    for (const wheel of reveal.wheels) {
+      wheel.players = (wheel.players || []).filter((person) => Number(person.userId) !== id);
+    }
+  }
+}
+
+// Random doubles draws one player from each side of the cutoff. Each side is
+// its own wheel. Division pools each get that pair of wheels, and the pools
+// are spun in order.
+function randomWheelDefs(tournament, players) {
+  if (tournament?.format !== "doubles" || tournament?.partnerMode !== "random") return null;
+  const split = cutoffOf(tournament);
+  const pooled = (tournament.poolMode || "none") !== "none";
+  const groups = pooled ? poolDefs(tournament) : [{ id: "all", name: "" }];
+  const wheels = [];
+  for (const group of groups) {
+    const inGroup = pooled ? (players || []).filter((player) => player.poolId === group.id) : players || [];
+    for (const band of ["high", "low"]) {
+      const members = inGroup
+        .filter((player) => player.band === band)
+        .map((player) => ({ userId: Number(player.userId), name: String(player.name || "Player") }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+      const side = bandLabel(band, split);
+      wheels.push({
+        id: `${group.id}:${band}`,
+        name: pooled && group.name ? `${group.name} · ${side}` : side,
+        poolId: String(group.id),
+        players: members,
+      });
+    }
+  }
+  return wheels;
+}
+
+function buildRandomWheelReveal(db, tournament, rng) {
+  const players = playersFromEntries(db, tournament);
+  const byId = new Map(players.map((player) => [Number(player.userId), player]));
+  const wheels = randomWheelDefs(tournament, players) || [];
+  const known = new Set(wheels.map((wheel) => wheel.id));
+  const pooled = (tournament.poolMode || "none") !== "none";
+  const groups = pooled ? poolDefs(tournament) : [{ id: "all", name: "" }];
+  const teamsByPool = new Map();
+  for (const team of tournament.manualTeams || []) {
+    const seats = (team.playerIds || []).map((id) => byId.get(Number(id))).filter(Boolean);
+    if (seats.length !== 2) continue;
+    const poolId = String(seats[0].poolId || "all");
+    if (!teamsByPool.has(poolId)) teamsByPool.set(poolId, []);
+    teamsByPool.get(poolId).push(seats);
+  }
+  const pairs = [];
+  const spins = [];
+  const used = new Set();
+  for (const group of groups) {
+    for (const seats of teamsByPool.get(String(group.id)) || []) {
+      const ordered = seats.slice().sort((a, b) => {
+        if (a.band !== b.band) return a.band === "high" ? -1 : 1;
+        return Number(a.userId) - Number(b.userId);
+      });
+      for (const player of ordered) {
+        const wheelId = `${group.id}:${player.band}`;
+        if (!known.has(wheelId)) continue;
+        spins.push({ wheelId, userId: Number(player.userId) });
+        used.add(player.userId);
+      }
+      pairs.push(ordered.map((player) => Number(player.userId)));
+    }
+  }
+  const satOut = players
+    .filter((player) => !used.has(player.userId))
+    .map((player) => ({
+      userId: Number(player.userId),
+      name: player.name,
+      wheelId: `${player.poolId || "all"}:${player.band}`,
+    }));
+  const flatPlayers = players
+    .map((player) => ({ userId: Number(player.userId), name: player.name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+  return {
+    id: `${Date.now().toString(36)}-${Math.floor(rng() * 1e9).toString(36)}`,
+    startedAt: new Date().toISOString(),
+    stepMs: wheelStepMs(spins.length),
+    order: spins.map((spin) => spin.userId),
+    pairs,
+    spins,
+    wheels,
+    satOut,
+    players: flatPlayers,
+  };
 }
 
 function buildWheelReveal(db, tournament, rng) {
@@ -1194,7 +1286,7 @@ export function drawTournamentPartners(db, id, options = {}) {
   if (teams.length < 2) return fail(400, short || mixedShort(split, []));
   const saved = saveTournamentTeams(db, id, { teams });
   if (saved.error || !saved.tournament) return saved;
-  if (usesNameWheel(saved.tournament)) saved.tournament.wheelReveal = buildWheelReveal(db, saved.tournament, rng);
+  if (usesNameWheel(saved.tournament)) saved.tournament.wheelReveal = buildRandomWheelReveal(db, saved.tournament, rng);
   else saved.tournament.wheelReveal = null;
   return saved;
 }
@@ -1399,27 +1491,45 @@ function statusRank(status) {
   return 9;
 }
 
+function revealSpins(reveal, entryViews) {
+  if (Array.isArray(reveal?.spins) && reveal.spins.length) {
+    return reveal.spins.map((spin) => ({ wheelId: String(spin.wheelId), userId: Number(spin.userId) }));
+  }
+  return (reveal?.order || []).map((userId) => {
+    const player = (entryViews || []).find((entry) => Number(entry.userId) === Number(userId));
+    return { wheelId: `${player?.poolId || "all"}:${player?.band || "high"}`, userId: Number(userId) };
+  });
+}
+
 function presentWheel(entryViews, tournament) {
   if (!usesNameWheel(tournament)) return null;
   if (drawList(tournament).length) return null;
   const live = entryViews
     .map((entry) => ({ userId: Number(entry.userId), name: entry.name }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+  const poolWheels = randomWheelDefs(tournament, entryViews);
   const reveal = tournament.wheelReveal;
-  if (!reveal || !Array.isArray(reveal.order) || !reveal.order.length) return { players: live, reveal: null };
+  if (!reveal || !Array.isArray(reveal.order) || !reveal.order.length) return { players: live, wheels: poolWheels, reveal: null };
   const step = Number(reveal.stepMs) || wheelStepMs(reveal.order.length);
   const started = Date.parse(reveal.startedAt);
   const playing = Number.isFinite(started) && Date.now() < started + reveal.order.length * step + 800;
   const frozen = Array.isArray(reveal.players) ? reveal.players : null;
+  const frozenWheels = Array.isArray(reveal.wheels) && reveal.wheels.length ? reveal.wheels : null;
   return {
     players: playing && frozen?.length ? frozen.map((player) => ({ userId: Number(player.userId), name: String(player.name || "Player") })) : live,
+    wheels: poolWheels ? (playing && frozenWheels ? frozenWheels : poolWheels) : null,
     reveal: {
       id: String(reveal.id),
       startedAt: reveal.startedAt,
       stepMs: step,
       order: reveal.order.map(Number),
       pairs: (reveal.pairs || []).map((pair) => (pair || []).map(Number)),
-      satOut: (reveal.satOut || []).map((person) => ({ userId: Number(person.userId), name: String(person.name || "Player") })),
+      spins: poolWheels ? revealSpins(reveal, entryViews) : null,
+      satOut: (reveal.satOut || []).map((person) => ({
+        userId: Number(person.userId),
+        name: String(person.name || "Player"),
+        wheelId: person.wheelId ? String(person.wheelId) : "",
+      })),
     },
   };
 }

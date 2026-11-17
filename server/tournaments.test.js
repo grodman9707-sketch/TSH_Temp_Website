@@ -123,16 +123,18 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=91") && html.includes("styles.css?v=91"));
+check("cache bust covers the new tab", html.includes("app.js?v=92") && html.includes("styles.css?v=92"));
 check("staff can build even teams and fill blank seats", appJs.includes("MAKE EVEN TEAMS") && appJs.includes("ADD BLANK TEAM") && appJs.includes("Blank seat"));
 check("staff can split a tournament into pools", appJs.includes('name="poolMode"') && appJs.includes("Split by division"));
 check(
   "the signup wheel spins and the bracket takes its place",
   appJs.includes("data-tournament-wheel") &&
+    appJs.includes("data-tournament-wheels") &&
     appJs.includes("mountTournamentWheel") &&
     appJs.includes("function tournamentStage") &&
     appJs.includes("return tournamentWheel(t)") &&
-    css.includes(".wheel-rotor")
+    css.includes(".wheel-rotor") &&
+    css.includes(".wheel-grid")
 );
 check("admins record a win or a loss", appJs.includes('name="winnerTeamId"') && appJs.includes("${team.name} wins") && !appJs.includes('placeholder="Legs"'));
 
@@ -239,11 +241,79 @@ const mix = createTournament(mixDb, { id: 1 }, {
   description: "Bring your darts",
 });
 for (const user of mixDb.users) signupTournament(mixDb, mix.tournament.id, user);
+const beforeDraw = publicTournament(mixDb, mix.tournament, null, { detail: true });
+check(
+  "each side of the cutoff has its own wheel before the draw",
+  beforeDraw.wheel?.wheels?.length === 2 &&
+    beforeDraw.wheel.wheels.map((wheel) => wheel.name).join("|") === "50+|50-" &&
+    beforeDraw.wheel.wheels[0].players.map((player) => player.userId).join(",") === "1,2" &&
+    beforeDraw.wheel.wheels[1].players.map((player) => player.userId).join(",") === "3,4" &&
+    beforeDraw.wheel.reveal == null
+);
 const drawnPartners = drawTournamentPartners(mixDb, mix.tournament.id, { rng: identityRng });
 const mixedPairs = (drawnPartners.tournament?.wheelReveal?.pairs || []).map((pair) => pair.map(Number).sort((a, b) => a - b).join("-")).sort();
+const mixedSpins = drawnPartners.tournament?.wheelReveal?.spins || [];
 check(
   "drawing partners spins the name wheel",
   drawnPartners.status === 200 && mixedPairs.join("|") === "1-3|2-4" && drawnPartners.tournament.wheelReveal.order.length === 4
+);
+check(
+  "the side wheels spin in order, one player from each side",
+  mixedSpins.map((spin) => `${spin.wheelId}:${spin.userId}`).join(",") === "all:high:1,all:low:3,all:high:2,all:low:4" &&
+    drawnPartners.tournament.wheelReveal.wheels.map((wheel) => wheel.id).join(",") === "all:high,all:low"
+);
+const mixedView = publicTournament(mixDb, drawnPartners.tournament, null, { detail: true });
+check(
+  "the open page keeps one wheel per side while the draw plays",
+  mixedView.wheel?.wheels?.length === 2 &&
+    mixedView.wheel.reveal?.spins?.map((spin) => spin.wheelId).join(",") === "all:high,all:low,all:high,all:low"
+);
+
+const poolWheelDb = {
+  users: [
+    { id: 1, name: "Ada High", avg: 80, leagueIds: [1] },
+    { id: 2, name: "Bea Low", avg: 40, leagueIds: [1] },
+    { id: 3, name: "Cal High", avg: 70, leagueIds: [1] },
+    { id: 4, name: "Dee Low", avg: 30, leagueIds: [1] },
+    { id: 5, name: "Eve High", avg: 90, leagueIds: [2] },
+    { id: 6, name: "Fay Low", avg: 20, leagueIds: [2] },
+    { id: 7, name: "Gil High", avg: 60, leagueIds: [2] },
+    { id: 8, name: "Hap Low", avg: 25, leagueIds: [2] },
+    { id: 9, name: "Ivy Spare", avg: 85, leagueIds: [1] },
+  ],
+  leagues: [
+    { id: 1, name: "Division 1", sortOrder: 0 },
+    { id: 2, name: "Division 2", sortOrder: 1 },
+  ],
+  tournaments: [],
+};
+const poolWheels = createTournament(poolWheelDb, { id: 1 }, {
+  title: "Pool Wheels",
+  format: "doubles",
+  partnerMode: "random",
+  poolMode: "division",
+  nameWheel: true,
+  startsAt: "2026-12-01T19:00",
+  tz: "UTC",
+  pools: [
+    { name: "Pool A", leagueIds: [1] },
+    { name: "Pool B", leagueIds: [2] },
+  ],
+});
+for (const user of poolWheelDb.users) signupTournament(poolWheelDb, poolWheels.tournament.id, user);
+const poolSpin = drawTournamentPartners(poolWheelDb, poolWheels.tournament.id, { rng: identityRng });
+const poolReveal = poolSpin.tournament?.wheelReveal;
+const poolWheelIds = (poolReveal?.wheels || []).map((wheel) => `${wheel.id}:${wheel.players.map((player) => player.userId).join(".")}`);
+check(
+  "each division pool gets a wheel for each side, spun one pool at a time",
+  poolSpin.status === 200 &&
+    poolReveal?.wheels?.map((wheel) => wheel.name).join("|") === "Pool A · 50+|Pool A · 50-|Pool B · 50+|Pool B · 50-" &&
+    poolReveal?.spins?.map((spin) => `${spin.wheelId}:${spin.userId}`).join(",") ===
+      "p1:high:1,p1:low:2,p1:high:3,p1:low:4,p2:high:5,p2:low:6,p2:high:7,p2:low:8" &&
+    poolWheelIds.join("|") === "p1:high:1.3.9|p1:low:2.4|p2:high:5.7|p2:low:6.8" &&
+    poolReveal?.satOut?.length === 1 &&
+    poolReveal.satOut[0].userId === 9 &&
+    poolReveal.satOut[0].wheelId === "p1:high"
 );
 const newsCopy = tournamentNewsCopy(mixDb, mix.tournament, "UTC");
 check(
