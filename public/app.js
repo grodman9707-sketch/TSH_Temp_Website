@@ -743,6 +743,29 @@ function fixtureChatIcon(f) {
       ${count ? `<span class="chat-icon-badge">${count > 9 ? "9+" : count}</span>` : ""}
     </button>`;
 }
+function statsAlertBanner() {
+  const items = state.statsAlerts || [];
+  if (!items.length) return "";
+  return panel(
+    `<div class="fixture-notice-list">${items
+      .map((item) => {
+        const title = item.kind === "confirm" ? "CONFIRM STATS" : "RESUBMIT STATS";
+        const note = item.note ? ` ${item.note}` : "";
+        const body =
+          item.kind === "confirm"
+            ? `${item.opponentName} submitted the stats for Week ${item.week}${item.leagueName ? ` · ${item.leagueName}` : ""}. Open the match and confirm them, or send them back if they are wrong.`
+            : item.source === "declined"
+              ? `The stats for Week ${item.week} vs ${item.opponentName} were declined because they were incorrect. Submit the screenshots and stats again.${note}`
+              : `The stats for Week ${item.week} vs ${item.opponentName} were sent back because they were incorrect. Submit the screenshots and stats again.${note}`;
+        return `<a class="fixture-notice-link" href="/my-matches?fixture=${item.fixtureId}">
+          <span class="text-xs font-bold tracking-widest gold">${title}</span>
+          <span class="mt-1 block text-sm leading-relaxed">${esc(body)}</span>
+        </a>`;
+      })
+      .join("")}</div>`,
+    "mt-6"
+  );
+}
 function chatNoticeBanner() {
   const items = playerChatNotices();
   if (!items.length) return "";
@@ -1151,10 +1174,15 @@ function layout(inner, { arena = false, home = false } = {}) {
               const bubble = href === "/tournaments" ? Number(state.tournamentBubble) || 0 : 0;
               const tone = glow ? "nav-news-glow" : navActive(href) ? "gold" : "text-white/80 hover:text-primary";
               const unread = href === "/my-matches" ? chatUnreadTotal() : 0;
-              const badge = unread || bubble;
+              const statsDue = href === "/my-matches" ? (state.statsAlerts || []).length : 0;
+              const badge = unread + statsDue || bubble;
               const text = badge ? `${label} <span class="nav-unread">${badge > 9 ? "9+" : badge}</span>` : label;
-              const extra = unread
-                ? ` aria-label="${esc(label)} — ${unread} new arrange message${unread === 1 ? "" : "s"}"`
+              const attention = [
+                statsDue ? `${statsDue} stats alert${statsDue === 1 ? "" : "s"}` : "",
+                unread ? `${unread} new arrange message${unread === 1 ? "" : "s"}` : "",
+              ].filter(Boolean);
+              const extra = attention.length
+                ? ` aria-label="${esc(label)} — ${esc(attention.join(", "))}"`
                 : bubble
                   ? ` aria-label="${esc(label)} — ${bubble} new tournament${bubble === 1 ? "" : "s"}"`
                   : glow
@@ -2373,6 +2401,7 @@ async function pageDashboard() {
       </div>
       ${state.error ? `<p class="mt-4 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-4 text-sm gold">${esc(state.notice)}</p>` : ""}
+      ${statsAlertBanner()}
       ${chatNoticeBanner()}
       ${fixtureNoticeAlerts(d.fixtures, next?.id)}
       ${
@@ -2467,6 +2496,7 @@ async function pageMyMatches() {
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">My Matches</h1>
       <p class="mt-2 text-sm text-muted">The home player proposes a date and time. After the visiting player accepts, either player uploads both DartCounter screenshots and types the match stats. The other player verifies those numbers. A division admin then approves them onto the league table. Open the chat icon on a pending match to agree when to play. Your opponent is notified when you send a message.</p>
+      ${statsAlertBanner()}
       ${chatNoticeBanner()}
       ${state.error ? `<p class="mt-3 text-sm text-red-400">${esc(state.error)}</p>` : ""}
       ${state.notice ? `<p class="mt-3 text-sm gold">${esc(state.notice)}</p>` : ""}
@@ -3542,7 +3572,7 @@ async function pageAdmin() {
         })()}`, "mt-4")}
       ${panel(fixtureNoticesDesk(d), "mt-4")}
       ${panel(`<h2 class="text-lg font-bold">Email notifications</h2>
-        <p class="mt-1 text-sm text-muted">Players can get an email, a text, or a lock-screen alert when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, and about 30 minutes before an agreed kickoff (each in their own local time). Email uses the existing mail setup. Texts need a verified phone number. Lock-screen alerts need the player to tap Enable alerts on this phone. On iPhone they add the site to the Home Screen first. Send yourself a test for each channel.</p>
+        <p class="mt-1 text-sm text-muted">Players can get an email, a text, or a lock-screen alert when they’re first scheduled, when a match falls within the next week, when their opponent messages them in an arrange chat, when they need to confirm submitted stats or resubmit stats that were incorrect, and about 30 minutes before an agreed kickoff (each in their own local time). Email uses the existing mail setup. Texts need a verified phone number. Lock-screen alerts need the player to tap Enable alerts on this phone. On iPhone they add the site to the Home Screen first. Send yourself a test for each channel.</p>
         <div class="mt-3 flex flex-wrap gap-2">
           <form data-form="TESTEMAIL"><button class="btn-gold">SEND ME A TEST EMAIL</button></form>
           <form data-form="TESTSMS"><button class="btn-gold">SEND ME A TEST TEXT</button></form>
@@ -4624,6 +4654,21 @@ function stopChatWatch() {
   if (state.chatPoll) clearInterval(state.chatPoll);
   state.chatPoll = null;
 }
+async function loadStatsAlerts() {
+  if (!state.user) {
+    state.statsAlerts = [];
+    return;
+  }
+  try {
+    const data = await api("/api/my-fixtures?alerts=1");
+    state.statsAlerts = data.alerts || [];
+  } catch {
+    state.statsAlerts = state.statsAlerts || [];
+  }
+}
+function statsAlertKey(items) {
+  return (items || []).map((item) => `${item.fixtureId}:${item.kind}:${item.source}:${item.note || ""}`).join("|");
+}
 async function loadChatNotices() {
   if (!state.user) {
     state.chatUnread = [];
@@ -4675,8 +4720,18 @@ async function refreshChatNotices(gen) {
       }
     }
     const visible = state.chatOpen ? next.filter((item) => Number(item.fixtureId) !== Number(state.chatOpen)) : next;
-    if (!popupChanged && chatNoticeKey(visible) === chatNoticeKey(state.chatUnread)) return;
+    let nextAlerts = state.statsAlerts || [];
+    try {
+      const alertData = await api("/api/my-fixtures?alerts=1");
+      if (gen !== chatPollGen) return;
+      nextAlerts = alertData.alerts || [];
+    } catch {
+      nextAlerts = state.statsAlerts || [];
+    }
+    const alertsChanged = statsAlertKey(nextAlerts) !== statsAlertKey(state.statsAlerts);
+    if (!popupChanged && !alertsChanged && chatNoticeKey(visible) === chatNoticeKey(state.chatUnread)) return;
     state.chatUnread = visible;
+    state.statsAlerts = nextAlerts;
     render();
   } catch {
     /* leave the current notices in place */
@@ -4711,6 +4766,7 @@ async function render() {
     await loadNewsMeta();
     await loadTournamentBubble();
     await loadChatNotices();
+    await loadStatsAlerts();
     const map = {
       home: pageHome,
       regionals: pageRegionals,
@@ -5791,10 +5847,10 @@ function matchAlertsPanel(u, pushReady) {
     ? `${devices} phone${devices === 1 ? " is" : "s are"} registered for lock-screen alerts.`
     : "No phone is registered for lock-screen alerts yet.";
   return `<h2 class="text-lg font-bold">Match notifications</h2>
-        <p class="mt-1 text-sm text-muted">Get a message when you have a new match, when one falls in the next week, about 30 minutes before an agreed kickoff, and when your opponent writes in the arrange chat.</p>
+        <p class="mt-1 text-sm text-muted">Get a message when you have a new match, when one falls in the next week, about 30 minutes before an agreed kickoff, when your opponent writes in the arrange chat, and when you need to confirm stats or resubmit stats that were incorrect.</p>
         <form class="mt-4 space-y-3" data-form="NOTIFY">
-          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches and arrange-chat messages</label>
-          <label class="check-row"><input type="checkbox" name="sms" ${u.notifyPrefs?.sms ? "checked" : ""}> Text me about upcoming matches and arrange-chat messages</label>
+          <label class="check-row"><input type="checkbox" name="email" ${u.notifyPrefs?.email === false ? "" : "checked"}> Email me about upcoming matches, arrange-chat messages, and stats to confirm or resubmit</label>
+          <label class="check-row"><input type="checkbox" name="sms" ${u.notifyPrefs?.sms ? "checked" : ""}> Text me about upcoming matches, arrange-chat messages, and stats to confirm or resubmit</label>
           <p class="text-xs text-muted">Texts start after the number is verified.</p>
           <label class="check-row"><input type="checkbox" name="push" ${u.notifyPrefs?.push ? "checked" : ""}> Send lock-screen alerts on phones where I turned them on</label>
           <button class="btn-gold">SAVE PREFERENCES</button>

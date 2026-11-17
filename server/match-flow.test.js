@@ -35,6 +35,25 @@ async function waitHealth(port, child) {
   throw lastErr || new Error("server did not become healthy");
 }
 
+async function waitLog(needle, ms = 1500) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (stdout.includes(needle)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return stdout.includes(needle);
+}
+async function waitCount(needle, min, ms = 1500) {
+  const start = Date.now();
+  let n = 0;
+  const re = new RegExp(needle, "g");
+  while (Date.now() - start < ms) {
+    n = (stdout.match(re) || []).length;
+    if (n >= min) return n;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return (stdout.match(re) || []).length;
+}
 async function api(port, pathname, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -66,8 +85,12 @@ const child = spawn(process.execPath, [path.join(root, "server/index.js")], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
+let stdout = "";
 child.stderr.on("data", (buf) => {
   stderr += buf.toString();
+});
+child.stdout.on("data", (buf) => {
+  stdout += buf.toString();
 });
 
 try {
@@ -161,6 +184,19 @@ try {
   });
   check("submit screenshots with manual stats", upload.status === 200 && upload.data.fixture?.hasBothScreenshots === true);
   check("submitted result waits on opponent", upload.data.fixture?.status === "pending_verify" && upload.data.fixture?.needsConfirm === false);
+  const awayConfirm = await api(port, "/api/my-fixtures?alerts=1", { token: awayTok });
+  const homeConfirm = await api(port, "/api/my-fixtures?alerts=1", { token: homeTok });
+  check(
+    "opponent gets a confirm alert and the submitter does not",
+    awayConfirm.data.alerts?.some((item) => item.fixtureId === fixtureId && item.kind === "confirm") &&
+      !homeConfirm.data.alerts?.some((item) => item.fixtureId === fixtureId && item.kind === "confirm")
+  );
+  check(
+    "opponent is emailed to confirm the stats",
+    (await waitLog("confirm_stats")) &&
+      stdout.includes("away-flow@test.com") &&
+      !stdout.includes(`would email home-flow@test.com — "Confirm the stats`)
+  );
 
   const selfVerify = await api(port, `/api/fixtures/${fixtureId}/verify-stats`, { method: "POST", token: homeTok, body: {} });
   check("submitter cannot verify own stats", selfVerify.status === 403);
@@ -279,6 +315,14 @@ try {
     body: { note: "Legs look wrong" },
   });
   check("opponent can send a result back", dispute.status === 200 && dispute.data.fixture?.status === "scheduled" && dispute.data.fixture?.hasBothScreenshots !== true);
+  const sentBack = await api(port, "/api/my-fixtures?alerts=1", { token: homeTok });
+  const sentBackAway = await api(port, "/api/my-fixtures?alerts=1", { token: awayTok });
+  check(
+    "both players are alerted to resubmit stats that were sent back",
+    sentBack.data.alerts?.some((item) => item.fixtureId === flagged.data.fixture.id && item.kind === "resubmit" && item.source === "disputed" && item.note === "Legs look wrong") &&
+      sentBackAway.data.alerts?.some((item) => item.fixtureId === flagged.data.fixture.id && item.kind === "resubmit" && item.source === "disputed") &&
+      (await waitLog("resubmit_stats"))
+  );
 
   const declineFix = await api(port, "/api/admin/fixtures", {
     method: "POST",
@@ -335,10 +379,18 @@ try {
     body: { image1: PNG, image2: PNG, ...STATS },
   });
   check("player can resubmit after a decline", again.status === 200 && again.data.fixture?.status === "pending_verify" && again.data.fixture?.resubmitRequested === false);
+  const declineMails = await waitCount("resubmit_stats", 4);
+  if (declineMails < 4) {
+    console.error(stdout.split("\n").filter((line) => /notify|resubmit|Confirm/.test(line)).join("\n"));
+  }
+  check("a decline emails both players to resubmit incorrect stats", declineMails >= 4);
+  const cleared = await api(port, "/api/my-fixtures?alerts=1", { token: awayTok });
+  check("confirming is gone and a fresh confirm alert is waiting after resubmit", cleared.data.alerts?.some((item) => item.fixtureId === declineId && item.kind === "confirm") && !cleared.data.alerts?.some((item) => item.fixtureId === declineId && item.kind === "resubmit"));
 
   const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   check("My Matches still has a propose form", appJs.includes('data-form="PROPOSE"') && appJs.includes("Propose date & time"));
   check("approve desk can decline and request a resubmit", appJs.includes("DECLINE & REQUEST RESUBMIT") && appJs.includes("decline-stats") && appJs.includes("Resubmit requested"));
+  check("players see an alert when stats need confirming or resubmitting", appJs.includes("CONFIRM STATS") && appJs.includes("RESUBMIT STATS") && appJs.includes("statsAlertBanner"));
   check("propose is not hidden when visitor accept is skipped", !/scheduleAcceptRequired === false\) return ""/.test(appJs));
   check("admin can mark skip accept on one existing match", appJs.includes("SKIP ACCEPT (THIS MATCH)") && appJs.includes("/skip-accept"));
   check("result form asks for screenshots and stats", appJs.includes("SUBMIT RESULT") && appJs.includes('data-form="VERIFYSTATS"') && appJs.includes("verify-stats"));

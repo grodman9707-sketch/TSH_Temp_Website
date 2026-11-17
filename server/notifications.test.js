@@ -1,6 +1,6 @@
 // Unit tests for the match-notification engine. Run: `node server/notifications.test.js`
 // Uses the console dev-fallback (no EMAIL_API_KEY), so nothing is actually sent.
-import { matchChatDeliveries, runDueNotifications } from "./notifications.js";
+import { matchChatDeliveries, runDueNotifications, statsActionDeliveries, statsAlertsFor } from "./notifications.js";
 
 let failures = 0;
 function check(name, cond) {
@@ -148,6 +148,58 @@ const chat = matchChatDeliveries(chatUser, { name: "Sam" }, { id: 9, week: 2 }, 
 check("arrange chat with email off still builds SMS and push", chat.length === 2 && chat.some((m) => m.channel === "sms" && m.body.includes("Sam") && m.body.includes("Tuesday at 8?")) && chat.some((m) => m.channel === "push" && m.payload.url === "/my-matches?fixture=9"));
 const quiet = matchChatDeliveries({ id: 10, name: "Quiet", email: "q@x.com", notifyPrefs: { email: false, sms: false, push: false } }, { name: "Sam" }, { id: 9, week: 2 }, "League 1", "Hi");
 check("arrange chat with every channel off queues nothing", quiet.length === 0);
+
+const confirmUser = { id: 2, name: "Away", email: "away@x.com", phone: "+447911123456", phoneVerifiedAt: verified, notifyPrefs: { email: true, sms: true, push: true }, pushSubscriptions: [sub] };
+const confirmMail = statsActionDeliveries(confirmUser, { kind: "confirm", fixture: { id: 40, week: 2 }, leagueName: "League 1", opponentName: "Home", note: "" });
+check(
+  "confirming stats emails, texts, and alerts the opponent",
+  confirmMail.length === 3 &&
+    confirmMail.some((m) => m.channel === "email" && m.type === "confirm_stats" && m.to === "away@x.com" && m.subject.includes("Confirm the stats") && m.html.includes("Home") && m.html.includes("Week 2")) &&
+    confirmMail.some((m) => m.channel === "sms" && m.body.includes("confirm")) &&
+    confirmMail.some((m) => m.channel === "push" && m.payload.title === "Confirm match stats" && m.payload.url === "/my-matches?fixture=40")
+);
+const optedOut = statsActionDeliveries({ id: 3, name: "Quiet", email: "q@x.com", notifyPrefs: { email: false, sms: false, push: false } }, { kind: "confirm", fixture: { id: 40, week: 2 }, leagueName: "League 1", opponentName: "Home" });
+check("stats confirm with every channel off queues nothing", optedOut.length === 0);
+const declinedMail = statsActionDeliveries(confirmUser, { kind: "resubmit_declined", fixture: { id: 41, week: 3 }, leagueName: "League 1", opponentName: "Home", note: "Checkout does not match" });
+check(
+  "a declined result asks for a resubmit and includes the note",
+  declinedMail.some((m) => m.channel === "email" && m.type === "resubmit_stats" && m.subject.includes("Resubmit") && m.html.includes("incorrect") && m.html.includes("Checkout does not match")) &&
+    declinedMail.some((m) => m.channel === "push" && m.payload.title === "Resubmit match stats")
+);
+const disputeMail = statsActionDeliveries({ id: 1, name: "Home", email: "home@x.com", notifyPrefs: { email: true } }, { kind: "resubmit_disputed", fixture: { id: 42, week: 4 }, leagueName: "League 1", opponentName: "Away", note: "Legs are wrong" });
+check("a sent-back result emails the player to resubmit", disputeMail.length === 1 && disputeMail[0].html.includes("sent back") && disputeMail[0].html.includes("Legs are wrong"));
+
+const alertDb = {
+  leagues: [{ id: 1, name: "League 1" }],
+  users: [
+    { id: 1, name: "Home", email: "home@x.com" },
+    { id: 2, name: "Away", email: "away@x.com" },
+  ],
+  fixtures: [
+    { id: 40, leagueId: 1, week: 2, homeId: 1, awayId: 2, status: "pending_verify", resultSubmittedBy: 1, weekStart: "2026-08-16" },
+    { id: 41, leagueId: 1, week: 3, homeId: 1, awayId: 2, status: "scheduled", resubmitRequest: { note: "Checkout does not match" }, weekStart: "2026-08-16" },
+    { id: 42, leagueId: 1, week: 4, homeId: 1, awayId: 2, status: "scheduled", statsDisputeNote: "Legs are wrong", weekStart: "2026-08-16" },
+    { id: 43, leagueId: 1, week: 9, homeId: 1, awayId: 2, status: "scheduled", resubmitRequest: { note: "Too early" }, weekStart: "2099-01-01", date: "2099-01-04" },
+  ],
+};
+const awayAlerts = statsAlertsFor(alertDb, alertDb.users[1]);
+const homeAlerts = statsAlertsFor(alertDb, alertDb.users[0]);
+check(
+  "the opponent is alerted to confirm, and the submitter is not",
+  awayAlerts.some((item) => item.fixtureId === 40 && item.kind === "confirm" && item.opponentName === "Home") &&
+    !homeAlerts.some((item) => item.fixtureId === 40)
+);
+check(
+  "both players are alerted when an admin declines incorrect stats",
+  homeAlerts.some((item) => item.fixtureId === 41 && item.kind === "resubmit" && item.source === "declined" && item.note === "Checkout does not match") &&
+    awayAlerts.some((item) => item.fixtureId === 41 && item.kind === "resubmit" && item.source === "declined")
+);
+check(
+  "both players are alerted when stats are sent back as incorrect",
+  homeAlerts.some((item) => item.fixtureId === 42 && item.kind === "resubmit" && item.source === "disputed" && item.note === "Legs are wrong") &&
+    awayAlerts.some((item) => item.fixtureId === 42 && item.source === "disputed")
+);
+check("an unreleased week does not raise a stats alert", !awayAlerts.some((item) => item.fixtureId === 43) && !homeAlerts.some((item) => item.fixtureId === 43));
 
 if (failures) {
   console.error(`\n${failures} check(s) FAILED`);
