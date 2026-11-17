@@ -1827,11 +1827,43 @@ input, select, textarea {
     grid-template-columns: 1fr 1fr;
   }
 }
+.wheel-grid {
+  display: grid;
+  gap: 1.35rem 1rem;
+  margin-top: 1rem;
+}
+.wheel-card-name {
+  margin: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e8b425;
+}
+.wheel-card .wheel-names {
+  margin-top: 0.45rem;
+}
+.wheel-card.is-active .wheel-card-name {
+  color: #fff6dd;
+}
+.wheel-card.is-active .wheel-rotor {
+  box-shadow: 0 0 0 6px #e8b425, 0 12px 40px rgba(0, 0, 0, 0.35);
+}
 .wheel-stage {
   position: relative;
   width: min(100%, 26rem);
   margin: 1.15rem auto 0;
   padding-top: 0.9rem;
+}
+.wheel-card .wheel-stage {
+  width: min(100%, 20rem);
+  margin-top: 0.35rem;
+}
+@media (min-width: 800px) {
+  .wheel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .wheel-pointer {
   position: absolute;

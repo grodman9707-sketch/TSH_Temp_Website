@@ -3666,7 +3666,12 @@ function tournamentRules(t) {
   }
   if (t.format === "doubles") {
     const split = t.avgSplit ?? 50;
-    const wheel = t.nameWheel !== false ? " The name wheel draws those partners." : "";
+    const wheel =
+      t.nameWheel === false
+        ? ""
+        : t.poolMode === "division"
+          ? " Each division pool has its own wheels, one for each side of the cutoff. The pools are spun in order, and each pair is one player from each of that pool's wheels."
+          : " Each side of the cutoff has its own name wheel. The wheels spin in order, one player from each side, to draw the partners.";
     return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Your average is saved when you sign up.${wheel}${extra}`;
   }
   return `Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.${extra}`;
@@ -3809,7 +3814,7 @@ function syncTournamentForm(form) {
   const wheelHelp = form.querySelector("[data-wheel-help]");
   if (wheelHelp) {
     wheelHelp.textContent = randomDoubles
-      ? "The wheel draws random doubles partners, one from each side of the average cutoff."
+      ? "Each side of the cutoff gets its own wheel. The wheels spin in order, one player from each side, to draw the partners. Division pools each get that pair of wheels, spun one pool at a time."
       : "Turn this on for an open-average Luck of the Draw. A singles bracket is drawn at random instead of seeded by average. Doubles on one field can use the wheel too.";
   }
   const open = form.querySelector('[name="audience"]:checked')?.value === "open";
@@ -3994,7 +3999,7 @@ function tournamentTeamEditor(t) {
       ? "Confirmed partners are filled in. A player without a partner stays on a card with a blank seat. Choose a player for that seat, then save."
       : t.partnerMode === "random"
         ? t.nameWheel !== false
-          ? "Draw partners to spin the name wheel. Each pair is one player from each side of the cutoff. Move anyone you want, then generate the bracket."
+          ? "Draw partners to spin each side's wheel in order. Each pair is one player from each side of the cutoff. Move anyone you want, then generate the bracket."
           : "Random partners are paired when you generate the bracket, one from each side of the cutoff. You can still fill the cards yourself before that."
         : t.nameWheel !== false
           ? "Make even teams to spin the wheel. It lands on each player, pairing the highest average with the lowest. Move anyone you want, then generate the bracket."
@@ -4113,7 +4118,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">${t.nameWheel !== false ? "The name wheel stays up until you generate the bracket. That replaces the wheel and starts the tournament." : "Generate the bracket when signup is done. That starts the tournament."} Even doubles pairs the highest average with the lowest. Random doubles uses the average cutoff. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
+    <p class="mt-1 text-sm text-muted">${t.nameWheel !== false ? "The name wheels stay up until you generate the bracket. That replaces the wheels and starts the tournament." : "Generate the bracket when signup is done. That starts the tournament."} Even doubles pairs the highest average with the lowest. Random doubles uses one wheel for each side of the cutoff and spins those wheels in order. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -4236,34 +4241,62 @@ function tournamentWatchKey(t) {
   bits.push((t?.thirdPlace?.playerIds || []).join("."));
   return bits.join("|");
 }
+function wheelFace(players) {
+  return `<div class="wheel-stage" data-tournament-wheel>
+      <div class="wheel-pointer" aria-hidden="true"></div>
+      <div class="wheel-rotor" data-wheel-rotor>${wheelSvg(players)}</div>
+    </div>`;
+}
 function tournamentWheel(t) {
   const wheel = t.wheel || { players: [], reveal: null };
   const players = wheel.players || [];
-  const payload = { doubles: t.format === "doubles", players, reveal: wheel.reveal || null };
-  const names = players.map((player) => `<li>${esc(player.name)}</li>`).join("");
+  const wheels = Array.isArray(wheel.wheels) && wheel.wheels.length ? wheel.wheels : null;
+  const payload = {
+    doubles: t.format === "doubles",
+    multi: Boolean(wheels),
+    players,
+    wheels: (wheels || []).map((item) => ({ id: item.id, name: item.name, players: item.players || [] })),
+    reveal: wheel.reveal || null,
+  };
   const canSpin = t.canManage && t.format === "doubles" && t.status !== "complete" && !t.teamsLocked;
-  const blurb =
-    t.format === "doubles" && t.partnerMode === "random"
-      ? "Every player who signed up is on the wheel. Draw partners and it spins, landing on each player in a mixed pair."
-      : t.format === "doubles"
-        ? "Every player who signed up is on the wheel. Make even teams and it spins, landing on each player in the draw."
-        : "Every player who signed up is on the wheel. The bracket replaces it when the tournament starts.";
+  const blurb = wheels
+    ? t.poolMode === "division"
+      ? "Each division pool has its own wheels, one for each side of the cutoff. Draw partners and the pools spin in order. Each pair is one landing from each of that pool's wheels."
+      : "Each side of the cutoff has its own wheel. Draw partners and the wheels spin in order, one player from each side."
+    : t.format === "doubles"
+      ? "Every player who signed up is on the wheel. Make even teams and it spins, landing on each player in the draw."
+      : "Every player who signed up is on the wheel. The bracket replaces it when the tournament starts.";
   const spin =
     canSpin && t.partnerMode === "random"
       ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTDRAW" data-id="${t.id}"><button class="btn-gold" type="submit">DRAW ON THE WHEEL</button></form>`
       : canSpin && t.partnerMode !== "choose"
         ? `<form class="mt-4 flex justify-center" data-form="TOURNAMENTBALANCE" data-id="${t.id}"><button class="btn-gold" type="submit">MAKE EVEN TEAMS</button></form>`
         : "";
+  const faces = wheels
+    ? `<div class="wheel-grid" data-tournament-wheels>${wheels
+        .map((item) => {
+          const names = (item.players || []).map((player) => `<li>${esc(player.name)}</li>`).join("");
+          return `<div class="wheel-card" data-wheel-id="${esc(item.id)}">
+            <h3 class="wheel-card-name">${esc(item.name)}</h3>
+            ${wheelFace(item.players || [])}
+            ${names ? `<ul class="wheel-names">${names}</ul>` : `<p class="wheel-names">No one in this pool yet.</p>`}
+          </div>`;
+        })
+        .join("")}</div>`
+    : `${wheelFace(players)}${players.length ? `<ul class="wheel-names">${players.map((player) => `<li>${esc(player.name)}</li>`).join("")}</ul>` : ""}`;
+  const idle = wheels
+    ? players.length
+      ? "Each pool is on its own wheel."
+      : "No one has signed up yet."
+    : players.length
+      ? "Every signed-up player is on the wheel."
+      : "No one has signed up yet.";
   return panel(
-    `<h2 class="text-lg font-bold">Name wheel</h2>
+    `<h2 class="text-lg font-bold">${wheels && wheels.length > 1 ? "Name wheels" : "Name wheel"}</h2>
     <p class="mt-1 text-sm text-muted">${esc(blurb)}</p>
-    <div class="wheel-stage" data-tournament-wheel>
-      <div class="wheel-pointer" aria-hidden="true"></div>
-      <div class="wheel-rotor" data-wheel-rotor>${wheelSvg(players)}</div>
-    </div>
-    <p class="wheel-live" data-wheel-live aria-live="polite">${players.length ? "Every signed-up player is on the wheel." : "No one has signed up yet."}</p>
+    ${faces}
+    <p class="wheel-live" data-wheel-live aria-live="polite">${idle}</p>
     <ol class="wheel-drawn" data-wheel-teams></ol>
-    ${names ? `<ul class="wheel-names">${names}</ul>` : ""}
     ${spin}
     <div hidden data-wheel-state>${esc(JSON.stringify(payload))}</div>`,
     "mt-6"
@@ -4299,7 +4332,7 @@ async function pageTournaments() {
   return layout(
     `<div class="mx-auto max-w-3xl px-4 py-10">
       <h1 class="page-title font-extrabold">Tournaments</h1>
-      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and head admins can post an open event or limit it to chosen divisions. A division admin posts for their own players only. Doubles can build even teams, draw random mixed pairs around a cutoff, or let players choose a partner. Signups can be split into separate brackets by average or by division. The name wheel is optional: use it for random doubles partners or an open-average Luck of the Draw.</p>
+      <p class="mt-2 text-sm text-muted">Sign up for a scheduled tournament. Owners and head admins can post an open event or limit it to chosen divisions. A division admin posts for their own players only. Doubles can build even teams, draw random mixed pairs around a cutoff, or let players choose a partner. Signups can be split into separate brackets by average or by division. The name wheel is optional. Random doubles gives each side of the cutoff its own wheel, and those wheels spin in order. An open singles field can be Luck of the Draw.</p>
       ${pageFlash()}
       ${d.canManage ? tournamentPostForm(d) : ""}
       <div class="mt-6 space-y-3">${cards || `<p class="text-sm text-muted">No tournaments posted yet.</p>`}</div>
@@ -4371,28 +4404,31 @@ function clearWheelTimers() {
 }
 function mountTournamentWheel() {
   clearWheelTimers();
-  const root = document.querySelector("[data-tournament-wheel]");
-  if (!root) {
+  const stage = document.querySelector("[data-tournament-wheel]");
+  if (!stage) {
     state.wheelSpinning = null;
     return;
   }
+  const box = stage.closest(".glass") || stage.parentElement;
   let payload = {};
   try {
-    payload = JSON.parse(root.parentElement?.querySelector("[data-wheel-state]")?.textContent || "{}");
+    payload = JSON.parse(box?.querySelector("[data-wheel-state]")?.textContent || "{}");
   } catch {
     payload = {};
   }
-  const rotor = root.querySelector("[data-wheel-rotor]");
-  const live = root.parentElement?.querySelector("[data-wheel-live]");
-  const teamsEl = root.parentElement?.querySelector("[data-wheel-teams]");
-  const players = payload.players || [];
+  const live = box?.querySelector("[data-wheel-live]");
+  const teamsEl = box?.querySelector("[data-wheel-teams]");
   const reveal = payload.reveal;
-  const names = new Map(players.map((player) => [Number(player.userId), player.name]));
-  for (const person of reveal?.satOut || []) names.set(Number(person.userId), person.name);
-  let rotation = players.length ? wheelStopRotation(0, players.length) : 0;
   const say = (text) => {
     if (live) live.textContent = text;
   };
+  const names = new Map();
+  const remember = (list) => {
+    for (const player of list || []) names.set(Number(player.userId), player.name);
+  };
+  remember(payload.players);
+  for (const wheel of payload.wheels || []) remember(wheel.players);
+  remember(reveal?.satOut);
   const paint = (pairsDone) => {
     if (!teamsEl || !reveal) return;
     const pairs = reveal.pairs || [];
@@ -4405,47 +4441,100 @@ function mountTournamentWheel() {
     }
     teamsEl.innerHTML = items.join("");
   };
-  const spinTo = (userId, ms, snap = false) => {
-    const index = players.findIndex((player) => Number(player.userId) === Number(userId));
-    if (index < 0 || !rotor) return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const rotors = new Map();
+  if (payload.multi) {
+    for (const card of box.querySelectorAll("[data-wheel-id]")) {
+      const wheel = (payload.wheels || []).find((item) => String(item.id) === String(card.dataset.wheelId));
+      const players = wheel?.players || [];
+      const rotor = card.querySelector("[data-wheel-rotor]");
+      const rotation = players.length ? wheelStopRotation(0, players.length) : 0;
+      if (rotor) {
+        rotor.style.transition = "none";
+        rotor.style.transform = `rotate(${rotation}deg)`;
+      }
+      rotors.set(String(card.dataset.wheelId), { card, rotor, players, rotation });
+    }
+  }
+  const singleRotor = stage.querySelector("[data-wheel-rotor]");
+  const singlePlayers = payload.players || [];
+  let singleRotation = singlePlayers.length ? wheelStopRotation(0, singlePlayers.length) : 0;
+  if (!payload.multi && singleRotor) {
+    singleRotor.style.transition = "none";
+    singleRotor.style.transform = `rotate(${singleRotation}deg)`;
+  }
+  const spinTo = (wheelId, userId, ms, snap = false) => {
+    const reduced = reducedMotion();
+    if (payload.multi) {
+      const wheel = rotors.get(String(wheelId));
+      if (!wheel?.rotor) return;
+      const index = wheel.players.findIndex((player) => Number(player.userId) === Number(userId));
+      if (index < 0) return;
+      for (const other of rotors.values()) other.card.classList.toggle("is-active", other === wheel && !snap);
+      if (snap) {
+        wheel.rotation = wheelStopRotation(index, wheel.players.length);
+        wheel.rotor.style.transition = "none";
+        wheel.rotor.style.transform = `rotate(${wheel.rotation}deg)`;
+        return;
+      }
+      const turns = reduced ? 0 : ms < 700 ? 1 : 4;
+      wheel.rotation = nextWheelRotation(wheel.rotation, index, wheel.players.length, turns);
+      wheel.rotor.style.transition = reduced ? "none" : `transform ${Math.max(0, ms)}ms cubic-bezier(.12,.75,.12,1)`;
+      wheel.rotor.style.transform = `rotate(${wheel.rotation}deg)`;
+      return;
+    }
+    const index = singlePlayers.findIndex((player) => Number(player.userId) === Number(userId));
+    if (index < 0 || !singleRotor) return;
     if (snap) {
-      rotation = wheelStopRotation(index, players.length);
-      rotor.style.transition = "none";
-      rotor.style.transform = `rotate(${rotation}deg)`;
+      singleRotation = wheelStopRotation(index, singlePlayers.length);
+      singleRotor.style.transition = "none";
+      singleRotor.style.transform = `rotate(${singleRotation}deg)`;
       return;
     }
     const turns = reduced ? 0 : ms < 700 ? 1 : 4;
-    rotation = nextWheelRotation(rotation, index, players.length, turns);
-    rotor.style.transition = reduced ? "none" : `transform ${Math.max(0, ms)}ms cubic-bezier(.12,.75,.12,1)`;
-    rotor.style.transform = `rotate(${rotation}deg)`;
+    singleRotation = nextWheelRotation(singleRotation, index, singlePlayers.length, turns);
+    singleRotor.style.transition = reduced ? "none" : `transform ${Math.max(0, ms)}ms cubic-bezier(.12,.75,.12,1)`;
+    singleRotor.style.transform = `rotate(${singleRotation}deg)`;
   };
-  if (rotor) {
-    rotor.style.transition = "none";
-    rotor.style.transform = `rotate(${rotation}deg)`;
-  }
-  if (!players.length) {
+  const signedUp = payload.multi
+    ? (payload.wheels || []).some((wheel) => (wheel.players || []).length)
+    : singlePlayers.length > 0;
+  if (!signedUp) {
     say("No one has signed up yet.");
     state.wheelSpinning = null;
     return;
   }
-  if (!reveal?.order?.length) {
+  const spins = payload.multi && Array.isArray(reveal?.spins) && reveal.spins.length ? reveal.spins : null;
+  if (payload.multi && !spins) {
+    say("Each pool is on its own wheel. Draw partners and the wheels spin in order.");
+    state.wheelSpinning = null;
+    return;
+  }
+  if (!payload.multi && !reveal?.order?.length) {
     say(payload.doubles ? "Every signed-up player is on the wheel. It spins when even teams are drawn." : "Every signed-up player is on the wheel.");
     state.wheelSpinning = null;
     return;
   }
+  const sequence = spins || (reveal.order || []).map((userId) => ({ wheelId: "", userId }));
   let started = Date.parse(reveal.startedAt);
   const force = String(state.wheelForcePlay || "") === String(reveal.id);
   if (force) {
     started = Date.now();
     state.wheelForcePlay = null;
-    root.scrollIntoView({ behavior: "smooth", block: "center" });
+    (box?.querySelector("[data-tournament-wheels]") || stage).scrollIntoView({ behavior: "smooth", block: "center" });
   }
   const step = Number(reveal.stepMs) || 2200;
   const spinMs = Math.max(450, Math.round(step * 0.72));
-  const count = reveal.order.length;
+  const count = sequence.length;
   const finish = (snap) => {
-    if (snap) spinTo(reveal.order[count - 1], 0, true);
+    if (snap) {
+      if (payload.multi) {
+        const last = new Map();
+        for (const spin of sequence) last.set(String(spin.wheelId), spin.userId);
+        for (const [wheelId, userId] of last) spinTo(wheelId, userId, 0, true);
+      } else spinTo("", sequence[count - 1]?.userId, 0, true);
+    }
+    for (const wheel of rotors.values()) wheel.card.classList.remove("is-active");
     paint((reveal.pairs || []).length);
     say("Teams are set. The bracket appears here when the tournament is ready to start.");
     state.wheelSpinning = null;
@@ -4455,13 +4544,15 @@ function mountTournamentWheel() {
     }
   };
   const playIndex = (index, into) => {
-    const userId = reveal.order[index];
-    const name = names.get(Number(userId)) || "Player";
+    const spin = sequence[index];
+    const wheel = (payload.wheels || []).find((item) => String(item.id) === String(spin.wheelId));
+    const name = names.get(Number(spin.userId)) || "Player";
     const remain = Math.max(280, spinMs - into);
     const already = into >= spinMs;
-    spinTo(userId, already ? 0 : remain, already);
+    spinTo(spin.wheelId, spin.userId, already ? 0 : remain, already);
+    if (payload.multi && !already) say(`Spinning ${wheel?.name || "the wheel"}`);
     const timer = setTimeout(() => {
-      say(`Landed on ${name}`);
+      say(payload.multi ? `${wheel?.name || "Wheel"} landed on ${name}` : `Landed on ${name}`);
       if (index % 2 === 1) paint((index + 1) / 2);
     }, already ? 0 : remain);
     wheelTimers.push(timer);
@@ -4473,7 +4564,7 @@ function mountTournamentWheel() {
   }
   state.wheelSpinning = reveal.id;
   if (plan.phase === "wait") {
-    say("The wheel is about to spin.");
+    say(payload.multi ? "The wheels are about to spin." : "The wheel is about to spin.");
     wheelTimers.push(setTimeout(() => mountTournamentWheel(), plan.delayMs + 20));
     return;
   }
@@ -5637,7 +5728,7 @@ document.addEventListener("submit", async (e) => {
         state.error = "";
         state.notice = balanced.tournament?.wheel?.reveal
           ? kind === "TOURNAMENTDRAW"
-            ? "The wheel is spinning. It draws one player from each side of the cutoff."
+            ? "The wheels are spinning in order. Each pair is one player from each side of the cutoff."
             : "The wheel is spinning. It stops on each player. Highest averages are paired with the lowest."
           : kind === "TOURNAMENTDRAW"
             ? "Partners drawn."
