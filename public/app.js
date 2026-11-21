@@ -63,7 +63,6 @@ const state = {
   wheelSpinning: null,
   tournamentDirty: false,
   tournamentPoll: null,
-  podiumEventId: null,
   tournamentBubble: 0,
 };
 
@@ -1366,298 +1365,6 @@ function homeStatCard(value, label, name) {
     : "";
   return `<div class="home-stat glass rounded-xl px-3 py-6 sm:px-4 sm:py-8"><div class="home-stat-value text-3xl font-extrabold gold sm:text-4xl">${esc(value)}</div><div class="mt-2 text-xs font-semibold uppercase tracking-widest text-muted">${esc(label)}</div>${nameHtml}</div>`;
 }
-function podiumWhen(event) {
-  if (event?.finishedAt) return `Finished ${fmtInstant(event.finishedAt)} ${tzAbbr(event.finishedAt, BROWSER_TZ)}`.trim();
-  const start = event?.startsAt ? `${fmtInstant(event.startsAt)} ${tzAbbr(event.startsAt, BROWSER_TZ)}`.trim() : "";
-  if (event?.status === "complete") return start ? `Scheduled ${start}` : "Finished";
-  return start ? `In progress · ${start}` : "In progress";
-}
-function podiumPlaceWord(place) {
-  if (place === 1) return "1st";
-  if (place === 2) return "2nd";
-  return "3rd";
-}
-function podiumPeople(players, size) {
-  if (!players?.length) {
-    const font = Math.max(12, Math.round(size * 0.4));
-    return `<div class="podium-people"><div class="podium-avatars"><span class="avatar avatar-fallback" style="width:${size}px;height:${size}px;font-size:${font}px" aria-hidden="true">?</span></div><div class="podium-names"><p class="podium-name">TBD</p></div></div>`;
-  }
-  const list = players;
-  const avatars = list
-    .map((player) => {
-      const img = avatarImg({ id: player.userId, name: player.name, nickname: "", hasAvatar: player.hasAvatar, avatarUrl: player.avatarUrl }, size);
-      return player.userId ? `<a class="podium-avatar-link" href="/player/${player.userId}">${img}</a>` : img;
-    })
-    .join("");
-  const names = list
-    .map((player) => {
-      const name = player.userId ? `<a href="/player/${player.userId}">${esc(player.name)}</a>` : esc(player.name);
-      const nick = player.nickname ? `<span class="podium-nick">${esc(player.nickname)}</span>` : "";
-      return `<p class="podium-name">${name}${nick}</p>`;
-    })
-    .join("");
-  return `<div class="podium-people"><div class="podium-avatars">${avatars}</div><div class="podium-names">${names}</div></div>`;
-}
-function podiumSlot(place, data) {
-  const players = data?.players || [];
-  const who = players.length ? players.map((player) => player.name).join(" and ") : "TBD";
-  const size = place === 1 ? 92 : 64;
-  const note = data?.note ? `<p class="podium-note">${esc(data.note)}</p>` : "";
-  return `<article class="podium-slot podium-place-${place}" role="listitem" aria-label="${esc(podiumPlaceWord(place))} place, ${esc(who)}">
-    ${podiumPeople(players, size)}
-    ${note}
-    <div class="podium-block" aria-hidden="true"><span>${podiumPlaceWord(place)}</span></div>
-  </article>`;
-}
-function podiumBoard(board) {
-  const byPlace = new Map((board?.places || []).map((place) => [place.place, place]));
-  const slots = [2, 1, 3].map((place) => podiumSlot(place, byPlace.get(place))).join("");
-  const pool = board?.poolName ? `<h3 class="podium-pool">${esc(board.poolName)}</h3>` : "";
-  return `<div class="podium-board">${pool}<div class="podium" role="list">${slots}</div></div>`;
-}
-function podiumSwitch(events, activeId) {
-  if (!events || events.length < 2) return "";
-  const buttons = events
-    .map((event) => {
-      const on = Number(event.id) === Number(activeId);
-      return `<button type="button" class="podium-switch-btn${on ? " is-on" : ""}" role="tab" aria-selected="${on ? "true" : "false"}" data-act="podium-pick" data-id="${Number(event.id)}">${esc(event.title)}</button>`;
-    })
-    .join("");
-  return `<div class="podium-switch" role="tablist" aria-label="Recent tournaments">${buttons}</div>`;
-}
-let podiumConfettiStop = null;
-function stopPodiumConfetti() {
-  if (typeof podiumConfettiStop === "function") podiumConfettiStop();
-  podiumConfettiStop = null;
-}
-function mountPodiumConfetti() {
-  stopPodiumConfetti();
-  const canvas = document.querySelector("[data-podium-confetti]");
-  if (!canvas) return;
-  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  if (motion?.matches) return;
-  const ctx = canvas.getContext("2d");
-  const host = canvas.parentElement;
-  if (!ctx || !host) return;
-  const colors = ["#e8b425", "#f6d56a", "#fff6cc", "#d08a4c", "#f3f6fb", "#ffffff", "#c9a227"];
-  const bits = [];
-  const sparks = [];
-  let width = 0;
-  let height = 0;
-  let dpr = 1;
-  let raf = 0;
-  let alive = true;
-  let tickCount = 0;
-  const fit = () => {
-    const rect = host.getBoundingClientRect();
-    const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
-    const nextW = Math.max(1, rect.width);
-    const nextH = Math.max(1, rect.height);
-    if (canvas.width && nextW === width && nextH === height && nextDpr === dpr) return;
-    width = nextW;
-    height = nextH;
-    dpr = nextDpr;
-    canvas.width = Math.max(1, Math.floor(width * dpr));
-    canvas.height = Math.max(1, Math.floor(height * dpr));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  };
-  const makeBit = (anywhere) => ({
-    x: Math.random() * width,
-    y: anywhere ? Math.random() * height : -10 - Math.random() * 36,
-    w: 6 + Math.random() * 8,
-    h: 3 + Math.random() * 5,
-    vy: 0.55 + Math.random() * 1.35,
-    vx: -0.55 + Math.random() * 1.1,
-    rot: Math.random() * Math.PI,
-    vr: -0.08 + Math.random() * 0.16,
-    color: colors[Math.floor(Math.random() * colors.length)],
-    round: Math.random() < 0.35,
-  });
-  const burst = (x, y) => {
-    const count = 18 + Math.floor(Math.random() * 8);
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
-      const speed = 1.15 + Math.random() * 2.3;
-      sparks.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 0.35,
-        life: 1,
-        decay: 0.015 + Math.random() * 0.016,
-        size: 2 + Math.random() * 2.5,
-        color: colors[i % colors.length],
-      });
-    }
-  };
-  const onMotion = () => {
-    if (motion?.matches) stopPodiumConfetti();
-  };
-  motion?.addEventListener?.("change", onMotion);
-  const tick = () => {
-    if (!alive) return;
-    fit();
-    const target = Math.max(26, Math.min(60, Math.round(width / 18)));
-    while (bits.length < target) bits.push(makeBit(bits.length < target * 0.7));
-    ctx.clearRect(0, 0, width, height);
-    for (const bit of bits) {
-      bit.x += bit.vx + Math.sin(bit.y * 0.04) * 0.25;
-      bit.y += bit.vy;
-      bit.rot += bit.vr;
-      if (bit.y > height + 12) {
-        bit.y = -14;
-        bit.x = Math.random() * width;
-      }
-      if (bit.x < -18) bit.x = width + 6;
-      if (bit.x > width + 18) bit.x = -6;
-      ctx.save();
-      ctx.translate(bit.x, bit.y);
-      ctx.rotate(bit.rot);
-      ctx.globalAlpha = 0.92;
-      ctx.fillStyle = bit.color;
-      if (bit.round) {
-        ctx.beginPath();
-        ctx.arc(0, 0, bit.w * 0.28, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.fillRect(-bit.w / 2, -bit.h / 2, bit.w, bit.h);
-      }
-      ctx.restore();
-    }
-    tickCount += 1;
-    if (tickCount % 75 === 16) burst(width * (0.08 + Math.random() * 0.22), height * (0.06 + Math.random() * 0.22));
-    if (tickCount % 75 === 52) burst(width * (0.7 + Math.random() * 0.22), height * (0.05 + Math.random() * 0.24));
-    for (let i = sparks.length - 1; i >= 0; i--) {
-      const spark = sparks[i];
-      spark.x += spark.vx;
-      spark.y += spark.vy;
-      spark.vy += 0.028;
-      spark.life -= spark.decay;
-      if (spark.life <= 0) {
-        sparks.splice(i, 1);
-        continue;
-      }
-      ctx.globalAlpha = Math.max(0, spark.life);
-      ctx.fillStyle = spark.color;
-      ctx.fillRect(spark.x, spark.y, spark.size, spark.size);
-    }
-    ctx.globalAlpha = 1;
-    raf = requestAnimationFrame(tick);
-  };
-  raf = requestAnimationFrame(tick);
-  podiumConfettiStop = () => {
-    alive = false;
-    if (raf) cancelAnimationFrame(raf);
-    motion?.removeEventListener?.("change", onMotion);
-  };
-}
-function podiumCongratsBanner() {
-  return `<div class="podium-scroll">
-      <svg class="podium-scroll-art" viewBox="0 68 1000 310" aria-hidden="true" focusable="false">
-        <defs>
-          <linearGradient id="tshRibbon" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#fff3c4"/>
-            <stop offset="0.2" stop-color="#f4d36a"/>
-            <stop offset="0.48" stop-color="#e8b425"/>
-            <stop offset="0.76" stop-color="#c49212"/>
-            <stop offset="1" stop-color="#8a6a12"/>
-          </linearGradient>
-          <linearGradient id="tshLip" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#7a5c12"/>
-            <stop offset="1" stop-color="#3f2e08"/>
-          </linearGradient>
-          <linearGradient id="tshRoll" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stop-color="#3f2e08"/>
-            <stop offset="0.14" stop-color="#f8e7a8"/>
-            <stop offset="0.32" stop-color="#e8b425"/>
-            <stop offset="0.5" stop-color="#7a5c10"/>
-            <stop offset="0.68" stop-color="#f6d56a"/>
-            <stop offset="0.84" stop-color="#a97812"/>
-            <stop offset="1" stop-color="#3a2a06"/>
-          </linearGradient>
-          <radialGradient id="tshKnob" cx="0.35" cy="0.3" r="0.75">
-            <stop offset="0" stop-color="#fff8dc"/>
-            <stop offset="0.45" stop-color="#e8b425"/>
-            <stop offset="1" stop-color="#5c4308"/>
-          </radialGradient>
-          <clipPath id="tshClip">
-            <path d="M100 114 C280 98 420 88 500 84 C580 88 720 98 900 114 L900 276 C720 260 580 250 500 246 C420 250 280 260 100 276 Z"/>
-          </clipPath>
-        </defs>
-        <path d="M100 276 C280 260 420 250 500 246 C580 250 720 260 900 276 L900 296 C720 280 580 270 500 266 C420 270 280 280 100 296 Z" fill="url(#tshLip)"/>
-        <path d="M100 114 C280 98 420 88 500 84 C580 88 720 98 900 114 L900 276 C720 260 580 250 500 246 C420 250 280 260 100 276 Z" fill="url(#tshRibbon)" stroke="#4a3508" stroke-width="8" stroke-linejoin="round"/>
-        <path d="M128 132 C292 114 418 104 500 100 C582 104 708 114 872 132 L872 256 C708 242 582 232 500 228 C418 232 292 242 128 256 Z" fill="none" stroke="#5c4308" stroke-width="1.6"/>
-        <path d="M168 126 C310 108 410 100 500 98 C590 100 690 108 832 126" fill="none" stroke="#fff6cc" stroke-width="2.4" stroke-linecap="round" opacity="0.75"/>
-        <ellipse cx="430" cy="118" rx="120" ry="14" fill="#fff8dc" opacity="0.16" clip-path="url(#tshClip)"/>
-        <g fill="none" stroke="#4a3308" stroke-linecap="round" stroke-width="2">
-          <path d="M438 106 C458 98 476 98 492 106"/>
-          <path d="M562 106 C542 98 524 98 508 106"/>
-          <path d="M442 228 C462 238 478 238 494 228"/>
-          <path d="M558 228 C538 238 522 238 506 228"/>
-        </g>
-        <path d="M500 96 L505 106 L500 116 L495 106 Z" fill="#4a3308"/>
-        <path d="M500 100 L503 106 L500 112 L497 106 Z" fill="#fff6cc"/>
-        <path d="M500 220 L505 230 L500 240 L495 230 Z" fill="#5c4308"/>
-        <path d="M500 224 L503 230 L500 236 L497 230 Z" fill="#fff1c2"/>
-        <g>
-          <rect x="16" y="104" width="108" height="236" rx="54" fill="url(#tshRoll)"/>
-          <ellipse cx="70" cy="132" rx="40" ry="12" fill="#5c4308" opacity="0.28"/>
-          <path d="M42 128 C32 170 32 250 44 312" fill="none" stroke="#fff6cc" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
-          <path d="M108 140 C120 180 120 260 106 314" fill="none" stroke="#3a2806" stroke-width="3.2" stroke-linecap="round"/>
-          <path d="M100 136 C114 178 114 262 98 316" fill="none" stroke="#fff3c4" stroke-width="1.7" stroke-linecap="round" opacity="0.75"/>
-          <circle cx="70" cy="96" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
-          <circle cx="64" cy="90" r="4" fill="#fff8dc" opacity="0.9"/>
-          <circle cx="70" cy="348" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
-          <circle cx="64" cy="342" r="4" fill="#fff8dc" opacity="0.85"/>
-        </g>
-        <g>
-          <rect x="876" y="104" width="108" height="236" rx="54" fill="url(#tshRoll)"/>
-          <ellipse cx="930" cy="132" rx="40" ry="12" fill="#5c4308" opacity="0.28"/>
-          <path d="M958 128 C968 170 968 250 956 312" fill="none" stroke="#fff6cc" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
-          <path d="M892 140 C880 180 880 260 894 314" fill="none" stroke="#3a2806" stroke-width="3.2" stroke-linecap="round"/>
-          <path d="M900 136 C886 178 886 262 902 316" fill="none" stroke="#fff3c4" stroke-width="1.7" stroke-linecap="round" opacity="0.75"/>
-          <circle cx="930" cy="96" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
-          <circle cx="924" cy="90" r="4" fill="#fff8dc" opacity="0.9"/>
-          <circle cx="930" cy="348" r="16" fill="url(#tshKnob)" stroke="#6b5010" stroke-width="1"/>
-          <circle cx="924" cy="342" r="4" fill="#fff8dc" opacity="0.85"/>
-        </g>
-      </svg>
-      <p class="podium-congrats">Congratulations!</p>
-    </div>`;
-}
-function homePodium(payload) {
-  const events = Array.isArray(payload?.events) ? payload.events : [];
-  if (!events.length) {
-    return `<section class="home-podium px-4 py-12 sm:px-6" id="tournament-winners">
-      <div class="mx-auto max-w-3xl">
-        <div class="glass rounded-xl px-5 py-10 text-center">
-          <p class="page-kicker text-xs font-semibold gold">TOURNAMENT WINNERS</p>
-          <p class="mt-3 text-sm text-muted">Winners will appear here when a tournament finishes</p>
-          <p class="mt-2 text-sm text-muted">They stay on this page for 3 days.</p>
-        </div>
-      </div>
-    </section>`;
-  }
-  const selected = events.find((event) => Number(event.id) === Number(state.podiumEventId)) || events[0];
-  const celebrate = selected.status === "complete" || Boolean(selected.finishedAt);
-  const fx = celebrate
-    ? `<div class="podium-fx" aria-hidden="true"><canvas class="podium-confetti" data-podium-confetti></canvas></div>`
-    : "";
-  return `<section class="home-podium px-2 py-12 sm:px-6 sm:py-16" id="tournament-winners">
-    <div class="mx-auto max-w-5xl text-center">
-      <div class="podium-hero">
-        ${fx}
-        ${podiumCongratsBanner()}
-      </div>
-      <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
-      <p class="podium-when">${esc(podiumWhen(selected))}</p>
-      <p class="mt-2 text-sm text-muted">Winners stay on this page for 3 days.</p>
-      ${podiumSwitch(events, selected.id)}
-      ${(selected.boards || []).map(podiumBoard).join("")}
-      <p class="mt-6"><a class="text-sm font-bold gold" href="/tournaments/${Number(selected.id)}">View bracket</a></p>
-    </div>
-  </section>`;
-}
 function homeHighlights(highlights) {
   if (!highlights?.paragraphs?.length) return "";
   const body = highlights.paragraphs
@@ -1678,12 +1385,11 @@ function homeHighlights(highlights) {
   </section>`;
 }
 async function pageHome() {
-  const [stats, content, regionals, tickerData, podiumData] = await Promise.all([
+  const [stats, content, regionals, tickerData] = await Promise.all([
     api("/api/stats"),
     api("/api/content"),
     api("/api/regionals"),
     api("/api/ticker").catch(() => ({ items: [] })),
-    api("/api/podium").catch(() => ({ events: [] })),
   ]);
   let ticker = Array.isArray(tickerData.items) ? tickerData.items : [];
   if (!ticker.length) ticker = [{ div: "PDC", text: "Upcoming live darts dates will appear here", live: false }];
@@ -1720,7 +1426,6 @@ async function pageHome() {
         </div>
       </div>
     </section>
-    ${homePodium(podiumData)}
     ${homeHighlights(stats.highlights)}
     ${homeNewsSection}
     <section class="bg-background px-4 py-12 sm:px-6 sm:py-20">
@@ -4078,7 +3783,7 @@ function tournamentThirdPlaceForm(t) {
   const savedIds = saved?.playerIds || [];
   const pools = t.thirdPlacePools || [];
   const intro =
-    "No third-place match is required. Choose the two players who finished 3rd together. Both names share the one 3rd step on the home winners podium. This is not 3rd and 4th.";
+    "No third-place match is required. Choose the two players who finished 3rd together. Both names are saved together as 3rd. This is not 3rd and 4th.";
   if (choices.length < 2) {
     return `<div class="mt-5 border-t border-white/10 pt-4">
       <h3 class="text-base font-bold">3rd place pair</h3>
@@ -4826,7 +4531,6 @@ async function render() {
   stopChatWatch();
   stopTournamentWatch();
   clearWheelTimers();
-  stopPodiumConfetti();
   const app = document.getElementById("app");
   const route = matchRoute(state.path + location.search);
   try {
@@ -4885,7 +4589,6 @@ async function render() {
     document.querySelectorAll('form[data-form="POSTTOURNAMENT"]').forEach(syncTournamentForm);
     document.querySelectorAll('form[data-form="TOURNAMENTTEAMS"]').forEach(syncTeamForm);
     mountTournamentWheel();
-    mountPodiumConfetti();
     startTournamentWatch();
     startChatWatch();
   } catch (err) {
@@ -4909,13 +4612,6 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", async (e) => {
-  const podiumPick = e.target.closest("[data-act=podium-pick]");
-  if (podiumPick) {
-    e.preventDefault();
-    state.podiumEventId = Number(podiumPick.dataset.id);
-    render();
-    return;
-  }
   const pushEnable = e.target.closest("[data-act=push-enable]");
   if (pushEnable) {
     e.preventDefault();
@@ -5938,12 +5634,12 @@ document.addEventListener("submit", async (e) => {
       if (fd.poolId) body.poolId = fd.poolId;
       await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify(body) });
       state.error = "";
-      state.notice = "3rd place saved. Both players share the 3rd step on the home podium.";
+      state.notice = "3rd place saved.";
       render();
     } else if (kind === "TOURNAMENTTHIRDCLEAR") {
       await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify({ clear: true }) });
       state.error = "";
-      state.notice = "3rd place cleared. The podium follows the bracket again.";
+      state.notice = "3rd place cleared.";
       render();
     }
   } catch (err) {

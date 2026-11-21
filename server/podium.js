@@ -1,4 +1,4 @@
-// Home-page winners podium.
+// Winners podium data. The public home page does not render this.
 // A bracket's final winner is 1st. The other finalist is 2nd when that final
 // was played. 3rd is the only player who lost in the round that feeds the
 // final. Two semifinal losers are not ranked, because this site has no

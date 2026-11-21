@@ -1,4 +1,4 @@
-// Winners podium: who finished 1st, 2nd, and 3rd, and which tournament the home page shows.
+// Winners podium: who finished 1st, 2nd, and 3rd. The home page does not render this.
 // Run: `node server/podium.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -448,26 +448,24 @@ check(
 
 const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
-check("the home page has a congratulations podium and an empty state", appJs.includes('class="podium-congrats">Congratulations') && appJs.includes("Winners will appear here when a tournament finishes") && appJs.includes("podium-place-"));
+check(
+  "the home page does not render tournament winners",
+  !appJs.includes('id="tournament-winners"') &&
+    !appJs.includes("TOURNAMENT WINNERS") &&
+    !appJs.includes("homePodium") &&
+    !appJs.includes("/api/podium") &&
+    !appJs.includes("Winners will appear here") &&
+    !css.includes(".home-podium") &&
+    !css.includes(".podium-congrats") &&
+    !css.includes(".podium-place-1")
+);
 check(
   "staff can name a 3rd-place pair without playing a third-place match",
   appJs.includes("3rd place pair") && appJs.includes("No third-place match is required") && appJs.includes('data-form="TOURNAMENTTHIRD"')
 );
-check("1st is the taller centre step and narrow screens put 1st first", css.includes(".podium-place-1 .podium-block") && css.includes("height: 8.5rem") && css.includes("height: 5.75rem") && css.includes("height: 4.25rem") && css.includes("order: -1"));
-const emptyPodium = appJs.slice(appJs.indexOf('id="tournament-winners"'), appJs.indexOf("Winners will appear here when a tournament finishes"));
 check(
-  "a finished podium uses a large banner and celebration that stays off when motion is reduced",
-  emptyPodium.length > 40 &&
-    !emptyPodium.includes("data-podium-confetti") &&
-    !emptyPodium.includes("podium-congrats") &&
-    appJs.includes("data-podium-confetti") &&
-    appJs.includes('class="podium-congrats">Congratulations') &&
-    appJs.includes('"(prefers-reduced-motion: reduce)"') &&
-    css.includes(".podium-hero") &&
-    css.includes(".podium-confetti") &&
-    css.includes("pointer-events: none") &&
-    css.includes("5.25rem") &&
-    css.includes("prefers-reduced-motion: reduce")
+  "the home page still renders the hero and live numbers",
+  appJs.includes("function pageHome") && appJs.includes("TSH In Numbers") && appJs.includes('api("/api/stats")')
 );
 
 async function waitHealth(port, child) {
