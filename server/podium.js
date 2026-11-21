@@ -7,7 +7,9 @@
 // The home page shows one podium: the latest completed tournament whose
 // winners were established within the last 48 hours. The clock is completedAt,
 // stored once when the tournament is completed. 48 hours is an absolute
-// duration, measured from that UTC instant.
+// duration, measured from that UTC instant. An owner can set homePodiumHidden
+// so that one completion is left off Home. The flag does not change the clock
+// or the stored results.
 
 export const PODIUM_HOME_MS = 48 * 60 * 60 * 1000;
 
@@ -161,6 +163,7 @@ function timeOf(value) {
 }
 
 function podiumStillPosted(tournament, now) {
+  if (tournament?.homePodiumHidden === true) return false;
   if ((tournament?.status || "") !== "complete") return false;
   const finished = timeOf(tournament?.completedAt);
   if (finished == null) return false;

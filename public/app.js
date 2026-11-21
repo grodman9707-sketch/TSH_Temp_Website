@@ -4189,6 +4189,22 @@ function tournamentAvgPools(t) {
     </form>
   </div>`;
 }
+function homePodiumDismiss(t) {
+  if (!isOwner() || t.status !== "complete") return "";
+  if (t.homePodiumHidden) {
+    return `<div class="mt-5 border-t border-white/10 pt-4">
+      <h3 class="text-base font-bold">Remove winners from Home</h3>
+      <p class="mt-1 text-sm text-muted">The winners post is already off the Home page. Players, results, and the winner on this page stay.</p>
+    </div>`;
+  }
+  return `<div class="mt-5 border-t border-white/10 pt-4">
+    <h3 class="text-base font-bold">Remove winners from Home</h3>
+    <p class="mt-1 text-sm text-muted">This only takes the winners podium off the landing page. Players, results, the bracket, and the winner on this page stay.</p>
+    <form class="mt-3" data-form="TOURNAMENTHOMEPODIUM" data-id="${t.id}">
+      <button class="btn-ghost" type="submit">REMOVE WINNERS FROM HOME</button>
+    </form>
+  </div>`;
+}
 function tournamentStaffPanel(t) {
   if (!t.canManage) return "";
   const editing = Number(state.editingTournamentId) === Number(t.id);
@@ -4223,7 +4239,8 @@ function tournamentStaffPanel(t) {
     </div>
     ${edit}
     ${tournamentAvgPools(t)}
-    ${tournamentThirdPlaceForm(t)}`,
+    ${tournamentThirdPlaceForm(t)}
+    ${homePodiumDismiss(t)}`,
     "mt-6"
   );
 }
@@ -5934,6 +5951,11 @@ document.addEventListener("submit", async (e) => {
       await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify({ clear: true }) });
       state.error = "";
       state.notice = "3rd place cleared. The home podium follows the bracket again while its 48 hours are still open.";
+      render();
+    } else if (kind === "TOURNAMENTHOMEPODIUM") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/home-podium`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "Winners removed from the Home page. This tournament page still shows the winner.";
       render();
     }
   } catch (err) {

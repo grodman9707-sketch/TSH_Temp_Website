@@ -1719,6 +1719,14 @@ export function setTournamentThirdPlace(db, id, body) {
   return { status: 200, tournament };
 }
 
+export function hideHomePodium(db, id) {
+  const tournament = findTournament(db, id);
+  if (!tournament) return fail(404, "Tournament not found");
+  if ((tournament.status || "") !== "complete") return fail(400, "This tournament has no winners post on Home");
+  tournament.homePodiumHidden = true;
+  return { status: 200, tournament };
+}
+
 function presentAvgPools(db, tournament) {
   const kind = avgPoolKind(tournament);
   if (!kind) return null;
@@ -1849,6 +1857,7 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
     teamCards: editable ? editorCards(db, tournament) : [],
     teamPlayers: editable ? teamPlayerOptions(db, tournament) : [],
     wheel: presentWheel(entryViews, tournament),
+    homePodiumHidden: tournament.homePodiumHidden === true,
     thirdPlace: presentThirdPlace(db, tournament),
     thirdPlaceChoices: canManage ? thirdPlaceChoices(db, tournament) : [],
     thirdPlacePools: canManage ? thirdPlacePoolOptions(tournament) : [],
