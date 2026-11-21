@@ -3678,7 +3678,7 @@ function tournamentLimitSentence(t) {
 function tournamentPoolSentence(t) {
   if (t?.poolMode === "avg") {
     const split = t.avgSplit ?? 50;
-    return ` Players at or above ${split} are one pool and everyone else is the other. Each pool has its own bracket.`;
+    return ` Players at or above ${split} are one pool and everyone else is the other. Each pool has its own bracket. Staff can move players between the pools before a result is saved.`;
   }
   if (t?.poolMode === "division") return " Each division pool has its own bracket.";
   return "";
@@ -3702,7 +3702,7 @@ function tournamentRules(t) {
         : t.poolMode === "division"
           ? " Each division pool has its own wheels, one for each side of the cutoff. The pools are spun in order, and each pair is one player from each of that pool's wheels."
           : " Each side of the cutoff has its own name wheel. The wheels spin in order, one player from each side, to draw the partners.";
-    return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Your average is saved when you sign up.${wheel}${extra}`;
+    return `Doubles. When the bracket is generated, each pair is one player with an average of ${split} or higher and one player under ${split}, drawn at random. A ${split} average counts as ${split}+. If one side has more players, the extras are left out. Staff can move players between the + avg and − avg pools before the name draw so the two sides match. Your average is saved when you sign up.${wheel}${extra}`;
   }
   return `Singles, single elimination, seeded by average with the highest first. If the field is not a power of two, the top seeds get a bye. Your average is saved when you sign up.${extra}`;
 }
@@ -4120,6 +4120,85 @@ function tournamentThirdPlaceForm(t) {
     ${saved ? `<form class="mt-2" data-form="TOURNAMENTTHIRDCLEAR" data-id="${t.id}"><button class="btn-ghost" type="submit">CLEAR 3RD PLACE</button></form>` : ""}
   </div>`;
 }
+function avgPoolMoveLabel(side) {
+  return side === "high" ? "MOVE TO \u2212 AVG" : "MOVE TO + AVG";
+}
+function avgPoolPlayerRow(player, side) {
+  const to = side === "high" ? "low" : "high";
+  const moved =
+    player.signedUpBand && player.signedUpBand !== side
+      ? ` <span class="text-muted">signed up ${player.signedUpBand === "high" ? "+" : "\u2212"}</span>`
+      : "";
+  return `<div class="avg-pool-player" data-pool-player data-user-id="${Number(player.userId)}">
+    <span class="min-w-0">${esc(player.name)} <span class="text-muted">avg ${esc(player.avg)}</span>${moved}</span>
+    <button class="btn-ghost" type="button" data-act="move-avg-pool" data-to="${to}">${avgPoolMoveLabel(side)}</button>
+  </div>`;
+}
+function syncAvgPools(board) {
+  if (!board) return;
+  const counts = {};
+  for (const side of ["high", "low"]) {
+    const list = board.querySelector(`[data-pool-list="${side}"]`);
+    const rows = list ? [...list.querySelectorAll("[data-pool-player]")] : [];
+    counts[side] = rows.length;
+    const countNode = board.querySelector(`[data-pool-count="${side}"]`);
+    if (countNode) countNode.textContent = String(rows.length);
+    if (!list) continue;
+    const empty = list.querySelector("[data-pool-empty]");
+    if (!rows.length && !empty) {
+      const note = document.createElement("p");
+      note.className = "text-sm text-muted";
+      note.dataset.poolEmpty = "";
+      note.textContent = "No one in this pool.";
+      list.appendChild(note);
+    } else if (rows.length && empty) empty.remove();
+  }
+  const even = board.querySelector("[data-pool-even]");
+  if (!even) return;
+  const match = counts.high === counts.low;
+  even.textContent = match ? "The pools are even." : "The pools are not even yet.";
+  even.classList.toggle("gold", match);
+  even.classList.toggle("text-muted", !match);
+}
+function tournamentAvgPools(t) {
+  const pools = t.avgPools;
+  if (!t.canManage || !pools) return "";
+  const intro =
+    pools.kind === "draw"
+      ? "Move players between the + avg and \u2212 avg pools so the two sides match before the name draw. A player stays in one pool. Draw on the wheel uses these pools."
+      : "Move players between the + avg and \u2212 avg pools so the two pools match. Each pool has its own bracket. A player stays in one pool.";
+  const column = (side, label, people) => {
+    const rows = (people || []).map((player) => (pools.editable ? avgPoolPlayerRow(player, side) : `<div class="avg-pool-player"><span class="min-w-0">${esc(player.name)} <span class="text-muted">avg ${esc(player.avg)}</span></span></div>`)).join("");
+    return `<div class="avg-pool-col">
+      <h3 class="text-xs font-bold tracking-widest gold">${label} · <span data-pool-count="${side}">${(people || []).length}</span></h3>
+      <p class="text-xs text-muted">${esc(side === "high" ? pools.highLabel : pools.lowLabel)}</p>
+      <div data-pool-list="${side}">${rows || `<p class="text-sm text-muted" data-pool-empty>No one in this pool.</p>`}</div>
+    </div>`;
+  };
+  const board = `<div data-avg-pools>
+    <p class="mt-1 text-sm text-muted">${esc(intro)}</p>
+    <p class="mt-2 text-sm ${pools.even ? "gold" : "text-muted"}" data-pool-even>${pools.even ? "The pools are even." : "The pools are not even yet."}</p>
+    ${pools.lockedReason ? `<p class="mt-2 text-sm text-muted">${esc(pools.lockedReason)}</p>` : ""}
+    <div class="avg-pool-board mt-3">
+      ${column("high", "+ avg", pools.high)}
+      ${column("low", "\u2212 avg", pools.low)}
+    </div>
+  </div>`;
+  if (!pools.editable) return `<div class="mt-5 border-t border-white/10 pt-4"><h3 class="text-base font-bold">Average pools</h3>${board}</div>`;
+  if (!(pools.high || []).length && !(pools.low || []).length) {
+    return `<div class="mt-5 border-t border-white/10 pt-4">
+      <h3 class="text-base font-bold">Average pools</h3>
+      <p class="mt-1 text-sm text-muted">${esc(intro)} No one has signed up yet.</p>
+    </div>`;
+  }
+  return `<div class="mt-5 border-t border-white/10 pt-4">
+    <h3 class="text-base font-bold">Average pools</h3>
+    <form class="mt-3 space-y-3" data-form="TOURNAMENTPOOLS" data-id="${t.id}">
+      ${board}
+      <button class="btn-gold" type="submit">SAVE POOLS</button>
+    </form>
+  </div>`;
+}
 function tournamentStaffPanel(t) {
   if (!t.canManage) return "";
   const editing = Number(state.editingTournamentId) === Number(t.id);
@@ -4153,6 +4232,7 @@ function tournamentStaffPanel(t) {
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
     ${edit}
+    ${tournamentAvgPools(t)}
     ${tournamentThirdPlaceForm(t)}`,
     "mt-6"
   );
@@ -4354,7 +4434,7 @@ function tournamentPoolList(t) {
 function tournamentPoolNote(t) {
   if (!t.viewer || t.format !== "doubles" || t.partnerMode !== "random") return "";
   const split = t.avgSplit ?? 50;
-  return `<p class="mt-2 text-sm">Your profile average is ${esc(t.viewer.avg)} (${esc(t.viewer.bandLabel)}). ${esc(split)}+ is an average of ${esc(split)} or higher. The side is locked in when you sign up.</p>`;
+  return `<p class="mt-2 text-sm">Your profile average is ${esc(t.viewer.avg)} (${esc(t.viewer.bandLabel)}). ${esc(split)}+ is an average of ${esc(split)} or higher. That side is set when you sign up. Staff can move players between the pools before the name draw.</p>`;
 }
 async function pageTournaments() {
   const d = await api("/api/tournaments");
@@ -4953,6 +5033,21 @@ document.addEventListener("click", async (e) => {
     }
     state.deskFolds = { ...(state.deskFolds || {}), "fixture-notices": true };
     render();
+    return;
+  }
+  const movePool = e.target.closest("[data-act=move-avg-pool]");
+  if (movePool) {
+    e.preventDefault();
+    const row = movePool.closest("[data-pool-player]");
+    const board = movePool.closest("[data-avg-pools]");
+    const to = movePool.dataset.to === "low" ? "low" : "high";
+    const list = board?.querySelector(`[data-pool-list="${to}"]`);
+    if (!row || !list) return;
+    const next = to === "high" ? "low" : "high";
+    movePool.dataset.to = next;
+    movePool.textContent = avgPoolMoveLabel(to);
+    list.appendChild(row);
+    syncAvgPools(board);
     return;
   }
   const addTeam = e.target.closest("[data-act=add-team-card]");
@@ -5774,6 +5869,25 @@ document.addEventListener("submit", async (e) => {
       await api(`/api/admin/tournaments/${form.dataset.id}/teams`, { method: "POST", body: JSON.stringify({ teams }) });
       state.error = "";
       state.notice = kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : "Teams saved.";
+      render();
+    } else if (kind === "TOURNAMENTPOOLS") {
+      const board = form.querySelector("[data-avg-pools]");
+      const ids = (side) => [...board.querySelectorAll(`[data-pool-list="${side}"] [data-pool-player]`)].map((row) => Number(row.dataset.userId));
+      const saved = await api(`/api/admin/tournaments/${form.dataset.id}/pools`, {
+        method: "POST",
+        body: JSON.stringify({ high: ids("high"), low: ids("low") }),
+      });
+      const pools = saved.tournament?.avgPools;
+      const again = !saved.needsRedraw
+        ? ""
+        : pools?.kind === "draw"
+          ? " Draw on the wheel again so the name draw uses these pools."
+          : saved.tournament?.status === "brackets"
+            ? " Regenerate the bracket so it uses these pools."
+            : " Make even teams again so the new pools are used.";
+      const cleared = saved.pairsCleared ? " A pair that crossed pools was cleared." : "";
+      state.error = "";
+      state.notice = `${pools?.even ? "Pools saved. They are even." : "Pools saved."}${again}${cleared}`;
       render();
     } else if (kind === "TOURNAMENTBALANCE" || kind === "TOURNAMENTDRAW") {
       state.wheelHold = true;

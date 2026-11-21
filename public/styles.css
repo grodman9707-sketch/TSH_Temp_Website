@@ -1827,6 +1827,37 @@ input, select, textarea {
     grid-template-columns: 1fr 1fr;
   }
 }
+.avg-pool-board {
+  display: grid;
+  gap: 0.75rem;
+}
+@media (min-width: 720px) {
+  .avg-pool-board {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.avg-pool-col {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.22);
+}
+.avg-pool-player {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.avg-pool-player .btn-ghost {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.68rem;
+}
 .wheel-grid {
   display: grid;
   gap: 1.35rem 1rem;

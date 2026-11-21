@@ -12,8 +12,10 @@ import {
   bracketPlayerName,
   buildSingleElim,
   createTournament,
+  avgPoolKind,
   drawTournamentPartners,
   generateTournamentBracket,
+  saveAvgPools,
   pairEven,
   pairRandomMixed,
   parseStartsAt,
@@ -66,6 +68,17 @@ check(
     paired.unpaired[0].userId === 5
 );
 check("a custom cutoff moves the 50 line", avgBand(60, 70) === "low" && avgBand(70, 70) === "high");
+const movedSide = pairRandomMixed(
+  [
+    { userId: 1, avg: 80, band: "low" },
+    { userId: 2, avg: 30, band: "high" },
+  ],
+  identityRng
+);
+check(
+  "a saved pool beats the average when the name draw pairs players",
+  movedSide.pairs.length === 1 && movedSide.pairs[0][0].userId === 2 && movedSide.pairs[0][1].userId === 1 && movedSide.unpaired.length === 0
+);
 const evened = pairEven([
   { userId: 1, avg: 90 },
   { userId: 2, avg: 70 },
@@ -123,7 +136,16 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=93") && html.includes("styles.css?v=93"));
+check("cache bust covers the new tab", html.includes("app.js?v=95") && html.includes("styles.css?v=95"));
+check(
+  "staff can edit the + and − average pools",
+  appJs.includes('data-form="TOURNAMENTPOOLS"') &&
+    appJs.includes("MOVE TO") &&
+    appJs.includes("The pools are even.") &&
+    appJs.includes("data-pool-count") &&
+    appJs.includes("Average pools") &&
+    css.includes(".avg-pool-board")
+);
 check("staff can build even teams and fill blank seats", appJs.includes("MAKE EVEN TEAMS") && appJs.includes("ADD BLANK TEAM") && appJs.includes("Blank seat"));
 check("staff can split a tournament into pools", appJs.includes('name="poolMode"') && appJs.includes("Split by division"));
 check(
@@ -533,6 +555,109 @@ async function register(port, name, avg) {
 function teamBands(team) {
   return (team.players || []).map((player) => player.band).sort();
 }
+
+function poolUser(id, name, avg) {
+  return { id, name, avg };
+}
+const poolDb = {
+  users: [poolUser(1, "Nell High", 80), poolUser(2, "Omar High", 75), poolUser(3, "Pia High", 70), poolUser(4, "Quin Low", 40)],
+  tournaments: [],
+};
+const poolCup = createTournament(poolDb, { id: 1 }, {
+  title: "Pool Draw",
+  format: "doubles",
+  partnerMode: "random",
+  nameWheel: true,
+  startsAt: "2026-12-01T19:00",
+  tz: "UTC",
+});
+const poolId = poolCup.tournament.id;
+check("a random doubles field can edit the two average pools", avgPoolKind(poolCup.tournament) === "draw");
+for (const user of poolDb.users) signupTournament(poolDb, poolId, user);
+check("a player cannot sit in both pools", /one pool/i.test(saveAvgPools(poolDb, poolId, { high: [1, 2], low: [2, 3, 4] }).error || ""));
+check("an unknown player is rejected", /unknown player/i.test(saveAvgPools(poolDb, poolId, { high: [1, 2], low: [3, 999] }).error || ""));
+poolDb.users.push(poolUser(9, "Outsider", 55));
+check("a player who is not signed up is rejected", /not in this tournament/i.test(saveAvgPools(poolDb, poolId, { high: [1, 9], low: [2, 3, 4] }).error || ""));
+poolDb.users.pop();
+check("a duplicate in one pool is rejected", /one pool/i.test(saveAvgPools(poolDb, poolId, { high: [1, 1], low: [2, 3, 4] }).error || ""));
+check("every signed-up player needs a pool", /every signed-up player/i.test(saveAvgPools(poolDb, poolId, { high: [1], low: [4] }).error || ""));
+const poolSaved = saveAvgPools(poolDb, poolId, { high: [1, 3], low: [2, 4] });
+const editedPoolView = publicTournament(poolDb, poolSaved.tournament, null, { detail: true, canManage: true });
+check(
+  "staff can move a high average into the minus pool and see the counts",
+  poolSaved.status === 200 &&
+    poolSaved.tournament.entries.find((entry) => entry.userId === 2).avgPool === "low" &&
+    editedPoolView.avgPools.high.length === 2 &&
+    editedPoolView.avgPools.low.length === 2 &&
+    editedPoolView.avgPools.even === true &&
+    editedPoolView.bandCounts.high === 2 &&
+    editedPoolView.bandCounts.low === 2
+);
+const poolDrawn = drawTournamentPartners(poolDb, poolId, { rng: identityRng });
+const poolOf = new Map(poolDrawn.tournament.entries.map((entry) => [entry.userId, entry.avgPool]));
+const poolTeams = poolDrawn.tournament.manualTeams || [];
+const lowWheel = (poolDrawn.tournament.wheelReveal?.wheels || []).find((wheel) => String(wheel.id).endsWith(":low"));
+check(
+  "the name draw uses the edited pools",
+  poolDrawn.status === 200 &&
+    poolTeams.length === 2 &&
+    poolTeams.every((team) => team.playerIds.some((id) => poolOf.get(id) === "high") && team.playerIds.some((id) => poolOf.get(id) === "low")) &&
+    (lowWheel?.players || []).some((player) => player.userId === 2)
+);
+const redrawnPools = saveAvgPools(poolDb, poolId, { high: [1, 2], low: [3, 4] });
+const redrawn = drawTournamentPartners(poolDb, poolId, { rng: identityRng });
+const redrawPool = new Map(redrawn.tournament.entries.map((entry) => [entry.userId, entry.avgPool]));
+check(
+  "pools can be changed and drawn again before a result",
+  redrawnPools.status === 200 &&
+    redrawnPools.needsRedraw === true &&
+    redrawn.status === 200 &&
+    redrawPool.get(2) === "high" &&
+    (redrawn.tournament.manualTeams || []).every((team) => team.playerIds.some((id) => redrawPool.get(id) === "high") && team.playerIds.some((id) => redrawPool.get(id) === "low"))
+);
+const poolBracket = generateTournamentBracket(poolDb, poolId, { rng: identityRng });
+const poolFinal = poolBracket.tournament?.bracket?.rounds?.at(-1)?.matches?.[0];
+const poolWin = recordTournamentResult(poolDb, poolId, poolFinal?.id, { winnerTeamId: poolFinal?.teamAId, scoreA: 2, scoreB: 0 });
+const poolLocked = saveAvgPools(poolDb, poolId, { high: [1, 4], low: [2, 3] });
+check("pools lock after a result is saved", poolWin.status === 200 && poolLocked.status === 400 && /cannot be changed/i.test(poolLocked.error || ""));
+const plainDb = { users: [], tournaments: [] };
+const plain = createTournament(plainDb, { id: 1 }, { title: "Singles", format: "singles", startsAt: "2026-12-01T19:00", tz: "UTC" });
+check("a singles field without average pools cannot be edited this way", saveAvgPools(plainDb, plain.tournament.id, { high: [], low: [] }).status === 400);
+
+const splitDb = {
+  users: [
+    poolUser(1, "Val 90", 90),
+    poolUser(2, "Wes 80", 80),
+    poolUser(3, "Xan 70", 70),
+    poolUser(4, "Yen 50", 50),
+    poolUser(5, "Zed 40", 40),
+    poolUser(6, "Amy 30", 30),
+  ],
+  tournaments: [],
+};
+const splitCup = createTournament(splitDb, { id: 1 }, {
+  title: "Split Pools",
+  format: "doubles",
+  partnerMode: "even",
+  poolMode: "avg",
+  avgSplit: 60,
+  startsAt: "2026-12-02T19:00",
+  tz: "UTC",
+});
+for (const user of splitDb.users) signupTournament(splitDb, splitCup.tournament.id, user);
+const splitSaved = saveAvgPools(splitDb, splitCup.tournament.id, { high: [1, 2], low: [3, 4, 5, 6] });
+const splitBracket = generateTournamentBracket(splitDb, splitCup.tournament.id, { rng: identityRng });
+const splitDraws = splitBracket.tournament?.draws || [];
+const lowDraw = splitDraws.find((draw) => draw.poolId === "low");
+check(
+  "average-pool brackets follow a player moved across the cutoff",
+  splitSaved.status === 200 &&
+    splitSaved.tournament.entries.find((entry) => entry.userId === 3).poolId === "low" &&
+    avgPoolKind(splitCup.tournament) === "bracket" &&
+    splitBracket.status === 200 &&
+    lowDraw?.teams?.some((team) => team.playerIds.includes(3)) &&
+    splitDraws.filter((draw) => draw.poolId === "high").every((draw) => draw.teams.every((team) => !team.playerIds.includes(3)))
+);
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-tournaments-"));
 const port = 21000 + Math.floor(Math.random() * 2000);
@@ -1204,6 +1329,80 @@ try {
     "an opted-in name wheel is on the tournament",
     wheelPage.status === 200 && wheelPage.data.tournament.nameWheel === true && Array.isArray(wheelPage.data.tournament.wheel?.players)
   );
+  const guestPools = await api(port, `/api/admin/tournaments/${ahead.data.tournament.id}/pools`, {
+    method: "POST",
+    body: { high: [], low: [] },
+  });
+  check("guests cannot edit average pools", guestPools.status === 401);
+  const playerPools = await api(port, `/api/admin/tournaments/${ahead.data.tournament.id}/pools`, {
+    method: "POST",
+    token: playerTok,
+    body: { high: [], low: [] },
+  });
+  check("players cannot edit average pools", playerPools.status === 403);
+  const httpPool = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "HTTP Pools", format: "doubles", partnerMode: "random", nameWheel: true, startsAt: "2026-12-28T19:00", tz: "UTC" },
+  });
+  const httpPoolId = httpPool.data.tournament.id;
+  const httpField = [];
+  for (const [name, avg] of [
+    ["Ada 80", 80],
+    ["Bea 70", 70],
+    ["Cal 40", 40],
+    ["Dee 30", 30],
+  ]) {
+    const person = await register(port, name, avg);
+    httpField.push({ name, id: person.data.user.id });
+    await api(port, `/api/tournaments/${httpPoolId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const ada = httpField.find((person) => person.name === "Ada 80");
+  const bea = httpField.find((person) => person.name === "Bea 70");
+  const cal = httpField.find((person) => person.name === "Cal 40");
+  const dee = httpField.find((person) => person.name === "Dee 30");
+  const httpMoved = await api(port, `/api/admin/tournaments/${httpPoolId}/pools`, {
+    method: "POST",
+    token: owner,
+    body: { high: [ada.id, cal.id], low: [bea.id, dee.id] },
+  });
+  const httpRead = await api(port, `/api/tournaments/${httpPoolId}`, { token: owner });
+  const httpHigh = (httpRead.data.tournament.avgPools?.high || []).map((player) => player.userId).sort((a, b) => a - b);
+  const httpDraw = await api(port, `/api/admin/tournaments/${httpPoolId}/teams/draw`, { method: "POST", token: owner, body: {} });
+  const httpPoolOf = new Map((httpDraw.data.tournament.entries || []).map((entry) => [entry.userId, entry.band]));
+  const httpCards = httpDraw.data.tournament.teamCards || [];
+  check(
+    "the pools API saves a move and the next name draw uses it",
+    httpMoved.status === 200 &&
+      httpMoved.data.tournament.avgPools.even === true &&
+      httpHigh.join(",") === [ada.id, cal.id].sort((a, b) => a - b).join(",") &&
+      httpDraw.status === 200 &&
+      httpCards.length === 2 &&
+      httpCards.every((card) => {
+        const bands = (card.playerIds || []).map((id) => httpPoolOf.get(id));
+        return bands.includes("high") && bands.includes("low");
+      }) &&
+      httpPoolOf.get(bea.id) === "low" &&
+      httpPoolOf.get(cal.id) === "high"
+  );
+  const httpBoth = await api(port, `/api/admin/tournaments/${httpPoolId}/pools`, {
+    method: "POST",
+    token: owner,
+    body: { high: [ada.id, bea.id], low: [bea.id, cal.id, dee.id] },
+  });
+  const httpUnknown = await api(port, `/api/admin/tournaments/${httpPoolId}/pools`, {
+    method: "POST",
+    token: owner,
+    body: { high: [ada.id, bea.id], low: [cal.id, 999999] },
+  });
+  check(
+    "the pools API rejects a player in both pools and an unknown player",
+    httpBoth.status === 400 &&
+      /one pool/i.test(httpBoth.data.error || "") &&
+      httpUnknown.status === 400 &&
+      /unknown player/i.test(httpUnknown.data.error || "")
+  );
+
   const news = await api(port, "/api/announcements");
   const postedNews = (news.data.announcements || []).find((item) => item.title === "New tournament: Bubble Cup");
   check(

@@ -63,6 +63,7 @@ import {
   publicTournament,
   recordTournamentResult,
   requestPartner,
+  saveAvgPools,
   saveTournamentTeams,
   setTournamentThirdPlace,
   signupTournament,
@@ -2803,6 +2804,8 @@ function respondTournament(res, db, user, result, staffEvent) {
     tournament: publicTournament(db, result.tournament, user, { detail: true, canManage: canManageTournament(user, result.tournament) }),
   };
   if (result.unpairedCount != null) payload.unpairedCount = result.unpairedCount;
+  if (result.needsRedraw != null) payload.needsRedraw = Boolean(result.needsRedraw);
+  if (result.pairsCleared != null) payload.pairsCleared = Boolean(result.pairsCleared);
   return json(res, 200, payload);
 }
 
@@ -4907,6 +4910,15 @@ async function handleApi(req, res, url) {
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "delete_tournament",
         summary: `Removed tournament “${tournamentTitle(result.tournament)}”`,
+      });
+    }
+    const poolsMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/pools$/);
+    if (method === "POST" && poolsMatch) {
+      if (denyTournamentManager(res, db, user, poolsMatch[1])) return;
+      const result = saveAvgPools(db, poolsMatch[1], body);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_pools",
+        summary: `Updated average pools for “${tournamentTitle(result.tournament)}”`,
       });
     }
     const drawMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/teams\/draw$/);
