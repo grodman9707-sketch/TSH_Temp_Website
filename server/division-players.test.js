@@ -198,7 +198,7 @@ try {
     "the directory stays one column on a phone and two on a wider screen",
     css.includes(".division-player-grid") && css.includes("grid-template-columns: 1fr;") && css.includes("@media (min-width: 640px)")
   );
-  check("cache bust covers the players tab", html.includes("app.js?v=97") && html.includes("styles.css?v=97"));
+  check("cache bust covers the players tab", html.includes("app.js?v=98") && html.includes("styles.css?v=98"));
 } finally {
   child.kill("SIGTERM");
 }
