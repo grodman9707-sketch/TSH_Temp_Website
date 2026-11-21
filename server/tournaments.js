@@ -120,11 +120,14 @@ function entrantView(db, entry, tournament) {
   const base = playerView(user);
   const avg = entryAvg(db, entry);
   const split = tournament ? cutoffOf(tournament) : AVG_SPLIT;
-  const band = avgBand(avg, split);
+  const band = assignedBand(tournament, entry, avg);
   const leagueIds = Array.isArray(entry.leagueIds) ? [...new Set(entry.leagueIds.map(Number).filter(Boolean))] : userLeagueIds(user);
   let poolId = entry.poolId;
-  if ((poolId == null || poolId === "") && tournament) poolId = poolIdFor(tournament, { avg, leagueIds });
-  if (!poolId) poolId = !tournament || (tournament.poolMode || "none") === "none" ? "all" : "";
+  if ((tournament?.poolMode || "none") === "avg") poolId = band;
+  else {
+    if ((poolId == null || poolId === "") && tournament) poolId = poolIdFor(tournament, { avg, leagueIds });
+    if (!poolId) poolId = !tournament || (tournament.poolMode || "none") === "none" ? "all" : "";
+  }
   const partnerId = entry.confirmedPartnerUserId ? Number(entry.confirmedPartnerUserId) : null;
   const requestId = entry.partnerRequestUserId ? Number(entry.partnerRequestUserId) : null;
   const partner = partnerId ? playerView(findUser(db, partnerId)) : null;
@@ -306,13 +309,18 @@ function downstreamHasComplete(rounds, matchId) {
   return downstreamHasComplete(rounds, next.id);
 }
 
+function sideOf(player, split) {
+  if (player?.band === "high" || player?.band === "low") return player.band;
+  return avgBand(player?.avg, split);
+}
+
 export function pairRandomMixed(players, rng = Math.random, split = AVG_SPLIT) {
   const high = shuffle(
-    (players || []).filter((p) => avgBand(p.avg, split) === "high"),
+    (players || []).filter((p) => sideOf(p, split) === "high"),
     rng
   );
   const low = shuffle(
-    (players || []).filter((p) => avgBand(p.avg, split) === "low"),
+    (players || []).filter((p) => sideOf(p, split) === "low"),
     rng
   );
   const count = Math.min(high.length, low.length);
@@ -422,21 +430,46 @@ function poolNameOf(tournament, poolId) {
   return poolDefs(tournament).find((pool) => pool.id === poolId)?.name || "";
 }
 
+// "draw" is the random-doubles name draw: one wheel for + avg and one for − avg.
+// "bracket" is a field split into those two pools, each with its own bracket.
+export function avgPoolKind(tournament) {
+  const mode = tournament?.poolMode || "none";
+  if (mode === "division") return "";
+  if (mode === "avg") return "bracket";
+  if (tournament?.format === "doubles" && tournament?.partnerMode === "random") return "draw";
+  return "";
+}
+
+function assignedBand(tournament, entry, avg) {
+  if (entry?.avgPool === "high" || entry?.avgPool === "low") return entry.avgPool;
+  if ((tournament?.poolMode || "none") === "avg" && (entry?.poolId === "high" || entry?.poolId === "low")) return entry.poolId;
+  return avgBand(avg, tournament ? cutoffOf(tournament) : AVG_SPLIT);
+}
+
+function poolsLockedReason(tournament) {
+  if (tournament?.status === "complete") return "This tournament is finished, so the pools cannot be changed";
+  if (tournamentHasResults(tournament)) return "A match already has a result, so the pools cannot be changed";
+  return "";
+}
+
 function playersFromEntries(db, tournament) {
-  const split = cutoffOf(tournament);
   return (tournament.entries || []).map((entry) => {
     const user = findUser(db, entry.userId);
     const view = playerView(user);
     const avg = entryAvg(db, entry);
     const leagueIds = Array.isArray(entry.leagueIds) ? [...new Set(entry.leagueIds.map(Number).filter(Boolean))] : userLeagueIds(user);
+    const band = assignedBand(tournament, entry, avg);
     let poolId = entry.poolId;
-    if (poolId == null || poolId === "") poolId = poolIdFor(tournament, { avg, leagueIds });
-    if (!poolId) poolId = (tournament.poolMode || "none") === "none" ? "all" : "";
+    if ((tournament.poolMode || "none") === "avg") poolId = band;
+    else {
+      if (poolId == null || poolId === "") poolId = poolIdFor(tournament, { avg, leagueIds });
+      if (!poolId) poolId = (tournament.poolMode || "none") === "none" ? "all" : "";
+    }
     return {
       userId: Number(entry.userId),
       name: view.name,
       avg,
-      band: avgBand(avg, split),
+      band,
       leagueIds,
       poolId,
       entry,
@@ -1107,6 +1140,70 @@ export function saveTournamentTeams(db, id, body) {
   return { status: 200, tournament, unpairedCount: composed.unpaired.length };
 }
 
+function readPoolIds(raw) {
+  if (!Array.isArray(raw)) return { error: "Send the players in each pool" };
+  const ids = [];
+  const seen = new Set();
+  for (const value of raw) {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) return { error: "Unknown player" };
+    if (seen.has(id)) return { error: "A player can only be in one pool" };
+    seen.add(id);
+    ids.push(id);
+  }
+  return { ids };
+}
+
+export function saveAvgPools(db, id, body) {
+  const tournament = findTournament(db, id);
+  if (!tournament) return fail(404, "Tournament not found");
+  if (!avgPoolKind(tournament)) return fail(400, "This tournament does not split players into + and − average pools");
+  const locked = poolsLockedReason(tournament);
+  if (locked) return fail(400, locked);
+  const high = readPoolIds(body?.high ?? body?.plus);
+  if (high.error) return fail(400, high.error);
+  const low = readPoolIds(body?.low ?? body?.minus);
+  if (low.error) return fail(400, low.error);
+  const lowSet = new Set(low.ids);
+  if (high.ids.some((playerId) => lowSet.has(playerId))) return fail(400, "A player can only be in one pool");
+  const entryIds = new Set((tournament.entries || []).map((entry) => Number(entry.userId)));
+  const assigned = new Set([...high.ids, ...low.ids]);
+  for (const playerId of assigned) {
+    if (entryIds.has(playerId)) continue;
+    return fail(400, findUser(db, playerId) ? "That player is not in this tournament" : "Unknown player");
+  }
+  for (const playerId of entryIds) {
+    if (!assigned.has(playerId)) return fail(400, "Every signed-up player needs a pool");
+  }
+  const highSet = new Set(high.ids);
+  for (const entry of tournament.entries || []) {
+    const band = highSet.has(Number(entry.userId)) ? "high" : "low";
+    entry.avgPool = band;
+    if ((tournament.poolMode || "none") === "avg") entry.poolId = band;
+  }
+  let pairsCleared = false;
+  for (const entry of tournament.entries || []) {
+    const partnerId = Number(entry.confirmedPartnerUserId);
+    const requestId = Number(entry.partnerRequestUserId);
+    const partner = partnerId ? entryOf(tournament, partnerId) : null;
+    if (partner && entry.avgPool !== partner.avgPool) {
+      entry.confirmedPartnerUserId = null;
+      if (Number(partner.confirmedPartnerUserId) === Number(entry.userId)) partner.confirmedPartnerUserId = null;
+      pairsCleared = true;
+    }
+    const requested = requestId ? entryOf(tournament, requestId) : null;
+    if (requested && entry.avgPool !== requested.avgPool) entry.partnerRequestUserId = null;
+  }
+  const hadDraw = Boolean(
+    drawList(tournament).length ||
+      (tournament.manualTeams || []).some((team) => (team.playerIds || []).length) ||
+      (tournament.wheelReveal && (tournament.wheelReveal.order || []).length)
+  );
+  tournament.manualTeams = [];
+  tournament.wheelReveal = null;
+  return { status: 200, tournament, needsRedraw: hadDraw, pairsCleared };
+}
+
 function scrubWheelReveal(tournament, userId) {
   const reveal = tournament.wheelReveal;
   if (!reveal) return;
@@ -1622,6 +1719,35 @@ export function setTournamentThirdPlace(db, id, body) {
   return { status: 200, tournament };
 }
 
+function presentAvgPools(db, tournament) {
+  const kind = avgPoolKind(tournament);
+  if (!kind) return null;
+  const split = cutoffOf(tournament);
+  const players = playersFromEntries(db, tournament)
+    .map((player) => ({
+      userId: player.userId,
+      name: player.name,
+      avg: player.avg,
+      band: player.band,
+      signedUpBand: avgBand(player.avg, split),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId);
+  const high = players.filter((player) => player.band === "high");
+  const low = players.filter((player) => player.band === "low");
+  const lockedReason = poolsLockedReason(tournament);
+  return {
+    kind,
+    editable: !lockedReason,
+    lockedReason,
+    split,
+    highLabel: bandLabel("high", split),
+    lowLabel: bandLabel("low", split),
+    even: high.length === low.length,
+    high,
+    low,
+  };
+}
+
 export function publicTournament(db, tournament, viewer, { detail = false, canManage = false } = {}) {
   const entries = Array.isArray(tournament.entries) ? tournament.entries : [];
   const meId = viewer ? Number(viewer.id) : null;
@@ -1718,6 +1844,7 @@ export function publicTournament(db, tournament, viewer, { detail = false, canMa
     partnerChoices,
     me: meView ? { ...meView, incoming } : null,
     teamsLocked: tournamentHasResults(tournament),
+    avgPools: canManage ? presentAvgPools(db, tournament) : null,
     teamEdits: (tournament.manualTeams || []).some((team) => (team.playerIds || []).length),
     teamCards: editable ? editorCards(db, tournament) : [],
     teamPlayers: editable ? teamPlayerOptions(db, tournament) : [],
