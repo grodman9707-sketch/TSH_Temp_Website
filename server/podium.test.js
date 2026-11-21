@@ -1,4 +1,4 @@
-// Winners podium: who finished 1st, 2nd, and 3rd. The home page does not render this.
+// Winners podium: who finished 1st, 2nd, and 3rd. Home shows that podium for 48 hours.
 // Run: `node server/podium.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -186,17 +186,15 @@ const splitDb = {
 };
 const splitNow = Date.parse("2026-11-03T20:00:00.000Z");
 const split = homePodium(splitDb, splitNow);
-check("the most recently finished tournament is first", split.events[0]?.title === "Split Open" && split.events[0].finishedAt === "2026-11-02T20:00:00.000Z");
-check("an older finished tournament stays in the list", split.events[1]?.title === "Older Cup");
-check("an in-progress event with one winner is listed after finished events", split.events[2]?.title === "Still Going" && split.events[2].boards.length === 1 && split.events[2].boards[0].poolName === "Pool A");
+check(
+  "the most recently finished tournament is the home podium",
+  split.events.length === 1 && split.events[0]?.title === "Split Open" && split.events[0].finishedAt === "2026-11-02T20:00:00.000Z"
+);
+check("an older finish at 48 hours is left off the home podium", split.events.every((event) => event.title !== "Older Cup"));
+check("an unfinished tournament is not a home winners podium", split.events.every((event) => event.title !== "Still Going"));
 check("signup with no winner is left off the podium", split.events.every((event) => event.title !== "Signup Only"));
 const aged = homePodium(splitDb, Date.parse("2026-11-06T21:00:00.000Z"));
-check(
-  "winners leave the home page after 3 days",
-  PODIUM_HOME_MS === 3 * 24 * 60 * 60 * 1000 &&
-    aged.events.every((event) => event.title !== "Split Open" && event.title !== "Older Cup") &&
-    aged.events.some((event) => event.title === "Still Going")
-);
+check("winners leave the home page after 48 hours", PODIUM_HOME_MS === 48 * 60 * 60 * 1000 && aged.events.length === 0);
 const boards = split.events[0].boards;
 check(
   "each finished pool keeps its own podium",
@@ -260,12 +258,13 @@ const played = homePodium(memory, Date.parse("2030-01-01T12:00:00.000Z"));
 const featured = played.events[0];
 const namesOf = (place) => (featured.boards[0].places.find((item) => item.place === place)?.players || []).map((player) => player.name);
 check("a played 4-player final records a finish time", Boolean(winterCup.completedAt) && winterCup.status === "complete");
-check("home podium features the later finish, not the later signup", featured?.title === "Winter Cup" && played.events[1]?.title === "Autumn Cup");
+check("home podium features the later finish, not the later signup", featured?.title === "Winter Cup" && played.events.length === 1);
 check(
   "1st and 2nd come from the final and 3rd stays open",
   namesOf(1)[0] === "Ada Archer" && namesOf(2)[0] === "Bea Birch" && featured.boards[0].places[2].players.length === 0 && featured.boards[0].places[2].note === "No third-place match"
 );
-const autumnEvent = played.events.find((event) => event.title === "Autumn Cup");
+const autumnOnly = homePodium(memory, Date.parse(cup.completedAt) + 60 * 60 * 1000);
+const autumnEvent = autumnOnly.events.find((event) => event.title === "Autumn Cup");
 const autumnPlaces = autumnEvent.boards[0].places;
 check(
   "a 3-player bracket names 1st, 2nd, and the semifinal loser as 3rd",
@@ -449,15 +448,78 @@ check(
 const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
 check(
-  "the home page does not render tournament winners",
-  !appJs.includes('id="tournament-winners"') &&
-    !appJs.includes("TOURNAMENT WINNERS") &&
-    !appJs.includes("homePodium") &&
-    !appJs.includes("/api/podium") &&
+  "the home page renders the winners podium only while the window is open",
+  appJs.includes('id="tournament-winners"') &&
+    appJs.includes("function homePodium") &&
+    appJs.includes('api("/api/podium")') &&
+    appJs.includes('if (!events.length) return "";') &&
     !appJs.includes("Winners will appear here") &&
-    !css.includes(".home-podium") &&
-    !css.includes(".podium-congrats") &&
-    !css.includes(".podium-place-1")
+    appJs.includes("Winners stay on this page for 48 hours.") &&
+    appJs.includes("data-podium-confetti") &&
+    css.includes(".home-podium") &&
+    css.includes(".podium-congrats") &&
+    css.includes(".podium-place-1") &&
+    css.includes(".podium-place-1 .podium-block") &&
+    css.includes("height: 8.5rem") &&
+    css.includes("prefers-reduced-motion") &&
+    css.includes(".podium-fx")
+);
+const windowBase = Date.parse("2026-11-01T00:00:00.000Z");
+const windowUsers = [{ id: 1, name: "Ada Archer" }, { id: 2, name: "Bea Birch" }];
+function windowCup(id, title, completedAt) {
+  return {
+    id,
+    title,
+    status: "complete",
+    completedAt,
+    teams: [
+      { id: "t1", playerIds: [1] },
+      { id: "t2", playerIds: [2] },
+    ],
+    bracket: playedFinal("t1", "t2"),
+  };
+}
+const windowDb = {
+  users: windowUsers,
+  tournaments: [
+    windowCup(1, "Window Cup", new Date(windowBase).toISOString()),
+    windowCup(2, "Later Cup", new Date(windowBase + 6 * 60 * 60 * 1000).toISOString()),
+    windowCup(3, "Undated Cup", undefined),
+  ],
+};
+delete windowDb.tournaments[2].completedAt;
+const freshWindow = homePodium(windowDb, windowBase + PODIUM_HOME_MS - 1);
+check(
+  "winners newer than 48 hours are included on the home podium",
+  freshWindow.events.length === 1 && freshWindow.events[0].title === "Later Cup" && freshWindow.events[0].finishedAt === windowDb.tournaments[1].completedAt
+);
+const replaced = homePodium(windowDb, windowBase + 7 * 60 * 60 * 1000);
+check(
+  "a newer tournament replaces an older one that is still inside 48 hours",
+  replaced.events.length === 1 && replaced.events[0].title === "Later Cup"
+);
+const exactWindow = homePodium(windowDb, windowBase + 6 * 60 * 60 * 1000 + PODIUM_HOME_MS);
+check("winners at 48 hours are excluded from the home podium", exactWindow.events.length === 0);
+const olderOnly = homePodium(
+  { users: windowUsers, tournaments: [windowDb.tournaments[0]] },
+  windowBase + PODIUM_HOME_MS - 1
+);
+check(
+  "the latest podium still inside 48 hours is the one that shows",
+  olderOnly.events.length === 1 && olderOnly.events[0].title === "Window Cup"
+);
+check(
+  "a finished tournament with no completion time stays off the home page",
+  homePodium({ users: windowUsers, tournaments: [windowDb.tournaments[2]] }, windowBase).events.length === 0
+);
+check(
+  "no qualifying winners means no home podium",
+  homePodium(windowDb, windowBase + 6 * 60 * 60 * 1000 + PODIUM_HOME_MS + 1).events.length === 0
+);
+check(
+  "48 hours is an absolute duration from the stored completion instant",
+  PODIUM_HOME_MS === 48 * 60 * 60 * 1000 &&
+    new Date(windowBase + PODIUM_HOME_MS).toISOString() === "2026-11-03T00:00:00.000Z"
 );
 check(
   "staff can name a 3rd-place pair without playing a third-place match",
