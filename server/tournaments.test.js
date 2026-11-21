@@ -16,6 +16,7 @@ import {
   drawTournamentPartners,
   generateTournamentBracket,
   saveAvgPools,
+  swapTournamentTeams,
   pairEven,
   pairRandomMixed,
   parseStartsAt,
@@ -136,7 +137,11 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=97") && html.includes("styles.css?v=97"));
+check("cache bust covers the new tab", html.includes("app.js?v=98") && html.includes("styles.css?v=98"));
+check(
+  "staff can switch teams on a live bracket",
+  appJs.includes('data-form="TOURNAMENTSWAP"') && appJs.includes("SWITCH TEAMS") && appJs.includes("Trade two teams' places")
+);
 check(
   "staff can edit the + and − average pools",
   appJs.includes('data-form="TOURNAMENTPOOLS"') &&
@@ -658,6 +663,130 @@ check(
     lowDraw?.teams?.some((team) => team.playerIds.includes(3)) &&
     splitDraws.filter((draw) => draw.poolId === "high").every((draw) => draw.teams.every((team) => !team.playerIds.includes(3)))
 );
+
+function slotOf(bracket, teamId) {
+  for (const match of bracket?.rounds?.[0]?.matches || []) {
+    if (match.teamAId === teamId) return `${match.id}:A`;
+    if (match.teamBId === teamId) return `${match.id}:B`;
+  }
+  return "";
+}
+
+const moveDb = {
+  users: [poolUser(1, "Ann One", 90), poolUser(2, "Bob Two", 70), poolUser(3, "Cal Three", 50), poolUser(4, "Dee Four", 30)],
+  tournaments: [],
+};
+const moveCup = createTournament(moveDb, { id: 1 }, {
+  title: "Move Cup",
+  format: "singles",
+  nameWheel: false,
+  startsAt: "2026-12-03T19:00",
+  tz: "UTC",
+});
+for (const user of moveDb.users) signupTournament(moveDb, moveCup.tournament.id, user);
+const moveDrawn = generateTournamentBracket(moveDb, moveCup.tournament.id, { rng: identityRng });
+const moveTeams = moveDrawn.tournament.teams;
+const moveTop = moveTeams.find((team) => team.seed === 1);
+const moveSecond = moveTeams.find((team) => team.seed === 2);
+const moveTopSlot = slotOf(moveDrawn.tournament.bracket, moveTop.id);
+const moveSecondSlot = slotOf(moveDrawn.tournament.bracket, moveSecond.id);
+const moved = swapTournamentTeams(moveDb, moveCup.tournament.id, { teamId: moveTop.id, withTeamId: moveSecond.id });
+check(
+  "staff can switch two teams in a live bracket without changing who they are",
+  moved.status === 200 &&
+    slotOf(moved.tournament.bracket, moveTop.id) === moveSecondSlot &&
+    slotOf(moved.tournament.bracket, moveSecond.id) === moveTopSlot &&
+    moved.tournament.teams.find((team) => team.id === moveTop.id).seed === 1 &&
+    moved.tournament.teams.find((team) => team.id === moveTop.id).playerIds.join(",") === String(moveTop.playerIds)
+);
+const sameTeam = swapTournamentTeams(moveDb, moveCup.tournament.id, { teamId: moveTop.id, withTeamId: moveTop.id });
+check("switching a team with itself is rejected", sameTeam.status === 400 && /two different teams/i.test(sameTeam.error || ""));
+const movePending = moved.tournament.bracket.rounds[0].matches.find((match) => match.status === "pending" && match.teamAId && match.teamBId);
+const moveWin = recordTournamentResult(moveDb, moveCup.tournament.id, movePending.id, { winnerTeamId: movePending.teamAId });
+const moveLocked = swapTournamentTeams(moveDb, moveCup.tournament.id, { teamId: moveTop.id, withTeamId: moveSecond.id });
+check("teams cannot be switched after a result is saved", moveWin.status === 200 && moveLocked.status === 400 && /cannot be moved/i.test(moveLocked.error || ""));
+
+const byeDb = {
+  users: [poolUser(1, "High Bye", 90), poolUser(2, "Mid Bye", 50), poolUser(3, "Low Bye", 20)],
+  tournaments: [],
+};
+const byeCup = createTournament(byeDb, { id: 1 }, {
+  title: "Bye Cup",
+  format: "singles",
+  nameWheel: false,
+  startsAt: "2026-12-04T19:00",
+  tz: "UTC",
+});
+for (const user of byeDb.users) signupTournament(byeDb, byeCup.tournament.id, user);
+const byeDrawn = generateTournamentBracket(byeDb, byeCup.tournament.id, { rng: identityRng });
+const byeTop = byeDrawn.tournament.teams.find((team) => team.seed === 1);
+const byeSecond = byeDrawn.tournament.teams.find((team) => team.seed === 2);
+const byeMoved = swapTournamentTeams(byeDb, byeCup.tournament.id, { teamId: byeTop.id, withTeamId: byeSecond.id });
+const byeMatch = byeMoved.tournament.bracket.rounds[0].matches.find((match) => match.status === "bye");
+const byePlayed = byeMoved.tournament.bracket.rounds[0].matches.find((match) => match.teamAId && match.teamBId);
+check(
+  "a bye follows the team that was switched into that place",
+  byeMoved.status === 200 && byeMatch?.winnerTeamId === byeSecond.id && byePlayed && [byePlayed.teamAId, byePlayed.teamBId].includes(byeTop.id)
+);
+
+const pairCup = cup("Switch Pairs", [
+  ["Rae High", 90],
+  ["Sue Mid", 70],
+  ["Ty Low", 40],
+  ["Uma Base", 20],
+]);
+const pairDrawn = generateTournamentBracket(pairCup.db, pairCup.id, { rng: identityRng });
+const pairA = pairDrawn.tournament.teams[0];
+const pairB = pairDrawn.tournament.teams[1];
+const pairASlot = slotOf(pairDrawn.tournament.bracket, pairA.id);
+const pairBSlot = slotOf(pairDrawn.tournament.bracket, pairB.id);
+const pairMoved = swapTournamentTeams(pairCup.db, pairCup.id, { teamId: pairA.id, withTeamId: pairB.id });
+const pairAfterA = pairMoved.tournament.teams.find((team) => team.id === pairA.id);
+const pairAfterB = pairMoved.tournament.teams.find((team) => team.id === pairB.id);
+check(
+  "switching doubles teams trades places and keeps the pairs",
+  pairMoved.status === 200 &&
+    slotOf(pairMoved.tournament.bracket, pairA.id) === pairBSlot &&
+    slotOf(pairMoved.tournament.bracket, pairB.id) === pairASlot &&
+    pairAfterA.playerIds.join(",") === pairA.playerIds.join(",") &&
+    pairAfterB.playerIds.join(",") === pairB.playerIds.join(",")
+);
+
+const crossDb = {
+  users: [
+    poolUser(1, "Ada 90", 90),
+    poolUser(2, "Bea 80", 80),
+    poolUser(3, "Cal 40", 40),
+    poolUser(4, "Dee 30", 30),
+  ],
+  tournaments: [],
+};
+const crossCup = createTournament(crossDb, { id: 1 }, {
+  title: "Cross Pools",
+  format: "singles",
+  poolMode: "avg",
+  avgSplit: 60,
+  nameWheel: false,
+  startsAt: "2026-12-05T19:00",
+  tz: "UTC",
+});
+for (const user of crossDb.users) signupTournament(crossDb, crossCup.tournament.id, user);
+const crossDrawn = generateTournamentBracket(crossDb, crossCup.tournament.id, { rng: identityRng });
+const crossDraws = crossDrawn.tournament.draws || [];
+const crossHigh = crossDraws.find((draw) => draw.poolId === "high");
+const crossLow = crossDraws.find((draw) => draw.poolId === "low");
+const crossSwap = swapTournamentTeams(crossDb, crossCup.tournament.id, {
+  teamId: crossHigh?.teams?.[0]?.id,
+  withTeamId: crossLow?.teams?.[0]?.id,
+});
+check(
+  "teams in different brackets cannot be switched",
+  crossDrawn.status === 200 && crossHigh?.teams?.length && crossLow?.teams?.length && crossSwap.status === 400 && /different brackets/i.test(crossSwap.error || "")
+);
+const earlySwap = swapTournamentTeams(crossDb, crossCup.tournament.id, { teamId: "", withTeamId: "" });
+check("a switch needs two teams", earlySwap.status === 400 && /two teams/i.test(earlySwap.error || ""));
+const beforeBracket = swapTournamentTeams(plainDb, plain.tournament.id, { teamId: "t1", withTeamId: "t2" });
+check("a switch waits until the bracket exists", beforeBracket.status === 400 && /generate the bracket/i.test(beforeBracket.error || ""));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsh-tournaments-"));
 const port = 21000 + Math.floor(Math.random() * 2000);
@@ -1401,6 +1530,64 @@ try {
       /one pool/i.test(httpBoth.data.error || "") &&
       httpUnknown.status === 400 &&
       /unknown player/i.test(httpUnknown.data.error || "")
+  );
+
+  const switchCup = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: owner,
+    body: { title: "Switch HTTP", format: "singles", nameWheel: false, startsAt: "2026-12-29T19:00", tz: "UTC" },
+  });
+  const switchId = switchCup.data.tournament.id;
+  const switchField = [];
+  for (const [name, avg] of [
+    ["Ann Switch", 90],
+    ["Bob Switch", 70],
+    ["Cal Switch", 40],
+    ["Dee Switch", 20],
+  ]) {
+    const person = await register(port, name, avg);
+    switchField.push({ name, id: person.data.user.id });
+    await api(port, `/api/tournaments/${switchId}/signup`, { method: "POST", token: person.data.token, body: {} });
+  }
+  const switchDraw = await api(port, `/api/admin/tournaments/${switchId}/bracket`, { method: "POST", token: owner, body: {} });
+  const switchTeams = switchDraw.data.tournament.teams || [];
+  const switchA = switchTeams.find((team) => team.seed === 1);
+  const switchB = switchTeams.find((team) => team.seed === 2);
+  const switchSlot = (bracket, teamId) => {
+    for (const match of bracket?.rounds?.[0]?.matches || []) {
+      if (match.teamA?.id === teamId || match.teamAId === teamId) return `${match.id}:A`;
+      if (match.teamB?.id === teamId || match.teamBId === teamId) return `${match.id}:B`;
+    }
+    return "";
+  };
+  const switchASlot = switchSlot(switchDraw.data.tournament.bracket, switchA.id);
+  const switchBSlot = switchSlot(switchDraw.data.tournament.bracket, switchB.id);
+  const switchDenied = await api(port, `/api/admin/tournaments/${switchId}/bracket/swap`, {
+    method: "POST",
+    token: playerTok,
+    body: { teamId: switchA.id, withTeamId: switchB.id },
+  });
+  const switchGuest = await api(port, `/api/admin/tournaments/${switchId}/bracket/swap`, {
+    method: "POST",
+    body: { teamId: switchA.id, withTeamId: switchB.id },
+  });
+  const switchOk = await api(port, `/api/admin/tournaments/${switchId}/bracket/swap`, {
+    method: "POST",
+    token: owner,
+    body: { teamId: switchA.id, withTeamId: switchB.id },
+  });
+  const switchView = switchOk.data.tournament;
+  const switchTeamA = (switchView.teams || []).find((team) => team.id === switchA.id);
+  check(
+    "the swap route trades places and keeps each player on their team",
+    switchDraw.status === 200 &&
+      switchDenied.status === 403 &&
+      switchGuest.status === 401 &&
+      switchOk.status === 200 &&
+      switchSlot(switchView.bracket, switchA.id) === switchBSlot &&
+      switchSlot(switchView.bracket, switchB.id) === switchASlot &&
+      switchTeamA?.playerIds?.join(",") === switchA.playerIds.join(",") &&
+      switchTeamA?.seed === 1
   );
 
   const news = await api(port, "/api/announcements");

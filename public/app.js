@@ -4014,8 +4014,10 @@ function addTeamCard(form) {
 function tournamentTeamEditor(t) {
   if (!t.canManage || t.format !== "doubles" || t.status === "complete" || t.teamsLocked) return "";
   const players = t.teamPlayers || [];
-  const intro =
-    t.partnerMode === "choose"
+  const hasBracket = Boolean(t.bracket) || (t.draws || []).length > 0;
+  const intro = hasBracket
+    ? "The bracket is live. Change who is on a team and save, and the bracket is drawn again from these cards. Seeds follow the new team averages, so a place you already switched on the bracket is replaced. To keep the pairs and only trade places, use Switch teams on the bracket. This stops once a result is saved."
+    : t.partnerMode === "choose"
       ? "Confirmed partners are filled in. A player without a partner stays on a card with a blank seat. Choose a player for that seat, then save."
       : t.partnerMode === "random"
         ? t.nameWheel !== false
@@ -4039,13 +4041,19 @@ function tournamentTeamEditor(t) {
   return panel(
     `<h2 class="text-lg font-bold">Teams</h2>
     <p class="mt-1 text-sm text-muted">${esc(intro)}</p>
-    ${t.teamEdits ? `<p class="mt-2 text-sm gold">These team edits are saved. Generating the bracket uses these cards.</p>` : ""}
+    ${
+      hasBracket
+        ? `<p class="mt-2 text-sm gold">Saving these cards updates the live bracket.</p>`
+        : t.teamEdits
+          ? `<p class="mt-2 text-sm gold">These team edits are saved. Generating the bracket uses these cards.</p>`
+          : ""
+    }
     <form class="mt-4 space-y-3" data-form="TOURNAMENTTEAMS" data-id="${t.id}">
       <textarea hidden data-team-players>${esc(JSON.stringify(players || []))}</textarea>
       <div class="team-board" data-team-cards>${cards || `<p class="text-sm text-muted" data-team-empty>No team cards yet. Add a blank team or make even teams.</p>`}</div>
       <div class="flex flex-wrap gap-2">
         <button class="btn-ghost" type="button" data-act="add-team-card">ADD BLANK TEAM</button>
-        <button class="btn-gold" type="submit">SAVE TEAMS</button>
+        <button class="btn-gold" type="submit">${hasBracket ? "SAVE TEAMS AND UPDATE BRACKET" : "SAVE TEAMS"}</button>
       </div>
     </form>
     <div class="mt-3 flex flex-wrap gap-2">
@@ -4233,7 +4241,7 @@ function tournamentStaffPanel(t) {
     : `<div class="mt-3"><button class="btn-ghost" type="button" data-act="edit-tournament" data-id="${t.id}">EDIT DETAILS</button></div>`;
   return panel(
     `<h2 class="text-lg font-bold">Staff</h2>
-    <p class="mt-1 text-sm text-muted">${t.nameWheel !== false ? "The name wheels stay up until you generate the bracket. That replaces the wheels and starts the tournament." : "Generate the bracket when signup is done. That starts the tournament."} Even doubles pairs the highest average with the lowest. Random doubles uses one wheel for each side of the cutoff and spins those wheels in order. Saved team edits are used when you generate. On the bracket, pick the winner of each match.</p>
+    <p class="mt-1 text-sm text-muted">${t.nameWheel !== false ? "The name wheels stay up until you generate the bracket. That replaces the wheels and starts the tournament." : "Generate the bracket when signup is done. That starts the tournament."} Even doubles pairs the highest average with the lowest. Random doubles uses one wheel for each side of the cutoff and spins those wheels in order. Saved team edits are used when you generate. Once the bracket is up, switch two teams on it to trade their places. Pairings stay as they are. That stays open until a result is saved. On the bracket, pick the winner of each match.</p>
     <div class="mt-3 flex flex-wrap gap-2">${generate}
       <form data-form="DELETETOURNAMENT" data-id="${t.id}"><button class="btn-ghost" type="submit">REMOVE</button></form>
     </div>
@@ -4328,6 +4336,38 @@ function bracketMarkup(t, bracket) {
     })
     .join("");
 }
+function bracketSwapForm(t, draw) {
+  if (!t.canManage) return "";
+  if (t.teamsLocked || t.status === "complete") {
+    return `<p class="mt-4 text-sm text-muted">Teams stay in these places once a result is saved.</p>`;
+  }
+  const teams = (draw.teams || []).filter((team) => team?.id);
+  if (teams.length < 2) return "";
+  const options = teams
+    .slice()
+    .sort((a, b) => (Number(a.seed) || 0) - (Number(b.seed) || 0) || String(a.name || "").localeCompare(String(b.name || "")))
+    .map((team) => `<option value="${esc(team.id)}">${team.seed ? `#${esc(team.seed)} ` : ""}${esc(team.name || "Team")}</option>`)
+    .join("");
+  return `<form class="mt-4 space-y-3" data-form="TOURNAMENTSWAP" data-id="${t.id}">
+    <h3 class="text-base font-bold">Switch teams</h3>
+    <p class="text-sm text-muted">Trade two teams' places in this bracket. Who is on each team stays the same. The matchups change. This stops once a result is saved.</p>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="block text-xs font-bold tracking-widest text-muted">THIS TEAM
+        <select name="teamId" class="mt-1" aria-label="Team to move" required>
+          <option value="" disabled selected>Choose a team</option>
+          ${options}
+        </select>
+      </label>
+      <label class="block text-xs font-bold tracking-widest text-muted">TRADES PLACES WITH
+        <select name="withTeamId" class="mt-1" aria-label="Team to switch with" required>
+          <option value="" disabled selected>Choose a team</option>
+          ${options}
+        </select>
+      </label>
+    </div>
+    <button class="btn-gold" type="submit">SWITCH TEAMS</button>
+  </form>`;
+}
 function bracketSection(t, draw) {
   const rounds = bracketMarkup(t, draw.bracket);
   if (!rounds) return "";
@@ -4337,19 +4377,22 @@ function bracketSection(t, draw) {
     <h2 class="text-lg font-bold">${esc(title)}</h2>
     <p class="mt-1 text-sm text-muted">Single elimination. Scroll sideways on a phone.</p>
     ${winner}
+    ${bracketSwapForm(t, draw)}
     <div class="bracket mt-4">${rounds}</div>
   </section>`;
 }
 function tournamentBracket(t) {
   if ((t.draws || []).length) return t.draws.map((draw) => bracketSection(t, draw)).join("");
   if (!t.bracket) return "";
-  return bracketSection(t, { name: "", championName: t.championName, bracket: t.bracket });
+  return bracketSection(t, { name: "", poolId: "all", championName: t.championName, bracket: t.bracket, teams: t.teams || [] });
 }
 function tournamentWatchKey(t) {
   const bits = [t?.status || "", t?.wheel?.reveal?.id || "", t?.championName || ""];
   const pushBracket = (bracket) => {
     for (const round of bracket?.rounds || []) {
-      for (const match of round.matches || []) bits.push(`${match.id}:${match.status}:${match.winnerTeamId || ""}`);
+      for (const match of round.matches || []) {
+        bits.push(`${match.id}:${match.status}:${match.teamAId || ""}:${match.teamBId || ""}:${match.winnerTeamId || ""}`);
+      }
     }
   };
   pushBracket(t?.bracket);
@@ -5873,9 +5916,11 @@ document.addEventListener("submit", async (e) => {
           : [...form.querySelectorAll("[data-team-card]")].map((card) => ({
               playerIds: [...card.querySelectorAll("[data-team-slot]")].map((select) => select.value).filter(Boolean),
             }));
-      await api(`/api/admin/tournaments/${form.dataset.id}/teams`, { method: "POST", body: JSON.stringify({ teams }) });
+      const savedTeams = await api(`/api/admin/tournaments/${form.dataset.id}/teams`, { method: "POST", body: JSON.stringify({ teams }) });
+      const bracketLive = Boolean(savedTeams.tournament?.bracket) || (savedTeams.tournament?.draws || []).length > 0;
       state.error = "";
-      state.notice = kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : "Teams saved.";
+      state.notice =
+        kind === "TOURNAMENTTEAMSCLEAR" ? "Team edits cleared." : bracketLive ? "Teams saved. The bracket now uses these teams." : "Teams saved.";
       render();
     } else if (kind === "TOURNAMENTPOOLS") {
       const board = form.querySelector("[data-avg-pools]");
@@ -5915,7 +5960,7 @@ document.addEventListener("submit", async (e) => {
         state.wheelHold = false;
       }
     } else if (kind === "TOURNAMENTBRACKET") {
-      if (fd.replace === "1" && !window.confirm("Replace the current bracket and clear team edits? This is blocked once a result is saved.")) return;
+      if (fd.replace === "1" && !window.confirm("Replace the current bracket and clear team edits? Teams go back to the automatic draw, and any switches are lost. This is blocked once a result is saved.")) return;
       if (fd.replace !== "1") {
         const teamForm = document.querySelector(`form[data-form="TOURNAMENTTEAMS"][data-id="${form.dataset.id}"]`);
         if (teamForm?.querySelector("[data-team-card]")) {
@@ -5934,6 +5979,25 @@ document.addEventListener("submit", async (e) => {
       state.notice = left
         ? `Bracket generated. ${left} player${left === 1 ? " was" : "s were"} left out of the draw.`
         : "Bracket generated.";
+      render();
+    } else if (kind === "TOURNAMENTSWAP") {
+      if (!fd.teamId || !fd.withTeamId) {
+        state.error = "Choose two teams to switch.";
+        render();
+        return;
+      }
+      if (fd.teamId === fd.withTeamId) {
+        state.error = "Choose two different teams.";
+        render();
+        return;
+      }
+      if (!window.confirm("Switch these two teams? They trade places in the bracket.")) return;
+      await api(`/api/admin/tournaments/${form.dataset.id}/bracket/swap`, {
+        method: "POST",
+        body: JSON.stringify({ teamId: fd.teamId, withTeamId: fd.withTeamId }),
+      });
+      state.error = "";
+      state.notice = "Teams switched. They traded places in the bracket.";
       render();
     } else if (kind === "TOURNAMENTRESULT") {
       await api(`/api/admin/tournaments/${form.dataset.id}/matches/${form.dataset.match}`, { method: "POST", body: JSON.stringify(fd) });

@@ -65,6 +65,7 @@ import {
   requestPartner,
   saveAvgPools,
   saveTournamentTeams,
+  swapTournamentTeams,
   setTournamentThirdPlace,
   hideHomePodium,
   signupTournament,
@@ -4947,6 +4948,15 @@ async function handleApi(req, res, url) {
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "tournament_teams",
         summary: `Edited teams for “${tournamentTitle(result.tournament)}”`,
+      });
+    }
+    const swapMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/bracket\/swap$/);
+    if (method === "POST" && swapMatch) {
+      if (denyTournamentManager(res, db, user, swapMatch[1])) return;
+      const result = swapTournamentTeams(db, swapMatch[1], body);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "tournament_bracket",
+        summary: `Switched two teams in “${tournamentTitle(result.tournament)}”`,
       });
     }
     const bracketMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/bracket$/);

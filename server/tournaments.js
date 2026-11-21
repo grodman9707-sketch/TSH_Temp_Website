@@ -1068,6 +1068,50 @@ function applyBracket(tournament, composed) {
   refreshStatus(tournament);
 }
 
+function roundOneSlots(bracket) {
+  const slots = [];
+  for (const match of bracket?.rounds?.[0]?.matches || []) {
+    slots.push({ match, key: "teamAId" });
+    slots.push({ match, key: "teamBId" });
+  }
+  return slots;
+}
+
+// Trade two teams' first-round places. Pairings and seeds stay with each team.
+// Later rounds are settled again, so a bye follows the team that now holds it.
+export function swapTournamentTeams(db, id, body) {
+  const tournament = findTournament(db, id);
+  if (!tournament) return fail(404, "Tournament not found");
+  if (tournament.status === "complete") return fail(400, "This tournament is finished");
+  if (tournamentHasResults(tournament)) return fail(400, "A match already has a result, so the teams cannot be moved");
+  const draws = drawList(tournament);
+  if (!draws.length) return fail(400, "Generate the bracket before switching teams");
+  const teamId = String(body?.teamId || "").trim();
+  const withId = String(body?.withTeamId || "").trim();
+  if (!teamId || !withId) return fail(400, "Choose two teams to switch");
+  if (teamId === withId) return fail(400, "Choose two different teams");
+  let home = null;
+  let other = null;
+  for (const draw of draws) {
+    const ids = new Set((draw.teams || []).map((team) => String(team.id)));
+    if (ids.has(teamId)) home = draw;
+    if (ids.has(withId)) other = draw;
+  }
+  if (!home || !other) return fail(400, "Those teams are not in this bracket");
+  if (home !== other) return fail(400, "Those teams are in different brackets");
+  const slots = roundOneSlots(home.bracket);
+  const slotA = slots.find((slot) => String(slot.match[slot.key] || "") === teamId);
+  const slotB = slots.find((slot) => String(slot.match[slot.key] || "") === withId);
+  if (!slotA || !slotB) return fail(400, "Those teams are not in the first round");
+  const left = slotA.match[slotA.key];
+  const right = slotB.match[slotB.key];
+  slotA.match[slotA.key] = right;
+  slotB.match[slotB.key] = left;
+  settleBracket(home.bracket.rounds);
+  refreshStatus(tournament);
+  return { status: 200, tournament };
+}
+
 export function generateTournamentBracket(db, id, { replace = false, rng = Math.random } = {}) {
   const tournament = findTournament(db, id);
   if (!tournament) return fail(404, "Tournament not found");
