@@ -66,6 +66,7 @@ import {
   saveAvgPools,
   saveTournamentTeams,
   setTournamentThirdPlace,
+  hideHomePodium,
   signupTournament,
   tournamentNewsCopy,
   tournamentTabBubble,
@@ -4957,6 +4958,15 @@ async function handleApi(req, res, url) {
       return respondTournament(res, db, user, result, result.error ? null : {
         action: "tournament_bracket",
         summary: `Generated brackets for “${tournamentTitle(result.tournament)}”.${extra}`,
+      });
+    }
+    const homePodiumMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/home-podium$/);
+    if (method === "POST" && homePodiumMatch) {
+      if (!isOwner(user)) return json(res, 403, { ok: false, error: "Only owners can remove the winners post from Home" });
+      const result = hideHomePodium(db, homePodiumMatch[1]);
+      return respondTournament(res, db, user, result, result.error ? null : {
+        action: "hide_home_podium",
+        summary: `Removed the Home winners post for “${tournamentTitle(result.tournament)}”`,
       });
     }
     const thirdPlaceMatch = p.match(/^\/api\/admin\/tournaments\/(\d+)\/third-place$/);

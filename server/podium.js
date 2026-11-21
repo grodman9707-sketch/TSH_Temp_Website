@@ -1,13 +1,17 @@
-// Home-page winners podium.
+// Winners podium data for the public home page.
 // A bracket's final winner is 1st. The other finalist is 2nd when that final
 // was played. 3rd is the only player who lost in the round that feeds the
 // final. Two semifinal losers are not ranked, because this site has no
 // third-place match, unless the tournament stores an explicit 3rd-place pair.
 // That pair shares the one 3rd step and is preferred over the semifinal rule.
-// The main page features the most recently completed tournament that has a winner.
-// A finished tournament stays on the main page for 3 days after it is completed.
+// The home page shows one podium: the latest completed tournament whose
+// winners were established within the last 48 hours. The clock is completedAt,
+// stored once when the tournament is completed. 48 hours is an absolute
+// duration, measured from that UTC instant. An owner can set homePodiumHidden
+// so that one completion is left off Home. The flag does not change the clock
+// or the stored results.
 
-export const PODIUM_HOME_MS = 3 * 24 * 60 * 60 * 1000;
+export const PODIUM_HOME_MS = 48 * 60 * 60 * 1000;
 
 export function placesFromBracket(bracket) {
   const rounds = Array.isArray(bracket?.rounds) ? bracket.rounds : [];
@@ -159,10 +163,12 @@ function timeOf(value) {
 }
 
 function podiumStillPosted(tournament, now) {
-  if ((tournament?.status || "") !== "complete") return true;
+  if (tournament?.homePodiumHidden === true) return false;
+  if ((tournament?.status || "") !== "complete") return false;
   const finished = timeOf(tournament?.completedAt);
-  if (finished == null) return true;
-  return now - finished < PODIUM_HOME_MS;
+  if (finished == null) return false;
+  const age = now - finished;
+  return age >= 0 && age < PODIUM_HOME_MS;
 }
 
 function compareTournaments(a, b) {
@@ -205,7 +211,6 @@ export function homePodium(db, now = Date.now()) {
     .slice()
     .sort(compareTournaments)
     .map((tournament) => eventFor(db, tournament))
-    .filter(Boolean)
-    .slice(0, 8);
-  return { events };
+    .filter(Boolean);
+  return { events: events.length ? [events[0]] : [] };
 }

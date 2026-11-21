@@ -1627,17 +1627,7 @@ function podiumCongratsBanner() {
 }
 function homePodium(payload) {
   const events = Array.isArray(payload?.events) ? payload.events : [];
-  if (!events.length) {
-    return `<section class="home-podium px-4 py-12 sm:px-6" id="tournament-winners">
-      <div class="mx-auto max-w-3xl">
-        <div class="glass rounded-xl px-5 py-10 text-center">
-          <p class="page-kicker text-xs font-semibold gold">TOURNAMENT WINNERS</p>
-          <p class="mt-3 text-sm text-muted">Winners will appear here when a tournament finishes</p>
-          <p class="mt-2 text-sm text-muted">They stay on this page for 3 days.</p>
-        </div>
-      </div>
-    </section>`;
-  }
+  if (!events.length) return "";
   const selected = events.find((event) => Number(event.id) === Number(state.podiumEventId)) || events[0];
   const celebrate = selected.status === "complete" || Boolean(selected.finishedAt);
   const fx = celebrate
@@ -1651,7 +1641,7 @@ function homePodium(payload) {
       </div>
       <h2 class="podium-title">${esc(selected.title || "Tournament")}</h2>
       <p class="podium-when">${esc(podiumWhen(selected))}</p>
-      <p class="mt-2 text-sm text-muted">Winners stay on this page for 3 days.</p>
+      <p class="mt-2 text-sm text-muted">Winners stay on this page for 48 hours.</p>
       ${podiumSwitch(events, selected.id)}
       ${(selected.boards || []).map(podiumBoard).join("")}
       <p class="mt-6"><a class="text-sm font-bold gold" href="/tournaments/${Number(selected.id)}">View bracket</a></p>
@@ -4078,7 +4068,7 @@ function tournamentThirdPlaceForm(t) {
   const savedIds = saved?.playerIds || [];
   const pools = t.thirdPlacePools || [];
   const intro =
-    "No third-place match is required. Choose the two players who finished 3rd together. Both names share the one 3rd step on the home winners podium. This is not 3rd and 4th.";
+    "No third-place match is required. Choose the two players who finished 3rd together. Both names share the one 3rd step on the home winners podium for 48 hours after the tournament is completed. This is not 3rd and 4th.";
   if (choices.length < 2) {
     return `<div class="mt-5 border-t border-white/10 pt-4">
       <h3 class="text-base font-bold">3rd place pair</h3>
@@ -4199,6 +4189,22 @@ function tournamentAvgPools(t) {
     </form>
   </div>`;
 }
+function homePodiumDismiss(t) {
+  if (!isOwner() || t.status !== "complete") return "";
+  if (t.homePodiumHidden) {
+    return `<div class="mt-5 border-t border-white/10 pt-4">
+      <h3 class="text-base font-bold">Remove winners from Home</h3>
+      <p class="mt-1 text-sm text-muted">The winners post is already off the Home page. Players, results, and the winner on this page stay.</p>
+    </div>`;
+  }
+  return `<div class="mt-5 border-t border-white/10 pt-4">
+    <h3 class="text-base font-bold">Remove winners from Home</h3>
+    <p class="mt-1 text-sm text-muted">This only takes the winners podium off the landing page. Players, results, the bracket, and the winner on this page stay.</p>
+    <form class="mt-3" data-form="TOURNAMENTHOMEPODIUM" data-id="${t.id}">
+      <button class="btn-ghost" type="submit">REMOVE WINNERS FROM HOME</button>
+    </form>
+  </div>`;
+}
 function tournamentStaffPanel(t) {
   if (!t.canManage) return "";
   const editing = Number(state.editingTournamentId) === Number(t.id);
@@ -4233,7 +4239,8 @@ function tournamentStaffPanel(t) {
     </div>
     ${edit}
     ${tournamentAvgPools(t)}
-    ${tournamentThirdPlaceForm(t)}`,
+    ${tournamentThirdPlaceForm(t)}
+    ${homePodiumDismiss(t)}`,
     "mt-6"
   );
 }
@@ -5938,12 +5945,17 @@ document.addEventListener("submit", async (e) => {
       if (fd.poolId) body.poolId = fd.poolId;
       await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify(body) });
       state.error = "";
-      state.notice = "3rd place saved. Both players share the 3rd step on the home podium.";
+      state.notice = "3rd place saved. Both players share the 3rd step on the home podium for 48 hours.";
       render();
     } else if (kind === "TOURNAMENTTHIRDCLEAR") {
       await api(`/api/admin/tournaments/${form.dataset.id}/third-place`, { method: "POST", body: JSON.stringify({ clear: true }) });
       state.error = "";
-      state.notice = "3rd place cleared. The podium follows the bracket again.";
+      state.notice = "3rd place cleared. The home podium follows the bracket again while its 48 hours are still open.";
+      render();
+    } else if (kind === "TOURNAMENTHOMEPODIUM") {
+      await api(`/api/admin/tournaments/${form.dataset.id}/home-podium`, { method: "POST", body: "{}" });
+      state.error = "";
+      state.notice = "Winners removed from the Home page. This tournament page still shows the winner.";
       render();
     }
   } catch (err) {

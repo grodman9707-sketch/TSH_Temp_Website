@@ -1,4 +1,4 @@
-// Winners podium: who finished 1st, 2nd, and 3rd, and which tournament the home page shows.
+// Winners podium: who finished 1st, 2nd, and 3rd. Home shows that podium for 48 hours.
 // Run: `node server/podium.test.js`
 import { spawn } from "child_process";
 import fs from "fs";
@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { PODIUM_HOME_MS, homePodium, placesFromBracket } from "./podium.js";
-import { createTournament, generateTournamentBracket, recordTournamentResult, setTournamentThirdPlace, signupTournament } from "./tournaments.js";
+import { createTournament, generateTournamentBracket, hideHomePodium, recordTournamentResult, setTournamentThirdPlace, signupTournament } from "./tournaments.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -186,17 +186,15 @@ const splitDb = {
 };
 const splitNow = Date.parse("2026-11-03T20:00:00.000Z");
 const split = homePodium(splitDb, splitNow);
-check("the most recently finished tournament is first", split.events[0]?.title === "Split Open" && split.events[0].finishedAt === "2026-11-02T20:00:00.000Z");
-check("an older finished tournament stays in the list", split.events[1]?.title === "Older Cup");
-check("an in-progress event with one winner is listed after finished events", split.events[2]?.title === "Still Going" && split.events[2].boards.length === 1 && split.events[2].boards[0].poolName === "Pool A");
+check(
+  "the most recently finished tournament is the home podium",
+  split.events.length === 1 && split.events[0]?.title === "Split Open" && split.events[0].finishedAt === "2026-11-02T20:00:00.000Z"
+);
+check("an older finish at 48 hours is left off the home podium", split.events.every((event) => event.title !== "Older Cup"));
+check("an unfinished tournament is not a home winners podium", split.events.every((event) => event.title !== "Still Going"));
 check("signup with no winner is left off the podium", split.events.every((event) => event.title !== "Signup Only"));
 const aged = homePodium(splitDb, Date.parse("2026-11-06T21:00:00.000Z"));
-check(
-  "winners leave the home page after 3 days",
-  PODIUM_HOME_MS === 3 * 24 * 60 * 60 * 1000 &&
-    aged.events.every((event) => event.title !== "Split Open" && event.title !== "Older Cup") &&
-    aged.events.some((event) => event.title === "Still Going")
-);
+check("winners leave the home page after 48 hours", PODIUM_HOME_MS === 48 * 60 * 60 * 1000 && aged.events.length === 0);
 const boards = split.events[0].boards;
 check(
   "each finished pool keeps its own podium",
@@ -260,12 +258,13 @@ const played = homePodium(memory, Date.parse("2030-01-01T12:00:00.000Z"));
 const featured = played.events[0];
 const namesOf = (place) => (featured.boards[0].places.find((item) => item.place === place)?.players || []).map((player) => player.name);
 check("a played 4-player final records a finish time", Boolean(winterCup.completedAt) && winterCup.status === "complete");
-check("home podium features the later finish, not the later signup", featured?.title === "Winter Cup" && played.events[1]?.title === "Autumn Cup");
+check("home podium features the later finish, not the later signup", featured?.title === "Winter Cup" && played.events.length === 1);
 check(
   "1st and 2nd come from the final and 3rd stays open",
   namesOf(1)[0] === "Ada Archer" && namesOf(2)[0] === "Bea Birch" && featured.boards[0].places[2].players.length === 0 && featured.boards[0].places[2].note === "No third-place match"
 );
-const autumnEvent = played.events.find((event) => event.title === "Autumn Cup");
+const autumnOnly = homePodium(memory, Date.parse(cup.completedAt) + 60 * 60 * 1000);
+const autumnEvent = autumnOnly.events.find((event) => event.title === "Autumn Cup");
 const autumnPlaces = autumnEvent.boards[0].places;
 check(
   "a 3-player bracket names 1st, 2nd, and the semifinal loser as 3rd",
@@ -448,26 +447,149 @@ check(
 
 const appJs = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
-check("the home page has a congratulations podium and an empty state", appJs.includes('class="podium-congrats">Congratulations') && appJs.includes("Winners will appear here when a tournament finishes") && appJs.includes("podium-place-"));
+check(
+  "the home page renders the winners podium only while the window is open",
+  appJs.includes('id="tournament-winners"') &&
+    appJs.includes("function homePodium") &&
+    appJs.includes('api("/api/podium")') &&
+    appJs.includes('if (!events.length) return "";') &&
+    !appJs.includes("Winners will appear here") &&
+    appJs.includes("Winners stay on this page for 48 hours.") &&
+    !appJs.includes("Winners will appear here") &&
+    appJs.includes("Remove winners from Home") &&
+    appJs.includes("REMOVE WINNERS FROM HOME") &&
+    appJs.includes('data-form="TOURNAMENTHOMEPODIUM"') &&
+    appJs.includes("The winners post is already off the Home page.") &&
+    appJs.includes("data-podium-confetti") &&
+    css.includes(".home-podium") &&
+    css.includes(".podium-congrats") &&
+    css.includes(".podium-place-1") &&
+    css.includes(".podium-place-1 .podium-block") &&
+    css.includes("height: 8.5rem") &&
+    css.includes("prefers-reduced-motion") &&
+    css.includes(".podium-fx")
+);
+const windowBase = Date.parse("2026-11-01T00:00:00.000Z");
+const windowUsers = [{ id: 1, name: "Ada Archer" }, { id: 2, name: "Bea Birch" }];
+function windowCup(id, title, completedAt) {
+  return {
+    id,
+    title,
+    status: "complete",
+    completedAt,
+    teams: [
+      { id: "t1", playerIds: [1] },
+      { id: "t2", playerIds: [2] },
+    ],
+    bracket: playedFinal("t1", "t2"),
+  };
+}
+const windowDb = {
+  users: windowUsers,
+  tournaments: [
+    windowCup(1, "Window Cup", new Date(windowBase).toISOString()),
+    windowCup(2, "Later Cup", new Date(windowBase + 6 * 60 * 60 * 1000).toISOString()),
+    windowCup(3, "Undated Cup", undefined),
+  ],
+};
+delete windowDb.tournaments[2].completedAt;
+const freshWindow = homePodium(windowDb, windowBase + PODIUM_HOME_MS - 1);
+check(
+  "winners newer than 48 hours are included on the home podium",
+  freshWindow.events.length === 1 && freshWindow.events[0].title === "Later Cup" && freshWindow.events[0].finishedAt === windowDb.tournaments[1].completedAt
+);
+const replaced = homePodium(windowDb, windowBase + 7 * 60 * 60 * 1000);
+check(
+  "a newer tournament replaces an older one that is still inside 48 hours",
+  replaced.events.length === 1 && replaced.events[0].title === "Later Cup"
+);
+const exactWindow = homePodium(windowDb, windowBase + 6 * 60 * 60 * 1000 + PODIUM_HOME_MS);
+check("winners at 48 hours are excluded from the home podium", exactWindow.events.length === 0);
+const olderOnly = homePodium(
+  { users: windowUsers, tournaments: [windowDb.tournaments[0]] },
+  windowBase + PODIUM_HOME_MS - 1
+);
+check(
+  "the latest podium still inside 48 hours is the one that shows",
+  olderOnly.events.length === 1 && olderOnly.events[0].title === "Window Cup"
+);
+check(
+  "a finished tournament with no completion time stays off the home page",
+  homePodium({ users: windowUsers, tournaments: [windowDb.tournaments[2]] }, windowBase).events.length === 0
+);
+check(
+  "no qualifying winners means no home podium",
+  homePodium(windowDb, windowBase + 6 * 60 * 60 * 1000 + PODIUM_HOME_MS + 1).events.length === 0
+);
+check(
+  "48 hours is an absolute duration from the stored completion instant",
+  PODIUM_HOME_MS === 48 * 60 * 60 * 1000 &&
+    new Date(windowBase + PODIUM_HOME_MS).toISOString() === "2026-11-03T00:00:00.000Z"
+);
+const dismissDb = {
+  users: windowUsers.map((user) => ({ ...user })),
+  tournaments: [
+    windowCup(1, "Kept Cup", new Date(windowBase).toISOString()),
+    windowCup(2, "Dismissed Cup", new Date(windowBase + 60 * 60 * 1000).toISOString()),
+  ],
+};
+dismissDb.tournaments[1].entries = [{ userId: 1 }, { userId: 2 }];
+dismissDb.tournaments[1].thirdPlace = { playerIds: [2, 1] };
+const dismissNow = windowBase + 2 * 60 * 60 * 1000;
+const beforeDismiss = homePodium(dismissDb, dismissNow);
+const dismissedCup = dismissDb.tournaments[1];
+const keptStamp = dismissedCup.completedAt;
+const keptBracket = JSON.stringify(dismissedCup.bracket);
+const keptTeams = JSON.stringify(dismissedCup.teams);
+const keptEntries = JSON.stringify(dismissedCup.entries);
+const keptThird = JSON.stringify(dismissedCup.thirdPlace);
+const keptUsers = JSON.stringify(dismissDb.users);
+check(
+  "a completed tournament inside 48 hours is on the home podium",
+  beforeDismiss.events.length === 1 && beforeDismiss.events[0].title === "Dismissed Cup"
+);
+const hidden = hideHomePodium(dismissDb, 2);
+const afterDismiss = homePodium(dismissDb, dismissNow);
+check(
+  "an owner dismiss flag takes that podium off Home",
+  hidden.status === 200 &&
+    hidden.tournament.homePodiumHidden === true &&
+    afterDismiss.events.length === 1 &&
+    afterDismiss.events[0].title === "Kept Cup"
+);
+check(
+  "dismissing the home post leaves players, results, and the winner",
+  dismissedCup.completedAt === keptStamp &&
+    dismissedCup.status === "complete" &&
+    JSON.stringify(dismissedCup.bracket) === keptBracket &&
+    JSON.stringify(dismissedCup.teams) === keptTeams &&
+    JSON.stringify(dismissedCup.entries) === keptEntries &&
+    JSON.stringify(dismissedCup.thirdPlace) === keptThird &&
+    JSON.stringify(dismissDb.users) === keptUsers
+);
+const again = hideHomePodium(dismissDb, 2);
+check(
+  "dismissing again stays removed and does not move the clock",
+  again.status === 200 && again.tournament.homePodiumHidden === true && again.tournament.completedAt === keptStamp
+);
+check(
+  "dismissing one tournament does not hide a different tournament",
+  afterDismiss.events.length === 1 && afterDismiss.events[0].title === "Kept Cup" && dismissDb.tournaments[0].homePodiumHidden !== true
+);
+dismissDb.tournaments[0].homePodiumHidden = true;
+dismissedCup.homePodiumHidden = false;
+const newerBack = homePodium(dismissDb, dismissNow);
+check(
+  "a newer completion still shows when only the older post was removed",
+  newerBack.events.length === 1 && newerBack.events[0].title === "Dismissed Cup" && dismissDb.tournaments[0].homePodiumHidden === true
+);
 check(
   "staff can name a 3rd-place pair without playing a third-place match",
   appJs.includes("3rd place pair") && appJs.includes("No third-place match is required") && appJs.includes('data-form="TOURNAMENTTHIRD"')
 );
-check("1st is the taller centre step and narrow screens put 1st first", css.includes(".podium-place-1 .podium-block") && css.includes("height: 8.5rem") && css.includes("height: 5.75rem") && css.includes("height: 4.25rem") && css.includes("order: -1"));
-const emptyPodium = appJs.slice(appJs.indexOf('id="tournament-winners"'), appJs.indexOf("Winners will appear here when a tournament finishes"));
 check(
-  "a finished podium uses a large banner and celebration that stays off when motion is reduced",
-  emptyPodium.length > 40 &&
-    !emptyPodium.includes("data-podium-confetti") &&
-    !emptyPodium.includes("podium-congrats") &&
-    appJs.includes("data-podium-confetti") &&
-    appJs.includes('class="podium-congrats">Congratulations') &&
-    appJs.includes('"(prefers-reduced-motion: reduce)"') &&
-    css.includes(".podium-hero") &&
-    css.includes(".podium-confetti") &&
-    css.includes("pointer-events: none") &&
-    css.includes("5.25rem") &&
-    css.includes("prefers-reduced-motion: reduce")
+  "the home page still renders the hero and live numbers",
+  appJs.includes("function pageHome") && appJs.includes("TSH In Numbers") && appJs.includes('api("/api/stats")')
 );
 
 async function waitHealth(port, child) {
@@ -634,6 +756,90 @@ try {
       !clearedThird.data.tournament?.thirdPlace &&
       restoredThird?.players?.length === 1 &&
       restoredThird.players[0].name === "Bea Birch"
+  );
+  const storedBefore = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8"));
+  const storedCup = storedBefore.tournaments.find((item) => item.id === id);
+  const storedStamp = storedCup.completedAt;
+  const storedEntries = JSON.stringify(storedCup.entries);
+  const storedBracket = JSON.stringify(storedCup.bracket);
+  const playerDismiss = await api(port, `/api/admin/tournaments/${id}/home-podium`, { method: "POST", token: tokens[2], body: {} });
+  const stillPosted = await api(port, "/api/podium");
+  check(
+    "a player cannot remove the home winners post",
+    playerDismiss.status === 403 && stillPosted.data.events?.[0]?.title === "Friday Cup"
+  );
+  const bea = await api(port, "/api/auth/me", { token: tokens[1] });
+  const promoted = await api(port, "/api/admin/assign-head-admin", {
+    method: "POST",
+    token: ownerTok,
+    body: { userId: bea.data.user?.id },
+  });
+  const staffDismiss = await api(port, `/api/admin/tournaments/${id}/home-podium`, { method: "POST", token: tokens[1], body: {} });
+  const stillPostedAfterStaff = await api(port, "/api/podium");
+  check(
+    "staff who are not owners cannot remove the home winners post",
+    promoted.status === 200 && staffDismiss.status === 403 && stillPostedAfterStaff.data.events?.[0]?.title === "Friday Cup"
+  );
+  const guestDismiss = await api(port, `/api/admin/tournaments/${id}/home-podium`, { method: "POST", body: {} });
+  check("a guest cannot remove the home winners post", guestDismiss.status === 401);
+  const removedPost = await api(port, `/api/admin/tournaments/${id}/home-podium`, { method: "POST", token: ownerTok, body: {} });
+  const afterRemove = await api(port, "/api/podium");
+  const detail = await api(port, `/api/tournaments/${id}`);
+  const storedAfter = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8"));
+  const storedCupAfter = storedAfter.tournaments.find((item) => item.id === id);
+  check(
+    "an owner removes that tournament from the home podium only",
+    removedPost.status === 200 &&
+      removedPost.data.tournament?.homePodiumHidden === true &&
+      afterRemove.data.events?.length === 0 &&
+      detail.data.tournament?.status === "complete" &&
+      detail.data.tournament?.championName === "Ada Archer" &&
+      detail.data.tournament?.homePodiumHidden === true &&
+      storedCupAfter.completedAt === storedStamp &&
+      JSON.stringify(storedCupAfter.entries) === storedEntries &&
+      JSON.stringify(storedCupAfter.bracket) === storedBracket &&
+      storedAfter.users.length === storedBefore.users.length
+  );
+  const removedAgain = await api(port, `/api/admin/tournaments/${id}/home-podium`, { method: "POST", token: ownerTok, body: {} });
+  const storedTwice = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8")).tournaments.find((item) => item.id === id);
+  check(
+    "removing the post again stays off Home and keeps the clock",
+    removedAgain.status === 200 && storedTwice.homePodiumHidden === true && storedTwice.completedAt === storedStamp
+  );
+  const later = await api(port, "/api/admin/tournaments", {
+    method: "POST",
+    token: ownerTok,
+    body: { title: "Saturday Cup", format: "singles", startsAt: "2026-11-07T19:00", tz: "UTC" },
+  });
+  const laterId = later.data.tournament?.id;
+  for (const token of tokens) {
+    const joined = await api(port, `/api/tournaments/${laterId}/signup`, { method: "POST", token, body: {} });
+    if (joined.status !== 200) throw new Error(`later signup ${joined.status}`);
+  }
+  const laterDrawn = await api(port, `/api/admin/tournaments/${laterId}/bracket`, { method: "POST", token: ownerTok, body: {} });
+  const laterPlayable = laterDrawn.data.tournament.bracket.rounds[0].matches.find((match) => match.status === "pending");
+  const laterChip = laterPlayable.teamA?.name === "Cal Crowe" ? laterPlayable.teamAId : laterPlayable.teamBId;
+  const laterSemi = await api(port, `/api/admin/tournaments/${laterId}/matches/${laterPlayable.id}`, {
+    method: "POST",
+    token: ownerTok,
+    body: { winnerTeamId: laterChip, scoreA: laterPlayable.teamAId === laterChip ? 3 : 1, scoreB: laterPlayable.teamAId === laterChip ? 1 : 3 },
+  });
+  const laterFinal = laterSemi.data.tournament.bracket.rounds.at(-1).matches[0];
+  const laterAce = laterFinal.teamA?.name === "Ada Archer" ? laterFinal.teamAId : laterFinal.teamBId;
+  const laterWin = await api(port, `/api/admin/tournaments/${laterId}/matches/${laterFinal.id}`, {
+    method: "POST",
+    token: ownerTok,
+    body: { winnerTeamId: laterAce, scoreA: laterFinal.teamAId === laterAce ? 4 : 2, scoreB: laterFinal.teamAId === laterAce ? 2 : 4 },
+  });
+  const laterPodium = await api(port, "/api/podium");
+  const fridayStill = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8")).tournaments.find((item) => item.id === id);
+  check(
+    "a newer tournament still posts its own home podium",
+    laterWin.data.tournament?.status === "complete" &&
+      laterPodium.data.events?.length === 1 &&
+      laterPodium.data.events[0].title === "Saturday Cup" &&
+      fridayStill.homePodiumHidden === true &&
+      fridayStill.completedAt === storedStamp
   );
 } catch (err) {
   failures++;
