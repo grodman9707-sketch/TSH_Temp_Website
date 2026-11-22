@@ -2001,7 +2001,6 @@ input, select, textarea {
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  container-type: inline-size;
   filter: drop-shadow(0 14px 16px rgba(0, 0, 0, 0.5));
 }
 .podium-scroll-art {
@@ -2009,35 +2008,6 @@ input, select, textarea {
   width: 100%;
   max-width: 100%;
   height: auto;
-}
-.podium-congrats {
-  position: absolute;
-  z-index: 1;
-  left: 11.5%;
-  right: 11.5%;
-  top: 31.3%;
-  transform: translateY(-50%);
-  margin: 0;
-  padding: 0;
-  color: #1a1404;
-  font-size: clamp(1.05rem, 7.5vw, 5.25rem);
-  font-weight: 800;
-  line-height: 0.9;
-  letter-spacing: -0.03em;
-  text-align: center;
-  white-space: nowrap;
-  text-shadow: 0 1px 0 rgba(255, 246, 214, 0.45);
-}
-@supports (font-size: 1cqi) {
-  .podium-congrats {
-    font-size: min(5.25rem, 7.8cqi);
-  }
-  @container (max-width: 24rem) {
-    .podium-congrats {
-      font-size: min(1.9rem, 9cqi);
-      letter-spacing: -0.045em;
-    }
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .podium-fx,

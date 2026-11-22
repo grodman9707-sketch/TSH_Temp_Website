@@ -137,7 +137,7 @@ check("tournament routes render", appJs.includes('if (q === "/tournaments")') &&
 check("staff can post from the tab", appJs.includes('data-form="POSTTOURNAMENT"') && appJs.includes("GENERATE BRACKET"));
 check("players can sign up and choose a partner", appJs.includes('data-form="TOURNAMENTSIGNUP"') && appJs.includes('data-form="TOURNAMENTPARTNER"'));
 check("bracket layout scrolls on a phone", css.includes(".bracket") && css.includes("overflow-x: auto"));
-check("cache bust covers the new tab", html.includes("app.js?v=98") && html.includes("styles.css?v=98"));
+check("cache bust covers the new tab", html.includes("app.js?v=99") && html.includes("styles.css?v=99"));
 check(
   "staff can switch teams on a live bracket",
   appJs.includes('data-form="TOURNAMENTSWAP"') && appJs.includes("SWITCH TEAMS") && appJs.includes("Trade two teams' places")

@@ -462,7 +462,12 @@ check(
     appJs.includes("The winners post is already off the Home page.") &&
     appJs.includes("data-podium-confetti") &&
     css.includes(".home-podium") &&
-    css.includes(".podium-congrats") &&
+    appJs.includes('src="/images/congratulations-banner.png"') &&
+    appJs.includes('alt="Congratulations"') &&
+    !appJs.includes("podium-congrats") &&
+    !appJs.includes("tshRibbon") &&
+    fs.existsSync(path.join(root, "public/images/congratulations-banner.png")) &&
+    css.includes(".podium-scroll-art") &&
     css.includes(".podium-place-1") &&
     css.includes(".podium-place-1 .podium-block") &&
     css.includes("height: 8.5rem") &&
